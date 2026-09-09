@@ -8,6 +8,8 @@ from nexora.input import InputManager
 from nexora.threading.context import ThreadContext
 from nexora.window.window import Window
 from nexora.rendering import Renderer
+from nexora.assets import AssetManager
+
 
 class Engine:
     """
@@ -46,6 +48,7 @@ class Engine:
         # --------------------------------------------------------------
 
         self.logger = Logger()
+        self.assets = AssetManager()
 
         self.window = Window(
             width=width,
