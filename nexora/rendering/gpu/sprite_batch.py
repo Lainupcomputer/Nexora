@@ -945,6 +945,8 @@ class GPUSpriteBatch:
             camera_x = 0.0
             camera_y = 0.0
             camera_zoom = 1.0
+            shake_x = 0.0
+            shake_y = 0.0
         else:
             camera_x = float(
                 self.camera.x
@@ -956,6 +958,14 @@ class GPUSpriteBatch:
 
             camera_zoom = float(
                 self.camera.zoom
+            )
+
+            shake_x = float(
+                self.camera.shake_x
+            )
+
+            shake_y = float(
+                self.camera.shake_y
             )
 
         viewport_width = float(
@@ -979,10 +989,205 @@ class GPUSpriteBatch:
 
             camera_zoom,
 
-            0.0,
-            0.0,
+            shake_x,
+            shake_y,
+
             0.0,
         )
+
+
+
+    # ==========================================================
+    # RENDER INTO ACTIVE FRAME
+    # ==========================================================
+
+    def render_into(self, command_buffer):
+        """
+        Prepare the current batch for rendering inside an
+        already active GPU frame.
+
+        The caller owns the frame lifecycle.
+
+        This method performs:
+            - instance buffer upload
+            - camera uniform upload
+
+        It does NOT:
+            - acquire a frame
+            - create a render pass
+            - submit the command buffer
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        if self._texture is None:
+            raise RuntimeError(
+                "GPUSpriteBatch.begin(texture) "
+                "must be called before rendering"
+            )
+
+        if self._sprite_count == 0:
+            return 0
+
+        # ------------------------------------------------------
+        # Instance upload
+        # ------------------------------------------------------
+
+        instance_size = (
+            self._sprite_count
+            * self.INSTANCE_STRIDE
+        )
+
+        self.instance_buffer.upload_into(
+            command_buffer,
+            memoryview(
+                self._instance_data
+            )[:instance_size],
+        )
+
+        # ------------------------------------------------------
+        # Camera
+        # ------------------------------------------------------
+
+        self._update_camera_uniform()
+
+        camera_buffer = (
+            (
+                ctypes.c_ubyte
+                * self.CAMERA_UNIFORM_SIZE
+            ).from_buffer(
+                self._camera_data
+            )
+        )
+
+        sdl3.SDL_PushGPUVertexUniformData(
+            command_buffer,
+            0,
+            ctypes.cast(
+                camera_buffer,
+                ctypes.c_void_p,
+            ),
+            self.CAMERA_UNIFORM_SIZE,
+        )
+
+        return self._sprite_count
+
+    # ==========================================================
+    # DRAW INTO ACTIVE RENDER PASS
+    # ==========================================================
+
+    def draw_into(self, render_pass):
+        """
+        Draw the current batch into an already active render pass.
+
+        The caller owns:
+            - GPU frame
+            - command buffer
+            - render pass
+
+        No uploads or frame submission happen here.
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        if self._texture is None:
+            raise RuntimeError(
+                "GPUSpriteBatch.begin(texture) "
+                "must be called before drawing"
+            )
+
+        if self._sprite_count == 0:
+            return 0
+
+        # ------------------------------------------------------
+        # Pipeline
+        # ------------------------------------------------------
+
+        sdl3.SDL_BindGPUGraphicsPipeline(
+            render_pass,
+            self.pipeline,
+        )
+
+        # ------------------------------------------------------
+        # Vertex buffers
+        # ------------------------------------------------------
+
+        instance_size = (
+            self._sprite_count
+            * self.INSTANCE_STRIDE
+        )
+
+        vertex_bindings = (
+            sdl3.SDL_GPUBufferBinding * 2
+        )()
+
+        vertex_bindings[0] = (
+            self.quad_buffer.binding(
+                0,
+                self.quad_buffer.size,
+            )
+        )
+
+        vertex_bindings[1] = (
+            self.instance_buffer.binding(
+                0,
+                instance_size,
+            )
+        )
+
+        sdl3.SDL_BindGPUVertexBuffers(
+            render_pass,
+            0,
+            vertex_bindings,
+            2,
+        )
+
+        # ------------------------------------------------------
+        # Texture
+        # ------------------------------------------------------
+
+        texture_binding = (
+            sdl3.SDL_GPUTextureSamplerBinding()
+        )
+
+        texture_binding.texture = (
+            self._texture.texture
+        )
+
+        texture_binding.sampler = (
+            self.sampler.sampler
+        )
+
+        sdl3.SDL_BindGPUFragmentSamplers(
+            render_pass,
+            0,
+            ctypes.byref(
+                texture_binding
+            ),
+            1,
+        )
+
+        # ------------------------------------------------------
+        # Instanced draw
+        # ------------------------------------------------------
+
+        sdl3.SDL_DrawGPUPrimitives(
+            render_pass,
+            6,
+            self._sprite_count,
+            0,
+            0,
+        )
+
+        return self._sprite_count
+
+
 
     # ==========================================================
     # END

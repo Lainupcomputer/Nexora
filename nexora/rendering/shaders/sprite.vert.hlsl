@@ -27,8 +27,12 @@ cbuffer CameraBuffer : register(b0, space1)
 {
     float2 camera_position;
     float2 viewport_size;
-    float  camera_zoom;
-    float3 padding;
+
+    float camera_zoom;
+
+    float2 camera_shake;
+
+    float padding;
 };
 
 VSOutput main(VSInput input)
@@ -91,12 +95,13 @@ VSOutput main(VSInput input)
         rotated;
 
     // --------------------------------------------------------------
-    // Camera
+    // Camera + screen shake
     // --------------------------------------------------------------
 
     float2 camera_relative =
         world_position -
-        camera_position;
+        camera_position +
+        camera_shake;
 
     camera_relative *= camera_zoom;
 
@@ -144,3 +149,4 @@ VSOutput main(VSInput input)
 
     return output;
 }
+

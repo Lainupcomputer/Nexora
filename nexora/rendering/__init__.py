@@ -1,11 +1,18 @@
 from nexora.rendering.renderer import Renderer
 from nexora.rendering.camera import Camera
-from nexora.rendering.sprite_batch import SpriteBatch
-from nexora.rendering.gpu import GPUContext
+from nexora.rendering.gpu import (
+    GPUContext,
+    GPURenderer,
+    GPUSpriteBatch,
+    RenderSnapshot,
+)
 
 __all__ = [
     "Renderer",
     "Camera",
-    "SpriteBatch",
     "GPUContext",
+    "GPURenderer",
+    "GPUSpriteBatch",
+    "RenderSnapshot",
 ]
+

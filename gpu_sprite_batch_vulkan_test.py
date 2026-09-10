@@ -1,4 +1,7 @@
 from __future__ import annotations
+import os
+
+os.environ["SDL_GPU_DRIVER"] = "vulkan"
 
 import math
 import random

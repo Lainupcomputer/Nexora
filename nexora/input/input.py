@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-import pygame
+import sdl3
 
 from nexora.debug.logger import Logger
 from nexora.input.action import ActionState
@@ -17,50 +17,52 @@ from nexora.threading.context import ThreadContext
 
 class InputManager:
     """
-    Main-thread input manager.
+    SDL3 based main-thread input manager.
 
-    Pygame events are processed on the main thread.
-    Worker threads only read the synchronized state.
+    SDL3 events are collected on the engine/main thread.
+
+    Worker threads never touch SDL directly. They only read the
+    synchronized input state maintained here.
     """
 
-    def __init__(self, logger: Logger | None = None) -> None:
+    def __init__(self, logger: Logger | None = None):
         self.logger = logger
+
+        # Physical keyboard state.
+        self._keys_down: set[int] = set()
+        self._keys_pressed: set[int] = set()
+        self._keys_released: set[int] = set()
+
+        # Physical mouse state.
+        self._mouse_down: set[int] = set()
         self._mouse_pressed: set[int] = set()
         self._mouse_released: set[int] = set()
 
+        # Mouse position / movement.
+        self._mouse_x = 0.0
+        self._mouse_y = 0.0
+
+        self._mouse_dx = 0.0
+        self._mouse_dy = 0.0
+
+        self._wheel_x = 0.0
+        self._wheel_y = 0.0
+
+        # Actions.
         self._actions: dict[str, ActionState] = {}
         self._bindings: dict[str, list[Binding]] = {}
 
-        self._keys_down: set[int] = set()
-        self._mouse_down: set[int] = set()
-
-        self._mouse_x = 0
-        self._mouse_y = 0
-
-        self._mouse_dx = 0
-        self._mouse_dy = 0
-
-        self._wheel_x = 0
-        self._wheel_y = 0
-
         self._initialized = False
+        self._focused = True
 
     # ------------------------------------------------------------------
-    # Setup
+    # Lifecycle
     # ------------------------------------------------------------------
 
     def initialize(self) -> None:
-        """
-        Initializes the cached mouse state.
-
-        Must be called from the main thread.
-        """
-        ThreadContext.assert_main_thread("InputManager.initialize")
-
-        position = pygame.mouse.get_pos()
-
-        self._mouse_x = position[0]
-        self._mouse_y = position[1]
+        ThreadContext.assert_main_thread(
+            "InputManager.initialize() must run on the main thread"
+        )
 
         self._initialized = True
 
@@ -71,365 +73,372 @@ class InputManager:
     def bind(
         self,
         action: str,
-        binding: str | int,
+        binding: Binding | str | int,
+        *,
+        binding_type: BindingType = BindingType.KEYBOARD,
     ) -> None:
-        """
-        Bind a keyboard key or mouse button to an action.
+        if not isinstance(action, str) or not action:
+            raise ValueError("action must be a non-empty string")
 
-        Examples:
-
-            input.bind("move_left", "A")
-            input.bind("move_left", "LEFT")
-            input.bind("jump", "SPACE")
-
-            input.bind("shoot", "MOUSE_LEFT")
-        """
-        action = self._normalize_action(action)
-
-        if isinstance(binding, str) and binding.strip().lower().startswith("mouse"):
-            resolved = resolve_mouse_button(binding)
-            new_binding = Binding(BindingType.MOUSE, resolved)
+        if isinstance(binding, Binding):
+            resolved = binding
+        elif binding_type is BindingType.KEYBOARD:
+            resolved = Binding(
+                BindingType.KEYBOARD,
+                resolve_keyboard_key(binding),
+            )
+        elif binding_type is BindingType.MOUSE:
+            resolved = Binding(
+                BindingType.MOUSE,
+                resolve_mouse_button(binding),
+            )
         else:
-            try:
-                resolved = resolve_keyboard_key(binding)
-                new_binding = Binding(BindingType.KEYBOARD, resolved)
-            except (TypeError, ValueError):
-                if isinstance(binding, str):
-                    resolved = resolve_mouse_button(binding)
-                    new_binding = Binding(BindingType.MOUSE, resolved)
-                else:
-                    raise
+            raise ValueError(f"Unsupported binding type: {binding_type}")
 
-        bindings = self._bindings.setdefault(action, [])
+        self._bindings.setdefault(action, []).append(resolved)
 
-        if new_binding not in bindings:
-            bindings.append(new_binding)
+        if action not in self._actions:
+            self._actions[action] = ActionState()
 
-        self._actions.setdefault(action, ActionState())
+    def bind_key(self, action: str, key: str | int) -> None:
+        self.bind(
+            action,
+            resolve_keyboard_key(key),
+            binding_type=BindingType.KEYBOARD,
+        )
 
-    def bind_key(
-        self,
-        action: str,
-        key: str | int,
-    ) -> None:
-        action = self._normalize_action(action)
-
-        resolved = resolve_keyboard_key(key)
-
-        binding = Binding(BindingType.KEYBOARD, resolved)
-
-        bindings = self._bindings.setdefault(action, [])
-
-        if binding not in bindings:
-            bindings.append(binding)
-
-        self._actions.setdefault(action, ActionState())
-
-    def bind_mouse(
-        self,
-        action: str,
-        button: str | int,
-    ) -> None:
-        action = self._normalize_action(action)
-
-        resolved = resolve_mouse_button(button)
-
-        binding = Binding(BindingType.MOUSE, resolved)
-
-        bindings = self._bindings.setdefault(action, [])
-
-        if binding not in bindings:
-            bindings.append(binding)
-
-        self._actions.setdefault(action, ActionState())
+    def bind_mouse(self, action: str, button: str | int) -> None:
+        self.bind(
+            action,
+            resolve_mouse_button(button),
+            binding_type=BindingType.MOUSE,
+        )
 
     def unbind(
         self,
         action: str,
-        binding: str | int,
-    ) -> bool:
-        action = self._normalize_action(action)
-
+        binding: Binding | str | int | None = None,
+    ) -> None:
         if action not in self._bindings:
-            return False
+            return
 
-        if isinstance(binding, str) and binding.strip().lower().startswith("mouse"):
-            resolved = Binding(BindingType.MOUSE, resolve_mouse_button(binding))
+        if binding is None:
+            self._bindings.pop(action, None)
+            self._actions.pop(action, None)
+            return
+
+        if isinstance(binding, Binding):
+            resolved = binding
         else:
+            # If an explicit BindingType isn't available here, remove
+            # matching keyboard/mouse representations.
+            candidates = []
+
             try:
-                resolved = Binding(
-                    BindingType.KEYBOARD,
-                    resolve_keyboard_key(binding),
+                candidates.append(
+                    Binding(
+                        BindingType.KEYBOARD,
+                        resolve_keyboard_key(binding),
+                    )
                 )
             except (TypeError, ValueError):
-                if isinstance(binding, str):
-                    resolved = Binding(
+                pass
+
+            try:
+                candidates.append(
+                    Binding(
                         BindingType.MOUSE,
                         resolve_mouse_button(binding),
                     )
-                else:
-                    raise
+                )
+            except (TypeError, ValueError):
+                pass
 
-        bindings = self._bindings[action]
+            current = self._bindings[action]
+            self._bindings[action] = [
+                item
+                for item in current
+                if item not in candidates
+            ]
 
-        if resolved not in bindings:
-            return False
+            if not self._bindings[action]:
+                self._bindings.pop(action, None)
+                self._actions.pop(action, None)
 
-        bindings.remove(resolved)
-        return True
-
-    def clear_bindings(self, action: str | None = None) -> None:
-        if action is None:
-            self._bindings.clear()
-            self._actions.clear()
             return
 
-        action = self._normalize_action(action)
+        self._bindings[action] = [
+            item
+            for item in self._bindings[action]
+            if item != resolved
+        ]
 
-        self._bindings.pop(action, None)
-        self._actions.pop(action, None)
+        if not self._bindings[action]:
+            self._bindings.pop(action, None)
+            self._actions.pop(action, None)
+
+    def clear_bindings(self) -> None:
+        self._bindings.clear()
+        self._actions.clear()
 
     # ------------------------------------------------------------------
-    # Event processing
+    # Frame processing
     # ------------------------------------------------------------------
 
     def begin_frame(
         self,
-        events: Iterable[pygame.event.Event] = (),
+        events: Iterable[object] = (),
     ) -> None:
-        """
-        Process all pygame events for the current frame.
-
-        Must only run on the main thread.
-        """
-        ThreadContext.assert_main_thread("InputManager.begin_frame")
+        ThreadContext.assert_main_thread(
+            "InputManager.begin_frame() must run on the main thread"
+        )
 
         if not self._initialized:
             self.initialize()
 
+        # Clear action transitions from the previous frame.
         for state in self._actions.values():
             state.begin_frame()
 
-        self._mouse_dx = 0
-        self._mouse_dy = 0
-        self._wheel_x = 0
-        self._wheel_y = 0
+        self._keys_pressed.clear()
+        self._keys_released.clear()
 
         self._mouse_pressed.clear()
         self._mouse_released.clear()
 
+        self._mouse_dx = 0.0
+        self._mouse_dy = 0.0
+
+        self._wheel_x = 0.0
+        self._wheel_y = 0.0
+
+        # Process the SDL3 event queue.
         for event in events:
             self._process_event(event)
 
-        self._update_mouse_position()
         self._update_action_states()
 
+    # ------------------------------------------------------------------
+    # SDL3 event processing
+    # ------------------------------------------------------------------
 
-    def _process_event(self, event: pygame.event.Event) -> None:
-        if event.type == pygame.KEYDOWN:
-            self._keys_down.add(event.key)
+    def _process_event(self, event: object) -> None:
+        event_type = getattr(event, "type", None)
 
-        elif event.type == pygame.KEYUP:
-            self._keys_down.discard(event.key)
+        # --------------------------------------------------------------
+        # Keyboard
+        # --------------------------------------------------------------
 
-        elif event.type == pygame.MOUSEBUTTONDOWN:
-            self._mouse_down.add(event.button)
-            self._mouse_pressed.add(event.button)
+        if event_type == sdl3.SDL_EVENT_KEY_DOWN:
+            keyboard = event.key
+            scancode = int(keyboard.scancode)
 
-        elif event.type == pygame.MOUSEBUTTONUP:
-            self._mouse_down.discard(event.button)
-            self._mouse_released.add(event.button)
+            if scancode not in self._keys_down:
+                self._keys_pressed.add(scancode)
 
-        elif event.type == pygame.MOUSEMOTION:
-            self._mouse_dx += event.rel[0]
-            self._mouse_dy += event.rel[1]
+            self._keys_down.add(scancode)
+            return
 
-            self._mouse_x = event.pos[0]
-            self._mouse_y = event.pos[1]
+        if event_type == sdl3.SDL_EVENT_KEY_UP:
+            keyboard = event.key
+            scancode = int(keyboard.scancode)
 
-        elif event.type == pygame.MOUSEWHEEL:
-            self._wheel_x += event.x
-            self._wheel_y += event.y
+            self._keys_down.discard(scancode)
+            self._keys_released.add(scancode)
+            return
 
-        elif event.type == pygame.WINDOWFOCUSLOST:
+        # --------------------------------------------------------------
+        # Mouse motion
+        # --------------------------------------------------------------
+
+        if event_type == sdl3.SDL_EVENT_MOUSE_MOTION:
+            motion = event.motion
+
+            self._mouse_x = float(motion.x)
+            self._mouse_y = float(motion.y)
+
+            self._mouse_dx += float(motion.xrel)
+            self._mouse_dy += float(motion.yrel)
+            return
+
+        # --------------------------------------------------------------
+        # Mouse buttons
+        # --------------------------------------------------------------
+
+        if event_type == sdl3.SDL_EVENT_MOUSE_BUTTON_DOWN:
+            mouse = event.button
+            button = int(mouse.button)
+
+            if button not in self._mouse_down:
+                self._mouse_pressed.add(button)
+
+            self._mouse_down.add(button)
+
+            self._mouse_x = float(mouse.x)
+            self._mouse_y = float(mouse.y)
+            return
+
+        if event_type == sdl3.SDL_EVENT_MOUSE_BUTTON_UP:
+            mouse = event.button
+            button = int(mouse.button)
+
+            self._mouse_down.discard(button)
+            self._mouse_released.add(button)
+
+            self._mouse_x = float(mouse.x)
+            self._mouse_y = float(mouse.y)
+            return
+
+        # --------------------------------------------------------------
+        # Mouse wheel
+        # --------------------------------------------------------------
+
+        if event_type == sdl3.SDL_EVENT_MOUSE_WHEEL:
+            wheel = event.wheel
+
+            self._wheel_x += float(wheel.x)
+            self._wheel_y += float(wheel.y)
+            return
+
+        # --------------------------------------------------------------
+        # Window focus
+        # --------------------------------------------------------------
+
+        if event_type == sdl3.SDL_EVENT_WINDOW_FOCUS_LOST:
+            self._focused = False
+
             self._keys_down.clear()
             self._mouse_down.clear()
+            return
 
-        elif event.type == pygame.ACTIVEEVENT:
-            # Compatibility with pygame configurations where focus
-            # events are still delivered through ACTIVEEVENT.
-            if getattr(event, "gain", 1) == 0:
-                self._keys_down.clear()
-                self._mouse_down.clear()
+        if event_type == sdl3.SDL_EVENT_WINDOW_FOCUS_GAINED:
+            self._focused = True
+            return
 
-
-    def _update_mouse_position(self) -> None:
-        """
-        Reads the mouse position on the main thread only.
-        """
-        position = pygame.mouse.get_pos()
-
-        self._mouse_x = position[0]
-        self._mouse_y = position[1]
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
 
     def _update_action_states(self) -> None:
-        for action, state in self._actions.items():
-            old_down = state.down
-            new_down = self._action_is_down(action)
+        for action, bindings in self._bindings.items():
+            state = self._actions[action]
 
-            state.down = new_down
+            down = False
+            pressed = False
+            released = False
 
-            if new_down and not old_down:
-                state.pressed = True
+            for binding in bindings:
+                if binding.type is BindingType.KEYBOARD:
+                    code = binding.code
 
-            if old_down and not new_down:
-                state.released = True
+                    if code in self._keys_down:
+                        down = True
 
-    def _action_is_down(self, action: str) -> bool:
-        bindings = self._bindings.get(action)
+                    if code in self._keys_pressed:
+                        pressed = True
 
-        if not bindings:
-            return False
+                    if code in self._keys_released:
+                        released = True
 
-        for binding in bindings:
-            if binding.type is BindingType.KEYBOARD:
-                if binding.code in self._keys_down:
-                    return True
+                elif binding.type is BindingType.MOUSE:
+                    button = binding.code
 
-            elif binding.type is BindingType.MOUSE:
-                if binding.code in self._mouse_down:
-                    return True
+                    if button in self._mouse_down:
+                        down = True
 
-        return False
+                    if button in self._mouse_pressed:
+                        pressed = True
 
-    # ------------------------------------------------------------------
-    # Action state
-    # ------------------------------------------------------------------
+                    if button in self._mouse_released:
+                        released = True
 
-    def is_down(self, action: str) -> bool:
-        action = self._normalize_action(action)
-
-        state = self._actions.get(action)
-
-        if state is None:
-            return False
-
-        return state.down
-
-    def is_pressed(self, action: str) -> bool:
-        action = self._normalize_action(action)
-
-        state = self._actions.get(action)
-
-        if state is None:
-            return False
-
-        return state.pressed
-
-    def is_released(self, action: str) -> bool:
-        action = self._normalize_action(action)
-
-        state = self._actions.get(action)
-
-        if state is None:
-            return False
-
-        return state.released
-
-    def action_state(self, action: str) -> ActionState:
-        action = self._normalize_action(action)
-
-        return self._actions.setdefault(action, ActionState())
-
-    def actions(self) -> tuple[str, ...]:
-        return tuple(self._actions)
+            state.down = down
+            state.pressed = pressed
+            state.released = released
 
     # ------------------------------------------------------------------
-    # Keyboard
+    # Direct keyboard API
     # ------------------------------------------------------------------
 
     def key_down(self, key: str | int) -> bool:
-        resolved = resolve_keyboard_key(key)
-        return resolved in self._keys_down
+        return resolve_keyboard_key(key) in self._keys_down
+
+    def key_pressed(self, key: str | int) -> bool:
+        return resolve_keyboard_key(key) in self._keys_pressed
+
+    def key_released(self, key: str | int) -> bool:
+        return resolve_keyboard_key(key) in self._keys_released
 
     # ------------------------------------------------------------------
-    # Mouse
+    # Direct mouse API
     # ------------------------------------------------------------------
 
-    def mouse_position(self) -> tuple[int, int]:
+    def mouse_down(self, button: str | int) -> bool:
+        return resolve_mouse_button(button) in self._mouse_down
+
+    def mouse_pressed(self, button: str | int) -> bool:
+        return resolve_mouse_button(button) in self._mouse_pressed
+
+    def mouse_released(self, button: str | int) -> bool:
+        return resolve_mouse_button(button) in self._mouse_released
+
+    # ------------------------------------------------------------------
+    # Generic API
+    # ------------------------------------------------------------------
+
+    def is_down(self, key: str | int) -> bool:
+        return self.key_down(key)
+
+    def is_pressed(self, key: str | int) -> bool:
+        return self.key_pressed(key)
+
+    def is_released(self, key: str | int) -> bool:
+        return self.key_released(key)
+
+    # ------------------------------------------------------------------
+    # Action API
+    # ------------------------------------------------------------------
+
+    def action_state(self, action: str) -> ActionState:
+        if action not in self._actions:
+            self._actions[action] = ActionState()
+
+        return self._actions[action]
+
+    def action(self, action: str) -> ActionState:
+        return self.action_state(action)
+
+    def actions(self) -> dict[str, ActionState]:
+        return self._actions
+
+    def action_down(self, action: str) -> bool:
+        return self.action_state(action).down
+
+    def action_pressed(self, action: str) -> bool:
+        return self.action_state(action).pressed
+
+    def action_released(self, action: str) -> bool:
+        return self.action_state(action).released
+
+    # ------------------------------------------------------------------
+    # Mouse state
+    # ------------------------------------------------------------------
+
+    @property
+    def mouse_position(self) -> tuple[float, float]:
         return self._mouse_x, self._mouse_y
 
-    def mouse_delta(self) -> tuple[int, int]:
+    @property
+    def mouse_delta(self) -> tuple[float, float]:
         return self._mouse_dx, self._mouse_dy
 
-    def mouse_down(self, button: int | str = 1) -> bool:
-        resolved = resolve_mouse_button(button)
-        return resolved in self._mouse_down
-
-    def mouse_pressed(self, button: int | str = 1) -> bool:
-        resolved = resolve_mouse_button(button)
-
-        return self._mouse_button_transition(
-            resolved,
-            pressed=True,
-        )
-
-    def mouse_released(self, button: int | str = 1) -> bool:
-        resolved = resolve_mouse_button(button)
-
-        return self._mouse_button_transition(
-            resolved,
-            pressed=False,
-        )
-
-    def _mouse_button_transition(
-        self,
-        button: int,
-        *,
-        pressed: bool,
-    ) -> bool:
-        """
-        Transition state is reconstructed from the current event frame.
-
-        This is intentionally kept separate from pygame.mouse so workers
-        never have to access pygame.
-        """
-        # The transition flags are populated in begin_frame.
-        if pressed:
-            return button in self._mouse_pressed
-        return button in self._mouse_released
-
-    def wheel(self) -> tuple[int, int]:
+    @property
+    def wheel(self) -> tuple[float, float]:
         return self._wheel_x, self._wheel_y
 
     # ------------------------------------------------------------------
-    # Frame state
+    # State access
     # ------------------------------------------------------------------
-
-    def end_frame(self) -> None:
-        """
-        Reserved for future input features.
-
-        Kept as a lifecycle hook so the input pipeline can grow without
-        changing the game loop API.
-        """
-        pass
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _normalize_action(action: str) -> str:
-        if not isinstance(action, str):
-            raise TypeError("Action name must be a string.")
-
-        action = action.strip().lower()
-
-        if not action:
-            raise ValueError("Action name cannot be empty.")
-
-        return action
 
     @property
     def keys_down(self) -> frozenset[int]:
@@ -438,3 +447,16 @@ class InputManager:
     @property
     def mouse_buttons_down(self) -> frozenset[int]:
         return frozenset(self._mouse_down)
+
+    @property
+    def focused(self) -> bool:
+        return self._focused
+
+    # ------------------------------------------------------------------
+    # End frame
+    # ------------------------------------------------------------------
+
+    def end_frame(self) -> None:
+        ThreadContext.assert_main_thread(
+            "InputManager.end_frame() must run on the main thread"
+        )

@@ -5,7 +5,11 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from nexora.assets.asset import Asset, AssetStatus
-from nexora.assets.loader import AssetLoader, TextureLoader
+from nexora.assets.loader import (
+    AssetLoader,
+    ImageData,
+    TextureLoader,
+)
 
 T = TypeVar("T")
 
@@ -14,12 +18,17 @@ class AssetManager:
     """
     Central manager for Nexora assets.
 
-    Assets are cached by their normalized absolute path. Loading the same
-    asset multiple times therefore returns the cached resource instead of
-    loading it again.
+    Assets are cached by their normalized absolute path.
+
+    Texture assets are loaded through SDL3/SDL3_image and returned
+    as CPU-side ImageData. GPU resources are created separately on
+    the rendering thread.
     """
 
-    def __init__(self, asset_root: str | Path = "assets") -> None:
+    def __init__(
+        self,
+        asset_root: str | Path = "assets",
+    ) -> None:
         self.root = Path(asset_root).resolve()
 
         self._assets: dict[str, Asset] = {}
@@ -27,26 +36,19 @@ class AssetManager:
 
         self._lock = threading.RLock()
 
-        self.register_loader(
+        texture_loader = TextureLoader()
+
+        for extension in (
             ".png",
-            TextureLoader(),
-        )
-        self.register_loader(
             ".jpg",
-            TextureLoader(),
-        )
-        self.register_loader(
             ".jpeg",
-            TextureLoader(),
-        )
-        self.register_loader(
             ".bmp",
-            TextureLoader(),
-        )
-        self.register_loader(
             ".webp",
-            TextureLoader(),
-        )
+        ):
+            self.register_loader(
+                extension,
+                texture_loader,
+            )
 
     # ------------------------------------------------------------------
     # Paths
@@ -84,7 +86,10 @@ class AssetManager:
         with self._lock:
             self._loaders[extension] = loader
 
-    def unregister_loader(self, extension: str) -> None:
+    def unregister_loader(
+        self,
+        extension: str,
+    ) -> None:
         extension = extension.lower()
 
         if not extension.startswith("."):
@@ -113,14 +118,20 @@ class AssetManager:
         with self._lock:
             cached = self._assets.get(cache_key)
 
-            if cached is not None and cached.loaded and not force_reload:
+            if (
+                cached is not None
+                and cached.loaded
+                and not force_reload
+            ):
                 return cached.value
 
-            loader = self._loaders.get(resolved.suffix.lower())
+            loader = self._loaders.get(
+                resolved.suffix.lower()
+            )
 
             if loader is None:
                 raise ValueError(
-                    f"No asset loader registered for extension "
+                    "No asset loader registered for extension "
                     f"{resolved.suffix!r}."
                 )
 
@@ -138,6 +149,7 @@ class AssetManager:
 
         try:
             value = loader.load(resolved)
+
         except BaseException as exc:
             with self._lock:
                 asset.status = AssetStatus.FAILED
@@ -157,21 +169,34 @@ class AssetManager:
         path: str | Path,
         *,
         force_reload: bool = False,
-    ):
+    ) -> ImageData:
         """
-        Load an image texture.
+        Load an image into CPU-side RGBA image data.
+
+        The returned ImageData does not contain a GPU resource.
+        GPU upload is handled separately by the renderer.
         """
 
-        return self.load(
+        value = self.load(
             path,
             force_reload=force_reload,
         )
+
+        if not isinstance(value, ImageData):
+            raise TypeError(
+                f"Asset '{path}' is not an ImageData texture."
+            )
+
+        return value
 
     # ------------------------------------------------------------------
     # Cache
     # ------------------------------------------------------------------
 
-    def get(self, path: str | Path) -> Any | None:
+    def get(
+        self,
+        path: str | Path,
+    ) -> Any | None:
         """
         Return a cached asset without loading it.
         """
@@ -187,31 +212,55 @@ class AssetManager:
 
             return asset.value
 
-    def is_loaded(self, path: str | Path) -> bool:
+    def is_loaded(
+        self,
+        path: str | Path,
+    ) -> bool:
         resolved = self.resolve(path)
         cache_key = str(resolved).lower()
 
         with self._lock:
             asset = self._assets.get(cache_key)
-            return asset is not None and asset.loaded
 
-    def is_loading(self, path: str | Path) -> bool:
+            return (
+                asset is not None
+                and asset.loaded
+            )
+
+    def is_loading(
+        self,
+        path: str | Path,
+    ) -> bool:
         resolved = self.resolve(path)
         cache_key = str(resolved).lower()
 
         with self._lock:
             asset = self._assets.get(cache_key)
-            return asset is not None and asset.status is AssetStatus.LOADING
 
-    def is_failed(self, path: str | Path) -> bool:
+            return (
+                asset is not None
+                and asset.status is AssetStatus.LOADING
+            )
+
+    def is_failed(
+        self,
+        path: str | Path,
+    ) -> bool:
         resolved = self.resolve(path)
         cache_key = str(resolved).lower()
 
         with self._lock:
             asset = self._assets.get(cache_key)
-            return asset is not None and asset.failed
 
-    def unload(self, path: str | Path) -> bool:
+            return (
+                asset is not None
+                and asset.failed
+            )
+
+    def unload(
+        self,
+        path: str | Path,
+    ) -> bool:
         """
         Remove one asset from the cache.
         """
@@ -220,7 +269,13 @@ class AssetManager:
         cache_key = str(resolved).lower()
 
         with self._lock:
-            return self._assets.pop(cache_key, None) is not None
+            return (
+                self._assets.pop(
+                    cache_key,
+                    None,
+                )
+                is not None
+            )
 
     def clear(self) -> None:
         """
@@ -240,9 +295,15 @@ class AssetManager:
 
     def paths(self) -> list[str]:
         with self._lock:
-            return [asset.path for asset in self._assets.values()]
+            return [
+                asset.path
+                for asset in self._assets.values()
+            ]
 
-    def get_asset(self, path: str | Path) -> Asset | None:
+    def get_asset(
+        self,
+        path: str | Path,
+    ) -> Asset | None:
         resolved = self.resolve(path)
         cache_key = str(resolved).lower()
 

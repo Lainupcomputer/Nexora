@@ -1,13 +1,14 @@
+
 from __future__ import annotations
 
-import pygame
+
 
 from nexora.core.game_loop import GameLoop
 from nexora.debug.logger import Logger
 from nexora.input import InputManager
 from nexora.threading.context import ThreadContext
-from nexora.window.window import Window
 from nexora.rendering import Renderer
+from nexora.rendering.gpu import GPUContext
 from nexora.assets import AssetManager
 
 
@@ -16,6 +17,8 @@ class Engine:
     Central Nexora Engine.
 
     Owns the main engine services and controls the game loop.
+
+    Rendering is GPU-first and uses SDL_GPU directly.
     """
 
     def __init__(
@@ -31,47 +34,67 @@ class Engine:
         fullscreen: bool = False,
         vsync: bool = False,
     ) -> None:
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
         # Main thread
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
         ThreadContext.initialize()
 
-        # --------------------------------------------------------------
-        # Pygame
-        # --------------------------------------------------------------
+  
 
-        pygame.init()
-
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
         # Core services
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
         self.logger = Logger()
         self.assets = AssetManager()
 
-        self.window = Window(
+        # ------------------------------------------------------
+        # GPU
+        # ------------------------------------------------------
+
+        self.gpu_context = GPUContext(
             width=width,
             height=height,
             title=title,
-            resizable=resizable,
-            fullscreen=fullscreen,
             vsync=vsync,
         )
+
         self.renderer = Renderer(
-            self.window
+            self.gpu_context,
         )
+
+        # ------------------------------------------------------
+        # Window
+        #
+        # GPUContext currently owns the actual SDL window.
+        # The public window reference is kept for compatibility.
+        # ------------------------------------------------------
+
+        self.window = self.gpu_context
+
+        # ------------------------------------------------------
+        # Input
+        # ------------------------------------------------------
 
         self.input = InputManager(
             logger=self.logger,
         )
 
-        self.game = game
-        self.game.renderer = self.renderer
+        # ------------------------------------------------------
+        # Game
+        # ------------------------------------------------------
 
-        # --------------------------------------------------------------
+        self.game = game
+
+        self.game.engine = self
+        self.game.renderer = self.renderer
+        self.game.input = self.input
+        self.game.window = self.window
+
+        # ------------------------------------------------------
         # Game loop
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
         self.loop = GameLoop(
             self,
@@ -79,20 +102,12 @@ class Engine:
             fixed_delta_time=fixed_delta_time,
         )
 
-        # --------------------------------------------------------------
-        # Game references
-        # --------------------------------------------------------------
-
-        self.game.engine = self
-        self.game.input = self.input
-        self.game.window = self.window
-
         self._initialized = False
         self._shutdown = False
 
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
+    # ==========================================================
+    # PROPERTIES
+    # ==========================================================
 
     @property
     def time(self):
@@ -110,13 +125,9 @@ class Engine:
     def frame(self) -> int:
         return self.loop.frame
 
-    @property
-    def surface(self):
-        return self.window.surface
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+    # ==========================================================
+    # INITIALIZATION
+    # ==========================================================
 
     def initialize(self) -> None:
         if self._initialized:
@@ -143,10 +154,15 @@ class Engine:
             "Nexora Engine initialized."
         )
 
+    # ==========================================================
+    # RUN
+    # ==========================================================
+
     def run(self) -> None:
         if self._shutdown:
             raise RuntimeError(
-                "Cannot run an engine that has already been shut down."
+                "Cannot run an engine that has already "
+                "been shut down."
             )
 
         if not self._initialized:
@@ -162,8 +178,16 @@ class Engine:
 
         self.loop.run()
 
+    # ==========================================================
+    # STOP
+    # ==========================================================
+
     def stop(self) -> None:
         self.loop.stop()
+
+    # ==========================================================
+    # SHUTDOWN
+    # ==========================================================
 
     def shutdown(self) -> None:
         if self._shutdown:
@@ -182,10 +206,23 @@ class Engine:
         if shutdown is not None:
             shutdown()
 
-        self.window.destroy()
+        # ------------------------------------------------------
+        # Destroy renderer first.
+        #
+        # GPU resources depend on the GPU device.
+        # ------------------------------------------------------
+
+        self.renderer.destroy()
+
+        # ------------------------------------------------------
+        # Destroy GPU context after all GPU resources.
+        # ------------------------------------------------------
+
+        self.gpu_context.destroy()
 
         self._shutdown = True
 
         self.logger.info(
             "Nexora Engine shut down."
         )
+

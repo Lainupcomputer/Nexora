@@ -1,218 +1,328 @@
 from __future__ import annotations
 
-import struct
 from pathlib import Path
 
-import sdl3
-
-from .buffer import GPUBuffer
-from .pipeline import GPUPipeline
-from .shader import GPUShader
+from nexora.rendering.camera import Camera
+from nexora.rendering.gpu.render_snapshot import RenderSnapshot
+from nexora.rendering.gpu.sprite_batch import GPUSpriteBatch
 
 
 class GPURenderer:
     """
     High-level GPU renderer for Nexora.
 
-    Owns GPU rendering resources but does not own the GPU context.
-    All SDL_GPU operations are expected to run on the main thread.
+    GPUContext owns:
+        - SDL window
+        - GPU device
+        - swapchain
+        - command buffer
+
+    GPURenderer owns:
+        - sprite batches
+        - render API
+        - frame rendering
+        - camera reference
     """
 
-    def __init__(self, context):
+    def __init__(
+        self,
+        context,
+        *,
+        max_sprites: int = 10000,
+        workers: int = 4,
+        camera: Camera | None = None,
+    ) -> None:
         self.context = context
-        self.device = context.device
 
-        self.vertex_shader = None
-        self.fragment_shader = None
-        self.pipeline = None
-        self.vertex_buffer = None
+        # The GPURenderer keeps the exact same Camera object
+        # that is exposed by the public Renderer.
+        self.camera = camera if camera is not None else Camera()
 
-        self._create_resources()
-
-    @property
-    def width(self) -> int:
-        return self.context.swapchain_width or self.context.width
-
-    @property
-    def height(self) -> int:
-        return self.context.swapchain_height or self.context.height
-
-    def _shader_directory(self) -> Path:
-        return (
+        shader_dir = (
             Path(__file__).resolve().parent.parent
             / "shaders"
             / "bin"
         )
 
-    def _create_resources(self):
-        shader_dir = self._shader_directory()
-
-        self.vertex_shader = GPUShader(
-            self.device,
-            shader_dir / "triangle.vert.dxil",
-            sdl3.SDL_GPU_SHADERSTAGE_VERTEX,
-            sdl3.SDL_GPU_SHADERFORMAT_DXIL,
+        self.sprite_batch = GPUSpriteBatch(
+            context,
+            max_sprites=max_sprites,
+            vertex_shader_path=(
+                shader_dir / "sprite.vert.spv"
+            ),
+            fragment_shader_path=(
+                shader_dir / "sprite.frag.spv"
+            ),
+            camera=self.camera,
+            workers=workers,
         )
 
-        self.fragment_shader = GPUShader(
-            self.device,
-            shader_dir / "triangle.frag.dxil",
-            sdl3.SDL_GPU_SHADERSTAGE_FRAGMENT,
-            sdl3.SDL_GPU_SHADERFORMAT_DXIL,
+        self._frame_started = False
+        self._active_texture = None
+        self._destroyed = False
+
+    # ==========================================================
+    # PROPERTIES
+    # ==========================================================
+
+    @property
+    def width(self) -> int:
+        return (
+            self.context.swapchain_width
+            or self.context.width
         )
 
-        vertices = (
-            struct.pack(
-                "<ff ffff",
-                -0.7,
-                -0.6,
-                1.0,
-                0.1,
-                0.1,
-                1.0,
+    @property
+    def height(self) -> int:
+        return (
+            self.context.swapchain_height
+            or self.context.height
+        )
+
+    @property
+    def driver(self) -> str:
+        return self.context.driver
+
+    # ==========================================================
+    # FRAME
+    # ==========================================================
+
+    def begin_frame(self) -> bool:
+        if self._destroyed:
+            raise RuntimeError(
+                "GPURenderer has been destroyed"
             )
-            + struct.pack(
-                "<ff ffff",
-                0.7,
-                -0.6,
-                0.1,
-                1.0,
-                0.1,
-                1.0,
+
+        if self._frame_started:
+            raise RuntimeError(
+                "GPU renderer frame already active"
             )
-            + struct.pack(
-                "<ff ffff",
-                0.0,
-                0.7,
-                0.1,
-                0.5,
-                1.0,
-                1.0,
-            )
-        )
 
-        self.vertex_buffer = GPUBuffer(
-            self.device,
-            len(vertices),
-            sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
-            initial_data=vertices,
-        )
-
-        vertex_description = sdl3.SDL_GPUVertexBufferDescription()
-        vertex_description.slot = 0
-        vertex_description.pitch = 24
-        vertex_description.input_rate = (
-            sdl3.SDL_GPU_VERTEXINPUTRATE_VERTEX
-        )
-        vertex_description.instance_step_rate = 0
-
-        vertex_attributes = (
-            sdl3.SDL_GPUVertexAttribute * 2
-        )()
-
-        vertex_attributes[0].location = 0
-        vertex_attributes[0].buffer_slot = 0
-        vertex_attributes[0].format = (
-            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
-        )
-        vertex_attributes[0].offset = 0
-
-        vertex_attributes[1].location = 1
-        vertex_attributes[1].buffer_slot = 0
-        vertex_attributes[1].format = (
-            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4
-        )
-        vertex_attributes[1].offset = 8
-
-        vertex_descriptions = (
-            sdl3.SDL_GPUVertexBufferDescription * 1
-        )()
-        vertex_descriptions[0] = vertex_description
-
-        self.pipeline = GPUPipeline(
-            self.device,
-            vertex_shader=self.vertex_shader.shader,
-            fragment_shader=self.fragment_shader.shader,
-            vertex_buffer_descriptions=vertex_descriptions,
-            vertex_attributes=vertex_attributes,
-            primitive_type=sdl3.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
-            target_format=self.context.swapchain_format,
-        )
-
-    def begin(self, clear_color=(0.03, 0.03, 0.05, 1.0)):
-        return self.context.begin_render_pass(clear_color)
-
-    def draw_triangle(self, render_pass):
-        self.pipeline.bind(render_pass)
-
-        binding = self.vertex_buffer.binding()
-
-        sdl3.SDL_BindGPUVertexBuffers(
-            render_pass,
-            0,
-            binding,
-            1,
-        )
-
-        sdl3.SDL_DrawGPUPrimitives(
-            render_pass,
-            3,
-            1,
-            0,
-            0,
-        )
-
-    def render(self):
         if not self.context.begin_frame():
             return False
 
-        render_pass = None
+        self._frame_started = True
+        self._active_texture = None
+
+        return True
+
+    def end_frame(self) -> bool:
+        if self._destroyed:
+            raise RuntimeError(
+                "GPURenderer has been destroyed"
+            )
+
+        if not self._frame_started:
+            raise RuntimeError(
+                "GPU renderer frame is not active"
+            )
 
         try:
-            render_pass = self.begin()
+            if self._active_texture is None:
+                render_pass = self.context.begin_render_pass(
+                    (
+                        0.05,
+                        0.05,
+                        0.08,
+                        1.0,
+                    )
+                )
 
-            self.draw_triangle(render_pass)
+                try:
+                    pass
+                finally:
+                    self.context.end_render_pass(
+                        render_pass
+                    )
 
-            self.context.end_render_pass(render_pass)
-            render_pass = None
+            else:
+                command_buffer = (
+                    self.context.command_buffer
+                )
+
+                self.sprite_batch.render_into(
+                    command_buffer
+                )
+
+                render_pass = self.context.begin_render_pass(
+                    (
+                        0.05,
+                        0.05,
+                        0.08,
+                        1.0,
+                    )
+                )
+
+                try:
+                    self.sprite_batch.draw_into(
+                        render_pass
+                    )
+                finally:
+                    self.context.end_render_pass(
+                        render_pass
+                    )
 
             self.context.end_frame()
 
             return True
 
         except Exception:
-            self.context.cancel_frame()
+            if self.context.frame_active:
+                try:
+                    self.context.cancel_frame()
+                except Exception:
+                    pass
+
             raise
 
-    def run(self):
-        running = True
+        finally:
+            self._active_texture = None
+            self._frame_started = False
 
-        while running:
-            for event in self.context.poll_events():
-                if event.type == sdl3.SDL_EVENT_QUIT:
-                    running = False
+            self.sprite_batch._texture = None
+            self.sprite_batch._sprite_count = 0
 
-            self.render()
+    # ==========================================================
+    # SPRITES
+    # ==========================================================
 
-    def destroy(self):
-        if self.device:
-            try:
-                sdl3.SDL_WaitForGPUIdle(self.device)
-            except Exception:
-                pass
+    def sprite(
+        self,
+        texture,
+        x: float,
+        y: float,
+        *,
+        width: float,
+        height: float,
+        rotation: float = 0.0,
+        origin=(0.5, 0.5),
+        alpha: float = 1.0,
+        flip_x: bool = False,
+        flip_y: bool = False,
+        uv=(0.0, 0.0, 1.0, 1.0),
+    ) -> None:
+        self._require_frame()
 
-        if self.pipeline:
-            self.pipeline.destroy()
-            self.pipeline = None
+        self._set_texture(texture)
 
-        if self.vertex_shader:
-            self.vertex_shader.destroy()
-            self.vertex_shader = None
+        self.sprite_batch.add(
+            x,
+            y,
+            width,
+            height,
+            rotation=rotation,
+            origin=origin,
+            alpha=alpha,
+            flip_x=flip_x,
+            flip_y=flip_y,
+            uv=uv,
+        )
 
-        if self.fragment_shader:
-            self.fragment_shader.destroy()
-            self.fragment_shader = None
+    def sprites(
+        self,
+        texture,
+        sprites,
+        *,
+        workers: int | None = None,
+    ) -> int:
+        self._require_frame()
 
-        if self.vertex_buffer:
-            self.vertex_buffer.destroy()
-            self.vertex_buffer = None
+        self._set_texture(texture)
+
+        return self.sprite_batch.add_many(
+            sprites,
+            workers=workers,
+        )
+
+    # ==========================================================
+    # ECS / SNAPSHOT
+    # ==========================================================
+
+    def submit(
+        self,
+        snapshot: RenderSnapshot,
+        texture,
+    ) -> int:
+        self._require_frame()
+
+        self._set_texture(texture)
+
+        return self.sprite_batch.submit_snapshot(
+            snapshot
+        )
+
+    # ==========================================================
+    # TEXTURE
+    # ==========================================================
+
+    def _set_texture(self, texture) -> None:
+        if self._active_texture is texture:
+            return
+
+        if self._active_texture is not None:
+            raise RuntimeError(
+                "Multiple textures in one frame are not "
+                "supported by the current SpriteBatch. "
+                "Texture batching will be added next."
+            )
+
+        self._active_texture = texture
+
+        self.sprite_batch.begin(
+            texture
+        )
+
+    # ==========================================================
+    # VALIDATION
+    # ==========================================================
+
+    def _require_frame(self) -> None:
+        if not self._frame_started:
+            raise RuntimeError(
+                "Call renderer.begin_frame() before drawing"
+            )
+
+    # ==========================================================
+    # RESIZE
+    # ==========================================================
+
+    def resize(
+        self,
+        width: int,
+        height: int,
+    ) -> None:
+        self.context.resize(
+            width,
+            height,
+        )
+
+    # ==========================================================
+    # SHUTDOWN
+    # ==========================================================
+
+    def destroy(self) -> None:
+        if self._destroyed:
+            return
+
+        self._destroyed = True
+
+        try:
+            self.sprite_batch.destroy()
+        finally:
+            self._active_texture = None
+
+    # ==========================================================
+    # CONTEXT MANAGER
+    # ==========================================================
+
+    def __enter__(self):
+        return self
+
+    def __exit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback,
+    ):
+        self.destroy()
+
