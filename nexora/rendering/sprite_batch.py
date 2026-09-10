@@ -1,5 +1,7 @@
+
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -72,6 +74,7 @@ class SpriteBatch:
         - UV regions
         - layer ordering
         - CPU-side frustum culling
+        - rotation-aware CPU-side frustum culling
         - bulk sprite submission
     """
 
@@ -162,8 +165,14 @@ class SpriteBatch:
         # ----------------------------------------------------------
         # High-level sprite storage
         #
-        # We keep this separate from GPUSpriteBatch so that layer
-        # sorting and culling can happen before GPU submission.
+        # Each entry is:
+        #
+        #     (
+        #         layer,
+        #         gpu_instance_data,
+        #     )
+        #
+        # Layer sorting happens before GPU submission.
         # ----------------------------------------------------------
 
         self._sprites: list[
@@ -369,14 +378,33 @@ class SpriteBatch:
         width: float,
         height: float,
         origin: tuple[float, float],
+        rotation: float = 0.0,
     ) -> bool:
         """
         CPU-side sprite visibility test.
 
-        This performs only mathematical bounds checks.
+        The test uses the exact axis-aligned bounding box of the
+        rotated sprite.
+
+        The four sprite corners are transformed around the
+        configured origin. This makes the culling correct for:
+
+            - rotation
+            - arbitrary origin
+            - world-space sprites
+            - screen-space sprites
+            - camera zoom
+
+        The result is conservative because it tests the rotated
+        sprite's AABB. Therefore a sprite is never incorrectly
+        removed while any part of its rotated bounds is visible.
 
         No SDL or GPU operations are performed here.
         """
+
+        # ------------------------------------------------------
+        # World -> screen
+        # ------------------------------------------------------
 
         if self._world_space:
             x, y = self.renderer.world_to_screen(
@@ -398,18 +426,186 @@ class SpriteBatch:
                 width *= zoom
                 height *= zoom
 
-        left = (
-            x
-            - width * origin[0]
+        # ------------------------------------------------------
+        # Fast path for non-rotated sprites.
+        #
+        # This avoids trigonometric calculations for the common
+        # case where rotation is zero.
+        # ------------------------------------------------------
+
+        if rotation == 0.0:
+            left = (
+                x
+                - width * origin[0]
+            )
+
+            top = (
+                y
+                - height * origin[1]
+            )
+
+            right = (
+                left
+                + width
+            )
+
+            bottom = (
+                top
+                + height
+            )
+
+            return not (
+                right < 0.0
+                or bottom < 0.0
+                or left >= self.renderer.width
+                or top >= self.renderer.height
+            )
+
+        # ------------------------------------------------------
+        # Rotated bounding box.
+        #
+        # Sprite local coordinates are defined relative to the
+        # sprite position, which is the configured origin.
+        #
+        # Example for origin=(0.5, 0.5):
+        #
+        #       (-w/2,-h/2) -------- (w/2,-h/2)
+        #             |                  |
+        #             |       center     |
+        #             |                  |
+        #       (-w/2, h/2) -------- (w/2, h/2)
+        #
+        # The corners are rotated around (x, y).
+        # ------------------------------------------------------
+
+        ox, oy = origin
+
+        left_local = (
+            -width * ox
         )
 
-        top = (
-            y
-            - height * origin[1]
+        right_local = (
+            width * (1.0 - ox)
         )
 
-        right = left + width
-        bottom = top + height
+        top_local = (
+            -height * oy
+        )
+
+        bottom_local = (
+            height * (1.0 - oy)
+        )
+
+        cos_rotation = math.cos(
+            rotation
+        )
+
+        sin_rotation = math.sin(
+            rotation
+        )
+
+        # ------------------------------------------------------
+        # Rotate all four corners.
+        #
+        # For:
+        #
+        #   rx = lx * cos - ly * sin
+        #   ry = lx * sin + ly * cos
+        #
+        # We only need min/max values, so no temporary tuples
+        # or lists are created.
+        # ------------------------------------------------------
+
+        rx = (
+            left_local * cos_rotation
+            - top_local * sin_rotation
+        )
+
+        ry = (
+            left_local * sin_rotation
+            + top_local * cos_rotation
+        )
+
+        min_x = rx
+        max_x = rx
+        min_y = ry
+        max_y = ry
+
+        rx = (
+            right_local * cos_rotation
+            - top_local * sin_rotation
+        )
+
+        ry = (
+            right_local * sin_rotation
+            + top_local * cos_rotation
+        )
+
+        if rx < min_x:
+            min_x = rx
+
+        if rx > max_x:
+            max_x = rx
+
+        if ry < min_y:
+            min_y = ry
+
+        if ry > max_y:
+            max_y = ry
+
+        rx = (
+            left_local * cos_rotation
+            - bottom_local * sin_rotation
+        )
+
+        ry = (
+            left_local * sin_rotation
+            + bottom_local * cos_rotation
+        )
+
+        if rx < min_x:
+            min_x = rx
+
+        if rx > max_x:
+            max_x = rx
+
+        if ry < min_y:
+            min_y = ry
+
+        if ry > max_y:
+            max_y = ry
+
+        rx = (
+            right_local * cos_rotation
+            - bottom_local * sin_rotation
+        )
+
+        ry = (
+            right_local * sin_rotation
+            + bottom_local * cos_rotation
+        )
+
+        if rx < min_x:
+            min_x = rx
+
+        if rx > max_x:
+            max_x = rx
+
+        if ry < min_y:
+            min_y = ry
+
+        if ry > max_y:
+            max_y = ry
+
+        # ------------------------------------------------------
+        # Convert local bounding box to screen coordinates.
+        # ------------------------------------------------------
+
+        left = x + min_x
+        right = x + max_x
+
+        top = y + min_y
+        bottom = y + max_y
 
         return not (
             right < 0.0
@@ -417,6 +613,61 @@ class SpriteBatch:
             or left >= self.renderer.width
             or top >= self.renderer.height
         )
+
+    # ==========================================================
+    # STORE SPRITE
+    # ==========================================================
+
+    def _store_sprite(
+        self,
+        *,
+        layer: int,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        rotation: float,
+        origin: tuple[float, float],
+        alpha: float,
+        flip_x: bool,
+        flip_y: bool,
+        uv: tuple[
+            float,
+            float,
+            float,
+            float,
+        ],
+    ) -> None:
+        """
+        Store one already prepared sprite.
+
+        Layer information stays attached to the sprite until
+        end(), where all sprites are sorted before GPU submission.
+        """
+
+        self._sprites.append(
+            (
+                int(layer),
+                (
+                    float(x),
+                    float(y),
+                    float(width),
+                    float(height),
+                    float(rotation),
+                    float(origin[0]),
+                    float(origin[1]),
+                    float(alpha),
+                    bool(flip_x),
+                    bool(flip_y),
+                    float(uv[0]),
+                    float(uv[1]),
+                    float(uv[2]),
+                    float(uv[3]),
+                ),
+            )
+        )
+
+        self._submitted += 1
 
     # ==========================================================
     # ADD
@@ -504,9 +755,7 @@ class SpriteBatch:
             height = texture_height
 
         # ------------------------------------------------------
-        # Apply scale here.
-        #
-        # GPUSpriteBatch itself expects the final dimensions.
+        # Apply scale
         # ------------------------------------------------------
 
         final_width = (
@@ -530,37 +779,28 @@ class SpriteBatch:
                 final_width,
                 final_height,
                 origin,
+                float(rotation),
             ):
                 self._culled += 1
                 return
 
         # ------------------------------------------------------
-        # Store GPU instance data
+        # Store
         # ------------------------------------------------------
 
-        self._sprites.append(
-            (
-                int(layer),
-                (
-                    float(x),
-                    float(y),
-                    final_width,
-                    final_height,
-                    float(rotation),
-                    float(origin[0]),
-                    float(origin[1]),
-                    float(alpha),
-                    bool(flip_x),
-                    bool(flip_y),
-                    float(uv[0]),
-                    float(uv[1]),
-                    float(uv[2]),
-                    float(uv[3]),
-                ),
-            )
+        self._store_sprite(
+            layer=layer,
+            x=x,
+            y=y,
+            width=final_width,
+            height=final_height,
+            rotation=rotation,
+            origin=origin,
+            alpha=alpha,
+            flip_x=flip_x,
+            flip_y=flip_y,
+            uv=uv,
         )
-
-        self._submitted += 1
 
     # ==========================================================
     # FAST ADD
@@ -651,33 +891,24 @@ class SpriteBatch:
                 final_width,
                 final_height,
                 origin,
+                float(rotation),
             ):
                 self._culled += 1
                 return
 
-        self._sprites.append(
-            (
-                int(layer),
-                (
-                    float(x),
-                    float(y),
-                    final_width,
-                    final_height,
-                    float(rotation),
-                    float(origin[0]),
-                    float(origin[1]),
-                    float(alpha),
-                    bool(flip_x),
-                    bool(flip_y),
-                    float(uv[0]),
-                    float(uv[1]),
-                    float(uv[2]),
-                    float(uv[3]),
-                ),
-            )
+        self._store_sprite(
+            layer=layer,
+            x=x,
+            y=y,
+            width=final_width,
+            height=final_height,
+            rotation=rotation,
+            origin=origin,
+            alpha=alpha,
+            flip_x=flip_x,
+            flip_y=flip_y,
+            uv=uv,
         )
-
-        self._submitted += 1
 
     # ==========================================================
     # BULK
@@ -690,10 +921,11 @@ class SpriteBatch:
         workers: int | None = None,
     ) -> int:
         """
-        Add already prepared GPU instances.
+        Add many already prepared sprites.
 
-        Expected format:
+        Supported input formats:
 
+        14 values:
             (
                 x,
                 y,
@@ -710,6 +942,19 @@ class SpriteBatch:
                 uv_width,
                 uv_height,
             )
+
+        15 values:
+            Same as above plus:
+
+                layer
+
+        When the layer is omitted, layer 0 is used.
+
+        Sprites are stored in the high-level queue first.
+        Layer sorting is performed by end(), together with all
+        other SpriteBatch submissions.
+
+        Rotation-aware culling is applied to every sprite.
         """
 
         if not self._active:
@@ -727,64 +972,97 @@ class SpriteBatch:
             return 0
 
         # ------------------------------------------------------
-        # Culling
+        # Normalize and cull.
+        #
+        # Layer information remains attached to the sprite.
         # ------------------------------------------------------
 
-        if self.culling:
-            visible = []
+        added = 0
 
-            for sprite in sprites:
-                (
+        for sprite in sprites:
+            sprite_length = len(sprite)
+
+            if sprite_length not in (14, 15):
+                raise ValueError(
+                    "SpriteBatch.add_many() expects sprites "
+                    "with 14 or 15 values."
+                )
+
+            (
+                x,
+                y,
+                width,
+                height,
+                rotation,
+                origin_x,
+                origin_y,
+                alpha,
+                flip_x,
+                flip_y,
+                uv_x,
+                uv_y,
+                uv_width,
+                uv_height,
+            ) = sprite[:14]
+
+            layer = (
+                sprite[14]
+                if sprite_length == 15
+                else 0
+            )
+
+            x = float(x)
+            y = float(y)
+            width = float(width)
+            height = float(height)
+            rotation = float(rotation)
+            origin_x = float(origin_x)
+            origin_y = float(origin_y)
+            alpha = float(alpha)
+
+            uv_x = float(uv_x)
+            uv_y = float(uv_y)
+            uv_width = float(uv_width)
+            uv_height = float(uv_height)
+
+            if self.culling:
+                if not self._is_visible(
                     x,
                     y,
                     width,
                     height,
+                    (
+                        origin_x,
+                        origin_y,
+                    ),
                     rotation,
+                ):
+                    self._culled += 1
+                    continue
+
+            self._store_sprite(
+                layer=int(layer),
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                rotation=rotation,
+                origin=(
                     origin_x,
                     origin_y,
-                    alpha,
-                    flip_x,
-                    flip_y,
+                ),
+                alpha=alpha,
+                flip_x=bool(flip_x),
+                flip_y=bool(flip_y),
+                uv=(
                     uv_x,
                     uv_y,
                     uv_width,
                     uv_height,
-                ) = sprite
+                ),
+            )
 
-                if self._is_visible(
-                    float(x),
-                    float(y),
-                    float(width),
-                    float(height),
-                    (
-                        float(origin_x),
-                        float(origin_y),
-                    ),
-                ):
-                    visible.append(
-                        sprite
-                    )
-                else:
-                    self._culled += 1
-
-            sprites = visible
-
-        if not sprites:
-            return 0
-
-        # ------------------------------------------------------
-        # GPU batch does the actual bulk preparation.
-        #
-        # This is where large batches can use real worker
-        # threads on Python 3.13t.
-        # ------------------------------------------------------
-
-        added = self.gpu_batch.add_many(
-            sprites,
-            workers=workers,
-        )
-
-        self._submitted += added
+            added += 1
 
         return added
 
@@ -799,6 +1077,14 @@ class SpriteBatch:
         This does NOT submit the GPU command buffer.
 
         GPURenderer.end_frame() owns the actual GPU submission.
+
+        Layer ordering:
+
+            smaller layer -> rendered first
+            larger layer  -> rendered later / on top
+
+        Python's list.sort() is stable, so sprites with the same
+        layer preserve their original submission order.
         """
 
         ThreadContext.assert_main_thread(
@@ -817,6 +1103,14 @@ class SpriteBatch:
 
             # --------------------------------------------------
             # Layer ordering
+            #
+            # Stable sort:
+            #
+            #   layer 0
+            #   layer 1
+            #   layer 2
+            #
+            # Equal layers retain submission order.
             # --------------------------------------------------
 
             if len(self._sprites) > 1:
@@ -826,8 +1120,7 @@ class SpriteBatch:
 
                 multiple_layers = any(
                     layer != first_layer
-                    for layer, _
-                    in self._sprites[1:]
+                    for layer, _ in self._sprites[1:]
                 )
 
                 if multiple_layers:
@@ -841,13 +1134,11 @@ class SpriteBatch:
 
             gpu_sprites = [
                 sprite
-                for _, sprite
-                in self._sprites
+                for _, sprite in self._sprites
             ]
 
             # --------------------------------------------------
-            # Let GPUSpriteBatch prepare the actual instance
-            # buffer.
+            # Submit the final ordered data to the GPU batch.
             # --------------------------------------------------
 
             self.gpu_batch.add_many(

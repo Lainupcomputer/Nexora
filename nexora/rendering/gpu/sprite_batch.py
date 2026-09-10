@@ -5,7 +5,9 @@ import os
 import struct
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
 from nexora.rendering.gpu.render_snapshot import RenderSnapshot
+
 import sdl3
 
 from nexora.rendering.gpu.buffer import GPUBuffer
@@ -153,18 +155,24 @@ class GPUSpriteBatch:
                 f"({count} > {self.max_sprites})"
             )
 
-        snapshot_size = count * self.INSTANCE_STRIDE
+        snapshot_size = (
+            count
+            * self.INSTANCE_STRIDE
+        )
 
         # Snapshot direkt in unseren bestehenden CPU-Buffer kopieren.
         #
         # Wichtig:
         # Hier findet noch KEIN SDL/GPU-Zugriff statt.
-        self._instance_data[:snapshot_size] = snapshot.data[:snapshot_size]
+        self._instance_data[
+            :snapshot_size
+        ] = snapshot.data[
+            :snapshot_size
+        ]
 
         self._sprite_count = count
 
         return count
-
 
     # ==========================================================
     # ERROR
@@ -314,10 +322,13 @@ class GPUSpriteBatch:
         # ------------------------------------------------------
 
         vertex_buffer_descriptions[0].slot = 0
+
         vertex_buffer_descriptions[0].pitch = 16
+
         vertex_buffer_descriptions[0].input_rate = (
             sdl3.SDL_GPU_VERTEXINPUTRATE_VERTEX
         )
+
         vertex_buffer_descriptions[0].instance_step_rate = 0
 
         # ------------------------------------------------------
@@ -325,12 +336,15 @@ class GPUSpriteBatch:
         # ------------------------------------------------------
 
         vertex_buffer_descriptions[1].slot = 1
+
         vertex_buffer_descriptions[1].pitch = (
             self.INSTANCE_STRIDE
         )
+
         vertex_buffer_descriptions[1].input_rate = (
             sdl3.SDL_GPU_VERTEXINPUTRATE_INSTANCE
         )
+
         vertex_buffer_descriptions[1].instance_step_rate = 0
 
         # ------------------------------------------------------
@@ -492,7 +506,48 @@ class GPUSpriteBatch:
             self.context.swapchain_format
         )
 
-        color_target.blend_state.enable_blend = False
+        # ------------------------------------------------------
+        # Alpha blending
+        #
+        # Standard Straight-Alpha-Blending:
+        #
+        #   RGB:
+        #       src.rgb * src.a
+        #       + dst.rgb * (1 - src.a)
+        #
+        #   Alpha:
+        #       src.a * 1
+        #       + dst.a * (1 - src.a)
+        #
+        # Dadurch funktionieren normale PNGs mit
+        # Transparenz und der per-instance Alpha-Wert.
+        # ------------------------------------------------------
+
+        color_target.blend_state.enable_blend = True
+
+        color_target.blend_state.src_color_blendfactor = (
+            sdl3.SDL_GPU_BLENDFACTOR_SRC_ALPHA
+        )
+
+        color_target.blend_state.dst_color_blendfactor = (
+            sdl3.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA
+        )
+
+        color_target.blend_state.color_blend_op = (
+            sdl3.SDL_GPU_BLENDOP_ADD
+        )
+
+        color_target.blend_state.src_alpha_blendfactor = (
+            sdl3.SDL_GPU_BLENDFACTOR_ONE
+        )
+
+        color_target.blend_state.dst_alpha_blendfactor = (
+            sdl3.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA
+        )
+
+        color_target.blend_state.alpha_blend_op = (
+            sdl3.SDL_GPU_BLENDOP_ADD
+        )
 
         color_target.blend_state.enable_color_write_mask = True
 
@@ -524,6 +579,7 @@ class GPUSpriteBatch:
         target_info.num_color_targets = 1
 
         target_info.depth_stencil_format = 0
+
         target_info.has_depth_stencil_target = False
 
         # ------------------------------------------------------
@@ -563,14 +619,19 @@ class GPUSpriteBatch:
         )
 
         info.vertex_input_state = vertex_input
+
         info.primitive_type = (
             sdl3.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST
         )
 
         info.rasterizer_state = rasterizer
+
         info.multisample_state = multisample
+
         info.depth_stencil_state = depth
+
         info.target_info = target_info
+
         info.props = 0
 
         self.pipeline = (
@@ -664,6 +725,7 @@ class GPUSpriteBatch:
         """
 
         ox, oy = origin
+
         uv_x, uv_y, uv_w, uv_h = uv
 
         offset = (
@@ -770,7 +832,8 @@ class GPUSpriteBatch:
             return 0
 
         if (
-            self._sprite_count + count
+            self._sprite_count
+            + count
             > self.max_sprites
         ):
             raise RuntimeError(
@@ -793,6 +856,7 @@ class GPUSpriteBatch:
             )
 
             self._sprite_count += count
+
             return count
 
         # ------------------------------------------------------
@@ -815,7 +879,9 @@ class GPUSpriteBatch:
         # ------------------------------------------------------
 
         chunk_size = (
-            count + worker_count - 1
+            count
+            + worker_count
+            - 1
         ) // worker_count
 
         futures = []
@@ -829,7 +895,8 @@ class GPUSpriteBatch:
             )
 
             local_end = min(
-                local_start + chunk_size,
+                local_start
+                + chunk_size,
                 count,
             )
 
@@ -842,7 +909,8 @@ class GPUSpriteBatch:
                     sprites,
                     local_start,
                     local_end,
-                    start_index + local_start,
+                    start_index
+                    + local_start,
                 )
             )
 
@@ -879,7 +947,9 @@ class GPUSpriteBatch:
             start,
             end,
         ):
-            sprite = sprites[local_index]
+            sprite = sprites[
+                local_index
+            ]
 
             (
                 x,
@@ -900,7 +970,10 @@ class GPUSpriteBatch:
 
             destination_index = (
                 destination_start
-                + (local_index - start)
+                + (
+                    local_index
+                    - start
+                )
             )
 
             offset = (
@@ -947,6 +1020,7 @@ class GPUSpriteBatch:
             camera_zoom = 1.0
             shake_x = 0.0
             shake_y = 0.0
+
         else:
             camera_x = float(
                 self.camera.x
@@ -994,8 +1068,6 @@ class GPUSpriteBatch:
 
             0.0,
         )
-
-
 
     # ==========================================================
     # RENDER INTO ACTIVE FRAME
@@ -1186,8 +1258,6 @@ class GPUSpriteBatch:
         )
 
         return self._sprite_count
-
-
 
     # ==========================================================
     # END
@@ -1502,3 +1572,4 @@ class GPUSpriteBatch:
         traceback,
     ):
         self.destroy()
+
