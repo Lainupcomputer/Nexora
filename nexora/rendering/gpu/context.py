@@ -1,8 +1,19 @@
 from __future__ import annotations
 
 import ctypes
+from enum import Enum
 
 import sdl3
+
+
+class WindowMode(str, Enum):
+    """
+    Nexora window modes.
+    """
+
+    WINDOWED = "windowed"
+    BORDERLESS = "borderless"
+    FULLSCREEN = "fullscreen"
 
 
 class GPUContext:
@@ -15,9 +26,11 @@ class GPUContext:
         - GPU device
         - swapchain
         - per-frame command buffer
+        - window mode
+        - VSync configuration
 
-    All SDL/GPU operations are expected to happen on the thread
-    that created the context.
+    All SDL/GPU operations are expected to happen on the
+    thread that created the context.
     """
 
     def __init__(
@@ -29,17 +42,36 @@ class GPUContext:
         debug=True,
         frames_in_flight=2,
         vsync=True,
+        resizable=False,
+        window_mode=WindowMode.WINDOWED,
     ):
         self.width = int(width)
         self.height = int(height)
         self.title = str(title)
 
+        if self.width <= 0:
+            raise ValueError(
+                "Window width must be greater than 0."
+            )
+
+        if self.height <= 0:
+            raise ValueError(
+                "Window height must be greater than 0."
+            )
+
         self.debug = bool(debug)
+
         self.frames_in_flight = max(
             1,
             min(3, int(frames_in_flight)),
         )
+
         self.vsync = bool(vsync)
+        self.resizable = bool(resizable)
+
+        self.window_mode = WindowMode(
+            window_mode
+        )
 
         self.window = None
         self.device = None
@@ -55,9 +87,9 @@ class GPUContext:
 
         self._initialize()
 
-    # ------------------------------------------------------------------
+    # ==============================================================
     # Helpers
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     @staticmethod
     def _decode_error(error) -> str:
@@ -72,7 +104,11 @@ class GPUContext:
 
         return str(error)
 
-    def _check(self, condition, message):
+    def _check(
+        self,
+        condition,
+        message,
+    ):
         if not condition:
             error = self._decode_error(
                 sdl3.SDL_GetError()
@@ -82,9 +118,9 @@ class GPUContext:
                 f"{message}: {error}"
             )
 
-    # ------------------------------------------------------------------
+    # ==============================================================
     # Initialization
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def _initialize(self):
         self._check(
@@ -116,11 +152,22 @@ class GPUContext:
             raise
 
     def _create_window(self):
+        flags = 0
+
+        if self.resizable:
+            flags |= sdl3.SDL_WINDOW_RESIZABLE
+
+        if self.window_mode == WindowMode.BORDERLESS:
+            flags |= sdl3.SDL_WINDOW_BORDERLESS
+
+        elif self.window_mode == WindowMode.FULLSCREEN:
+            flags |= sdl3.SDL_WINDOW_FULLSCREEN
+
         self.window = sdl3.SDL_CreateWindow(
             self.title.encode("utf-8"),
             self.width,
             self.height,
-            0,
+            flags,
         )
 
         self._check(
@@ -156,28 +203,35 @@ class GPUContext:
         )
 
     def _configure_swapchain(self):
-        # VSYNC is SDL_GPU's default presentation mode.
         if self.vsync:
-            return
-
-        present_mode = (
-            sdl3.SDL_GPU_PRESENTMODE_IMMEDIATE
-        )
-
-        supported = (
-            sdl3.SDL_WindowSupportsGPUPresentMode(
-                self.device,
-                self.window,
-                present_mode,
+            present_mode = (
+                sdl3.SDL_GPU_PRESENTMODE_VSYNC
             )
-        )
 
-        if not supported:
-            print(
-                "GPU present mode IMMEDIATE is not supported. "
-                "Falling back to VSYNC."
+        else:
+            present_mode = (
+                sdl3.SDL_GPU_PRESENTMODE_IMMEDIATE
             )
-            return
+
+            supported = (
+                sdl3.SDL_WindowSupportsGPUPresentMode(
+                    self.device,
+                    self.window,
+                    present_mode,
+                )
+            )
+
+            if not supported:
+                print(
+                    "GPU present mode IMMEDIATE is not "
+                    "supported. Falling back to VSYNC."
+                )
+
+                self.vsync = True
+
+                present_mode = (
+                    sdl3.SDL_GPU_PRESENTMODE_VSYNC
+                )
 
         self._check(
             sdl3.SDL_SetGPUSwapchainParameters(
@@ -189,9 +243,9 @@ class GPUContext:
             "SDL_SetGPUSwapchainParameters failed",
         )
 
-    # ------------------------------------------------------------------
+    # ==============================================================
     # Properties
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     @property
     def driver(self) -> str:
@@ -230,9 +284,30 @@ class GPUContext:
             self.swapchain_height,
         )
 
-    # ------------------------------------------------------------------
+    @property
+    def is_fullscreen(self) -> bool:
+        return (
+            self.window_mode
+            == WindowMode.FULLSCREEN
+        )
+
+    @property
+    def is_borderless(self) -> bool:
+        return (
+            self.window_mode
+            == WindowMode.BORDERLESS
+        )
+
+    @property
+    def is_windowed(self) -> bool:
+        return (
+            self.window_mode
+            == WindowMode.WINDOWED
+        )
+
+    # ==============================================================
     # Frame handling
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def begin_frame(self) -> bool:
         if not self.initialized:
@@ -283,8 +358,8 @@ class GPUContext:
         self.swapchain_width = width.value
         self.swapchain_height = height.value
 
-        # SDL can return no texture when the window is minimized
-        # or otherwise temporarily unavailable.
+        # SDL can return no texture when the window is
+        # minimized or temporarily unavailable.
         if not texture:
             sdl3.SDL_SubmitGPUCommandBuffer(
                 self.command_buffer
@@ -299,7 +374,10 @@ class GPUContext:
 
         return True
 
-    def begin_render_pass(self, clear_color):
+    def begin_render_pass(
+        self,
+        clear_color,
+    ):
         if not self.frame_active:
             raise RuntimeError(
                 "No active GPU frame"
@@ -349,7 +427,10 @@ class GPUContext:
 
         return render_pass
 
-    def end_render_pass(self, render_pass):
+    def end_render_pass(
+        self,
+        render_pass,
+    ):
         if render_pass:
             sdl3.SDL_EndGPURenderPass(
                 render_pass
@@ -396,9 +477,9 @@ class GPUContext:
                 "SDL_WaitForGPUIdle failed",
             )
 
-    # ------------------------------------------------------------------
+    # ==============================================================
     # SDL3 Events
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def poll_events(self):
         """
@@ -419,24 +500,233 @@ class GPUContext:
 
             yield event
 
-    # ------------------------------------------------------------------
-    # Window
-    # ------------------------------------------------------------------
+    # ==============================================================
+    # Window Size
+    # ==============================================================
 
-    def resize(self, width, height):
-        self.width = int(width)
-        self.height = int(height)
+    def resize(
+        self,
+        width: int,
+        height: int,
+    ):
+        """
+        Request a new window size.
 
-        if self.window:
-            sdl3.SDL_SetWindowSize(
-                self.window,
-                self.width,
-                self.height,
+        SDL3 treats this as an asynchronous request. The
+        actual size is updated when SDL reports the resulting
+        resize and when the swapchain is acquired.
+        """
+
+        if not self.initialized:
+            raise RuntimeError(
+                "GPUContext is not initialized"
             )
 
-    # ------------------------------------------------------------------
+        if width <= 0:
+            raise ValueError(
+                "Window width must be greater than 0."
+            )
+
+        if height <= 0:
+            raise ValueError(
+                "Window height must be greater than 0."
+            )
+
+        self._check(
+            sdl3.SDL_SetWindowSize(
+                self.window,
+                int(width),
+                int(height),
+            ),
+            "SDL_SetWindowSize failed",
+        )
+
+    # ==============================================================
+    # Window Modes
+    # ==============================================================
+
+    def set_windowed(self):
+        """
+        Switch to normal decorated window mode.
+        """
+
+        if not self.initialized:
+            raise RuntimeError(
+                "GPUContext is not initialized"
+            )
+
+        self._check(
+            sdl3.SDL_SetWindowFullscreen(
+                self.window,
+                False,
+            ),
+            "SDL_SetWindowFullscreen(false) failed",
+        )
+
+        self._check(
+            sdl3.SDL_SetWindowBordered(
+                self.window,
+                True,
+            ),
+            "SDL_SetWindowBordered(true) failed",
+        )
+
+        self.window_mode = (
+            WindowMode.WINDOWED
+        )
+
+    def set_borderless(self):
+        """
+        Switch to a borderless window.
+
+        The current window size is preserved. This is a
+        borderless window, not fullscreen.
+        """
+
+        if not self.initialized:
+            raise RuntimeError(
+                "GPUContext is not initialized"
+            )
+
+        self._check(
+            sdl3.SDL_SetWindowFullscreen(
+                self.window,
+                False,
+            ),
+            "SDL_SetWindowFullscreen(false) failed",
+        )
+
+        self._check(
+            sdl3.SDL_SetWindowBordered(
+                self.window,
+                False,
+            ),
+            "SDL_SetWindowBordered(false) failed",
+        )
+
+        self.window_mode = (
+            WindowMode.BORDERLESS
+        )
+
+    def set_fullscreen(self):
+        """
+        Switch to SDL3 fullscreen.
+
+        SDL3 uses borderless fullscreen desktop mode when
+        no explicit fullscreen display mode is selected.
+        """
+
+        if not self.initialized:
+            raise RuntimeError(
+                "GPUContext is not initialized"
+            )
+
+        self._check(
+            sdl3.SDL_SetWindowFullscreen(
+                self.window,
+                True,
+            ),
+            "SDL_SetWindowFullscreen(true) failed",
+        )
+
+        self.window_mode = (
+            WindowMode.FULLSCREEN
+        )
+
+    def set_window_mode(
+        self,
+        mode: WindowMode | str,
+    ):
+        """
+        Set the current window mode.
+        """
+
+        mode = WindowMode(mode)
+
+        if mode == WindowMode.WINDOWED:
+            self.set_windowed()
+
+        elif mode == WindowMode.BORDERLESS:
+            self.set_borderless()
+
+        elif mode == WindowMode.FULLSCREEN:
+            self.set_fullscreen()
+
+    def toggle_fullscreen(self):
+        """
+        Toggle between fullscreen and windowed mode.
+        """
+
+        if self.window_mode == WindowMode.FULLSCREEN:
+            self.set_windowed()
+        else:
+            self.set_fullscreen()
+
+    # ==============================================================
+    # VSync
+    # ==============================================================
+
+    def set_vsync(
+        self,
+        enabled: bool,
+    ):
+        """
+        Enable or disable GPU presentation VSync.
+
+        If IMMEDIATE presentation is unsupported, SDL falls
+        back to VSYNC automatically.
+        """
+
+        if not self.initialized:
+            raise RuntimeError(
+                "GPUContext is not initialized"
+            )
+
+        enabled = bool(enabled)
+
+        if enabled:
+            present_mode = (
+                sdl3.SDL_GPU_PRESENTMODE_VSYNC
+            )
+
+        else:
+            present_mode = (
+                sdl3.SDL_GPU_PRESENTMODE_IMMEDIATE
+            )
+
+            supported = (
+                sdl3.SDL_WindowSupportsGPUPresentMode(
+                    self.device,
+                    self.window,
+                    present_mode,
+                )
+            )
+
+            if not supported:
+                print(
+                    "GPU present mode IMMEDIATE is not "
+                    "supported. Keeping VSYNC enabled."
+                )
+
+                self.vsync = True
+
+                return
+
+        self._check(
+            sdl3.SDL_SetGPUSwapchainParameters(
+                self.device,
+                self.window,
+                sdl3.SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+                present_mode,
+            ),
+            "SDL_SetGPUSwapchainParameters failed",
+        )
+
+        self.vsync = enabled
+
+    # ==============================================================
     # Shutdown
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def destroy(self):
         if self.frame_active:
@@ -495,9 +785,9 @@ class GPUContext:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # Context manager
-    # ------------------------------------------------------------------
+    # ==============================================================
+    # Context Manager
+    # ==============================================================
 
     def __enter__(self):
         return self

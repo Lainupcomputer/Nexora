@@ -1,4 +1,4 @@
-from nexora.rendering.gpu.context import GPUContext
+from nexora.rendering.gpu.context import GPUContext, WindowMode
 from nexora.rendering.gpu.shader import GPUShader
 from nexora.rendering.gpu.pipeline import GPUPipeline
 from nexora.rendering.gpu.buffer import GPUBuffer
@@ -19,4 +19,5 @@ __all__ = [
     "GPURenderer",
     "GPUSpriteBatch",
     "RenderSnapshot",
+    "WindowMode",
 ]

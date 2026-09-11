@@ -1,6 +1,4 @@
-
 from __future__ import annotations
-
 
 
 from nexora.core.game_loop import GameLoop
@@ -8,7 +6,7 @@ from nexora.debug.logger import Logger
 from nexora.input import InputManager
 from nexora.threading.context import ThreadContext
 from nexora.rendering import Renderer
-from nexora.rendering.gpu import GPUContext
+from nexora.rendering.gpu import GPUContext, WindowMode
 from nexora.assets import AssetManager
 
 
@@ -32,6 +30,7 @@ class Engine:
         fixed_delta_time: float = 1.0 / 60.0,
         resizable: bool = True,
         fullscreen: bool = False,
+        window_mode: WindowMode | str | None = None,
         vsync: bool = False,
     ) -> None:
         # ------------------------------------------------------
@@ -40,14 +39,25 @@ class Engine:
 
         ThreadContext.initialize()
 
-  
-
         # ------------------------------------------------------
         # Core services
         # ------------------------------------------------------
 
         self.logger = Logger()
         self.assets = AssetManager()
+
+        # ------------------------------------------------------
+        # Window mode
+        # ------------------------------------------------------
+
+        if window_mode is None:
+            window_mode = (
+                WindowMode.FULLSCREEN
+                if fullscreen
+                else WindowMode.WINDOWED
+            )
+        else:
+            window_mode = WindowMode(window_mode)
 
         # ------------------------------------------------------
         # GPU
@@ -58,6 +68,8 @@ class Engine:
             height=height,
             title=title,
             vsync=vsync,
+            resizable=resizable,
+            window_mode=window_mode,
         )
 
         self.renderer = Renderer(
@@ -67,8 +79,8 @@ class Engine:
         # ------------------------------------------------------
         # Window
         #
-        # GPUContext currently owns the actual SDL window.
-        # The public window reference is kept for compatibility.
+        # GPUContext owns the actual SDL window.
+        # The public window reference exposes the same object.
         # ------------------------------------------------------
 
         self.window = self.gpu_context
@@ -225,4 +237,3 @@ class Engine:
         self.logger.info(
             "Nexora Engine shut down."
         )
-

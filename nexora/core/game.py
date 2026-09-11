@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from nexora.core.engine import Engine
+from nexora.rendering.gpu import WindowMode
 
 
 class Game:
@@ -23,6 +24,7 @@ class Game:
         fixed_delta_time: float = 1.0 / 60.0,
         resizable: bool = True,
         fullscreen: bool = False,
+        window_mode: WindowMode | str | None = None,
         vsync: bool = False,
     ) -> None:
         self.engine: Engine | None = None
@@ -38,6 +40,7 @@ class Game:
         self._fixed_delta_time = fixed_delta_time
         self._resizable = resizable
         self._fullscreen = fullscreen
+        self._window_mode = window_mode
         self._vsync = vsync
 
         self._running = False
@@ -50,17 +53,12 @@ class Game:
     def initialize(self) -> None:
         """
         Called automatically by Engine.initialize().
-
-        Override this in subclasses to initialize game-specific
-        state, entities, assets, etc.
         """
         pass
 
     def shutdown(self) -> None:
         """
         Called automatically before the engine is shut down.
-
-        Override this in subclasses for game-specific cleanup.
         """
         pass
 
@@ -71,9 +69,6 @@ class Game:
     def run(self) -> None:
         """
         Start the game.
-
-        Engine initialization happens automatically and all
-        engine/GPU/SDL resources are cleaned up when the game exits.
         """
 
         if self._shutdown:
@@ -90,6 +85,7 @@ class Game:
             fixed_delta_time=self._fixed_delta_time,
             resizable=self._resizable,
             fullscreen=self._fullscreen,
+            window_mode=self._window_mode,
             vsync=self._vsync,
         )
 
@@ -116,28 +112,72 @@ class Game:
             self.engine.stop()
 
     def handle_event(self, event) -> None:
-        """Handle an SDL3 event.
-
-        Override this in a game subclass to react to input,
-        window events, and other SDL3 events.
-        """
+        """Handle an SDL3 event."""
         pass
-
 
     def update(self, delta_time: float) -> None:
         """Update game logic."""
         pass
 
-
     def fixed_update(self, fixed_delta_time: float) -> None:
         """Update fixed-timestep game logic."""
         pass
-
 
     def render(self) -> None:
         """Render the game."""
         pass
 
+    # ==========================================================
+    # WINDOW
+    # ==========================================================
+
+    def set_windowed(self) -> None:
+        self._require_window()
+        self.window.set_windowed()
+
+    def set_borderless(self) -> None:
+        self._require_window()
+        self.window.set_borderless()
+
+    def set_fullscreen(self) -> None:
+        self._require_window()
+        self.window.set_fullscreen()
+
+    def set_window_mode(
+        self,
+        mode: WindowMode | str,
+    ) -> None:
+        self._require_window()
+        self.window.set_window_mode(mode)
+
+    def toggle_fullscreen(self) -> None:
+        self._require_window()
+        self.window.toggle_fullscreen()
+
+    def set_vsync(self, enabled: bool) -> None:
+        self._require_window()
+        self.window.set_vsync(enabled)
+
+    @property
+    def window_mode(self) -> WindowMode:
+        self._require_window()
+        return self.window.window_mode
+
+    @property
+    def vsync(self) -> bool:
+        self._require_window()
+        return self.window.vsync
+
+    @property
+    def fullscreen(self) -> bool:
+        self._require_window()
+        return self.window.is_fullscreen
+
+    def _require_window(self):
+        if self.window is None:
+            raise RuntimeError(
+                "Game has not been started."
+            )
 
     # ==========================================================
     # ENGINE SERVICES

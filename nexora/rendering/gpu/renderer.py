@@ -5,12 +5,16 @@ from pathlib import Path
 from nexora.rendering.camera import Camera
 from nexora.rendering.gpu.render_snapshot import RenderSnapshot
 from nexora.rendering.gpu.sprite_batch import GPUSpriteBatch
-
+from nexora.rendering.gpu.rect_batch import GPURectBatch
+from nexora.rendering.gpu.line_batch import GPULineBatch
+from nexora.rendering.gpu.shape_batch import GPUShapeBatch
+from nexora.rendering.gpu.text_renderer import GPUTextRenderer
 
 class GPURenderer:
     """
     High-level GPU renderer for Nexora.
 
+    ```
     GPUContext owns:
         - SDL window
         - GPU device
@@ -19,9 +23,25 @@ class GPURenderer:
 
     GPURenderer owns:
         - sprite batches
+        - rectangle batches
+        - line batches
+        - shape batches
+        - text renderer
         - render API
         - frame rendering
         - camera reference
+
+    Public drawing API:
+        - sprite()
+        - sprites()
+        - rect()
+        - pixel()
+        - line()
+        - circle()
+        - ellipse()
+        - triangle()
+        - polygon()
+        - text()
     """
 
     def __init__(
@@ -29,20 +49,37 @@ class GPURenderer:
         context,
         *,
         max_sprites: int = 10000,
+        max_shapes: int | None = None,
+        max_lines: int | None = None,
         workers: int = 4,
         camera: Camera | None = None,
+        font=None,
     ) -> None:
         self.context = context
 
         # The GPURenderer keeps the exact same Camera object
         # that is exposed by the public Renderer.
-        self.camera = camera if camera is not None else Camera()
+        self.camera = (
+            camera
+            if camera is not None
+            else Camera()
+        )
+
+        if max_shapes is None:
+            max_shapes = max_sprites
+
+        if max_lines is None:
+            max_lines = max_sprites
 
         shader_dir = (
             Path(__file__).resolve().parent.parent
             / "shaders"
             / "bin"
         )
+
+        # ======================================================
+        # SPRITES
+        # ======================================================
 
         self.sprite_batch = GPUSpriteBatch(
             context,
@@ -56,6 +93,72 @@ class GPURenderer:
             camera=self.camera,
             workers=workers,
         )
+
+        # ======================================================
+        # RECTANGLES
+        # ======================================================
+
+        self.rect_batch = GPURectBatch(
+            context,
+            max_rects=max_sprites,
+            vertex_shader_path=(
+                shader_dir / "rect.vert.spv"
+            ),
+            fragment_shader_path=(
+                shader_dir / "rect.frag.spv"
+            ),
+            camera=self.camera,
+        )
+
+        # ======================================================
+        # LINES
+        # ======================================================
+
+        self.line_batch = GPULineBatch(
+            context,
+            max_lines=max_lines,
+            vertex_shader_path=(
+                shader_dir / "line.vert.spv"
+            ),
+            fragment_shader_path=(
+                shader_dir / "line.frag.spv"
+            ),
+            camera=self.camera,
+        )
+
+        # ======================================================
+        # SHAPES
+        # ======================================================
+
+        self.shape_batch = GPUShapeBatch(
+            context,
+            max_shapes=max_shapes,
+            vertex_shader_path=(
+                shader_dir / "shape.vert.spv"
+            ),
+            fragment_shader_path=(
+                shader_dir / "shape.frag.spv"
+            ),
+            geometry_vertex_shader_path=(
+                shader_dir / "geometry.vert.spv"
+            ),
+            geometry_fragment_shader_path=(
+                shader_dir / "geometry.frag.spv"
+            ),
+            camera=self.camera,
+        )
+
+        # ======================================================
+        # TEXT
+        # ======================================================
+
+        self.text_renderer = None
+
+        if font is not None:
+            self.text_renderer = GPUTextRenderer(
+                context,
+                font,
+            )
 
         self._frame_started = False
         self._active_texture = None
@@ -83,9 +186,9 @@ class GPURenderer:
     def driver(self) -> str:
         return self.context.driver
 
-    # ==========================================================
-    # FRAME
-    # ==========================================================
+# ==========================================================
+# FRAME
+# ==========================================================
 
     def begin_frame(self) -> bool:
         if self._destroyed:
@@ -104,6 +207,13 @@ class GPURenderer:
         self._frame_started = True
         self._active_texture = None
 
+        self.rect_batch.begin()
+        self.line_batch.begin()
+        self.shape_batch.begin()
+
+        if self.text_renderer is not None:
+            self.text_renderer.clear()
+
         return True
 
     def end_frame(self) -> bool:
@@ -118,49 +228,78 @@ class GPURenderer:
             )
 
         try:
-            if self._active_texture is None:
-                render_pass = self.context.begin_render_pass(
-                    (
-                        0.05,
-                        0.05,
-                        0.08,
-                        1.0,
-                    )
-                )
+            command_buffer = self.context.command_buffer
 
-                try:
-                    pass
-                finally:
-                    self.context.end_render_pass(
-                        render_pass
-                    )
+            # --------------------------------------------------
+            # Prepare GPU data
+            # --------------------------------------------------
 
-            else:
-                command_buffer = (
-                    self.context.command_buffer
-                )
-
+            if self._active_texture is not None:
                 self.sprite_batch.render_into(
                     command_buffer
                 )
 
-                render_pass = self.context.begin_render_pass(
-                    (
-                        0.05,
-                        0.05,
-                        0.08,
-                        1.0,
-                    )
+            self.rect_batch.render_into(
+                command_buffer
+            )
+
+            self.line_batch.render_into(
+                command_buffer
+            )
+
+            self.shape_batch.render_into(
+                command_buffer
+            )
+
+            if self.text_renderer is not None:
+                self.text_renderer.render_into(
+                    command_buffer
                 )
 
-                try:
+            # --------------------------------------------------
+            # Render pass
+            # --------------------------------------------------
+
+            render_pass = self.context.begin_render_pass(
+                (0.05, 0.05, 0.08, 1.0)
+            )
+
+            try:
+                # Sprites
+                if self._active_texture is not None:
                     self.sprite_batch.draw_into(
                         render_pass
                     )
-                finally:
-                    self.context.end_render_pass(
+
+                # Rectangles
+                self.rect_batch.draw_into(
+                    render_pass
+                )
+
+                # Lines
+                self.line_batch.draw_into(
+                    render_pass
+                )
+
+                # Shapes
+                self.shape_batch.draw_into(
+                    render_pass
+                )
+
+                # Text
+                if self.text_renderer is not None:
+                    self.text_renderer.draw_into(
                         render_pass
                     )
+
+            finally:
+                self.context.end_render_pass(
+                    render_pass
+                )
+
+            # --------------------------------------------------
+            # Submit
+            # --------------------------------------------------
 
             self.context.end_frame()
 
@@ -182,9 +321,16 @@ class GPURenderer:
             self.sprite_batch._texture = None
             self.sprite_batch._sprite_count = 0
 
-    # ==========================================================
-    # SPRITES
-    # ==========================================================
+            self.rect_batch.clear()
+            self.line_batch.clear()
+            self.shape_batch.clear()
+
+            if self.text_renderer is not None:
+                self.text_renderer.clear()
+
+# ==========================================================
+# SPRITES
+# ==========================================================
 
     def sprite(
         self,
@@ -234,9 +380,225 @@ class GPURenderer:
             workers=workers,
         )
 
-    # ==========================================================
-    # ECS / SNAPSHOT
-    # ==========================================================
+# ==========================================================
+# RECTANGLES
+# ==========================================================
+
+    def rect(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        *,
+        color=(1.0, 1.0, 1.0, 1.0),
+        rotation: float = 0.0,
+        origin=(0.5, 0.5),
+    ) -> None:
+        self._require_frame()
+
+        self.rect_batch.add(
+            x,
+            y,
+            width,
+            height,
+            color=color,
+            rotation=rotation,
+            origin=origin,
+        )
+
+# ==========================================================
+# PIXELS
+# ==========================================================
+
+    def pixel(
+        self,
+        x: float,
+        y: float,
+        *,
+        color=(1.0, 1.0, 1.0, 1.0),
+        size: float = 1.0,
+    ) -> None:
+        """
+        Draw a single pixel-sized point.
+
+        The pixel is implemented as a tiny rectangle so it uses
+        the same coordinate system and batching infrastructure
+        as other basic shapes.
+        """
+
+        self._require_frame()
+
+        self.rect_batch.add(
+            x,
+            y,
+            size,
+            size,
+            color=color,
+            rotation=0.0,
+            origin=(0.5, 0.5),
+        )
+
+# ==========================================================
+# LINES
+# ==========================================================
+
+    def line(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        *,
+        width: float = 1.0,
+        color=(1.0, 1.0, 1.0, 1.0),
+    ) -> None:
+        """
+        Draw a line from (x1, y1) to (x2, y2).
+
+        Coordinates use the same world-space coordinate
+        system as rectangles and sprites.
+        """
+
+        self._require_frame()
+
+        self.line_batch.add(
+            x1,
+            y1,
+            x2,
+            y2,
+            width=width,
+            color=color,
+        )
+
+# ==========================================================
+# CIRCLE
+# ==========================================================
+
+    def circle(
+        self,
+        x: float,
+        y: float,
+        diameter: float,
+        *,
+        color=(1.0, 1.0, 1.0, 1.0),
+        rotation: float = 0.0,
+        origin=(0.5, 0.5),
+    ) -> None:
+        self._require_frame()
+
+        self.shape_batch.circle(
+            x,
+            y,
+            diameter,
+            color=color,
+            rotation=rotation,
+            origin=origin,
+        )
+
+# ==========================================================
+# ELLIPSE
+# ==========================================================
+
+    def ellipse(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        *,
+        color=(1.0, 1.0, 1.0, 1.0),
+        rotation: float = 0.0,
+        origin=(0.5, 0.5),
+    ) -> None:
+        self._require_frame()
+
+        self.shape_batch.ellipse(
+            x,
+            y,
+            width,
+            height,
+            color=color,
+            rotation=rotation,
+            origin=origin,
+        )
+
+# ==========================================================
+# TRIANGLE
+# ==========================================================
+
+    def triangle(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        x3: float,
+        y3: float,
+        *,
+        color=(1.0, 1.0, 1.0, 1.0),
+    ) -> None:
+        self._require_frame()
+
+        self.shape_batch.triangle(
+            x1,
+            y1,
+            x2,
+            y2,
+            x3,
+            y3,
+            color=color,
+        )
+
+# ==========================================================
+# POLYGON
+# ==========================================================
+
+    def polygon(
+        self,
+        points,
+        *,
+        color=(1.0, 1.0, 1.0, 1.0),
+    ) -> None:
+        self._require_frame()
+
+        self.shape_batch.polygon(
+            points,
+            color=color,
+        )
+
+# ==========================================================
+# TEXT
+# ==========================================================
+
+    def text(
+        self,
+        *args,
+        **kwargs,
+    ):
+        """
+        Draw text using GPUTextRenderer.
+
+        Arguments are forwarded directly to the existing
+        GPUTextRenderer.draw() implementation.
+        """
+
+        self._require_frame()
+
+        if self.text_renderer is None:
+            raise RuntimeError(
+                "Text rendering is not initialized. "
+                "Pass a font to GPURenderer(..., font=...)."
+            )
+
+        return self.text_renderer.draw(
+            *args,
+            **kwargs,
+        )
+
+# ==========================================================
+# ECS / SNAPSHOT
+# ==========================================================
 
     def submit(
         self,
@@ -251,9 +613,9 @@ class GPURenderer:
             snapshot
         )
 
-    # ==========================================================
-    # TEXTURE
-    # ==========================================================
+# ==========================================================
+# TEXTURE
+# ==========================================================
 
     def _set_texture(self, texture) -> None:
         if self._active_texture is texture:
@@ -272,9 +634,9 @@ class GPURenderer:
             texture
         )
 
-    # ==========================================================
-    # VALIDATION
-    # ==========================================================
+# ==========================================================
+# VALIDATION
+# ==========================================================
 
     def _require_frame(self) -> None:
         if not self._frame_started:
@@ -282,9 +644,9 @@ class GPURenderer:
                 "Call renderer.begin_frame() before drawing"
             )
 
-    # ==========================================================
-    # RESIZE
-    # ==========================================================
+# ==========================================================
+# RESIZE
+# ==========================================================
 
     def resize(
         self,
@@ -296,9 +658,9 @@ class GPURenderer:
             height,
         )
 
-    # ==========================================================
-    # SHUTDOWN
-    # ==========================================================
+# ==========================================================
+# SHUTDOWN
+# ==========================================================
 
     def destroy(self) -> None:
         if self._destroyed:
@@ -311,9 +673,30 @@ class GPURenderer:
         finally:
             self._active_texture = None
 
-    # ==========================================================
-    # CONTEXT MANAGER
-    # ==========================================================
+        try:
+            self.rect_batch.destroy()
+        finally:
+            self._active_texture = None
+
+        try:
+            self.line_batch.destroy()
+        finally:
+            self._active_texture = None
+
+        try:
+            self.shape_batch.destroy()
+        finally:
+            self._active_texture = None
+
+        if self.text_renderer is not None:
+            try:
+                self.text_renderer.destroy()
+            finally:
+                self.text_renderer = None
+
+# ==========================================================
+# CONTEXT MANAGER
+# ==========================================================
 
     def __enter__(self):
         return self
