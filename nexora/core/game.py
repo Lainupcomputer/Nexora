@@ -184,6 +184,13 @@ class Game:
     # ==========================================================
 
     @property
+    def audio(self):
+        if self.engine is None:
+            raise RuntimeError("Game has not been started.")
+
+        return self.engine.audio
+
+    @property
     def assets(self):
         if self.engine is None:
             raise RuntimeError("Game has not been started.")

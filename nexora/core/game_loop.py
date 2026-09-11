@@ -43,6 +43,7 @@ class GameLoop:
         self.input = engine.input
         self.renderer = engine.renderer
         self.gpu_context = engine.gpu_context
+        self.audio = engine.audio
 
         self.running = False
 
@@ -126,6 +127,14 @@ class GameLoop:
 
                     self._accumulator -= self.fixed_delta_time
 
+
+                # ------------------------------------------------------
+                # Audio
+                # ------------------------------------------------------
+
+                self.audio.player.update()
+
+                
                 # ------------------------------------------------------
                 # Render
                 # ------------------------------------------------------

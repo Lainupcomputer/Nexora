@@ -8,7 +8,7 @@ from nexora.threading.context import ThreadContext
 from nexora.rendering import Renderer
 from nexora.rendering.gpu import GPUContext, WindowMode
 from nexora.assets import AssetManager
-
+from nexora.audio import AudioSystem
 
 class Engine:
     """
@@ -93,6 +93,8 @@ class Engine:
             logger=self.logger,
         )
 
+        self.audio = AudioSystem()
+
         # ------------------------------------------------------
         # Game
         # ------------------------------------------------------
@@ -150,6 +152,7 @@ class Engine:
         )
 
         self.input.initialize()
+        self.audio.initialize()
 
         initialize = getattr(
             self.game,
@@ -204,6 +207,7 @@ class Engine:
     def shutdown(self) -> None:
         if self._shutdown:
             return
+        self.audio.shutdown()
 
         ThreadContext.assert_main_thread(
             "Engine.shutdown"
