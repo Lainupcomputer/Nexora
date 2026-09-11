@@ -101,6 +101,7 @@ class GameLoop:
 
                 # Central input processing.
                 self.input.begin_frame(events)
+                self.game.update(delta)
 
                 # Engine + game event processing.
                 for event in events:
@@ -121,12 +122,11 @@ class GameLoop:
                 # ------------------------------------------------------
 
                 while self._accumulator >= self.fixed_delta_time:
-                    self.game.update(
+                    self.game.fixed_update(
                         self.fixed_delta_time
                     )
 
                     self._accumulator -= self.fixed_delta_time
-
 
                 # ------------------------------------------------------
                 # Audio
@@ -134,14 +134,19 @@ class GameLoop:
 
                 self.audio.player.update()
 
-                
                 # ------------------------------------------------------
                 # Render
                 # ------------------------------------------------------
 
+                interpolation = (
+                    self._accumulator
+                    / self.fixed_delta_time
+                )
+
                 if self.renderer.begin_frame():
                     try:
-                        self.game.render()
+                        self.game.render(interpolation)
+
                     finally:
                         self.renderer.end_frame()
 

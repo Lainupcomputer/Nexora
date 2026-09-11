@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
-
 from nexora.core.engine import Engine
 from nexora.rendering.gpu import WindowMode
+from nexora.scene import Scene, SceneManager
 
 
 class Game:
@@ -45,6 +44,8 @@ class Game:
 
         self._running = False
         self._shutdown = False
+        self._scene: Scene | None = None
+        self._scenes = SceneManager()
 
     # ==========================================================
     # LIFECYCLE
@@ -60,7 +61,8 @@ class Game:
         """
         Called automatically before the engine is shut down.
         """
-        pass
+        self._scenes.clear()
+        self._scene = None
 
     # ==========================================================
     # RUN
@@ -117,15 +119,19 @@ class Game:
 
     def update(self, delta_time: float) -> None:
         """Update game logic."""
-        pass
+
+        if self._scene is not None:
+            self._scene.update(delta_time)
 
     def fixed_update(self, fixed_delta_time: float) -> None:
         """Update fixed-timestep game logic."""
-        pass
 
-    def render(self) -> None:
-        """Render the game."""
-        pass
+        if self._scene is not None:
+            self._scene.fixed_update(fixed_delta_time)
+
+    def render(self, interpolation: float) -> None:
+        if self._scene is not None:
+            self._scene.render(interpolation)
 
     # ==========================================================
     # WINDOW
@@ -182,6 +188,31 @@ class Game:
     # ==========================================================
     # ENGINE SERVICES
     # ==========================================================
+
+    @property
+    def scenes(self) -> SceneManager:
+        return self._scenes
+
+    @property
+    def scene(self) -> Scene | None:
+        return self._scenes.active_scene
+
+    @scene.setter
+    def scene(self, value: Scene | None) -> None:
+        if value is self._scene:
+            return
+
+        if self._scene is not None:
+            self._scene.destroy()
+
+        self._scene = value
+
+        if value is not None:
+            if not self._scenes.is_loaded(value.name):
+                self._scenes.load(value)
+
+            if self._scenes.active_scene is not value:
+                self._scenes.activate(value.name)
 
     @property
     def audio(self):
