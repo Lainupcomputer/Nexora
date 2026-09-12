@@ -9,23 +9,16 @@ from dataclasses import dataclass
 )
 class TileRegion:
     """
-    Describes one tile inside a TileSet.
+    Region of one tile inside a regular tile sheet.
 
-    index:
-        Linear tile index in row-major order.
+    uv uses Nexora's sprite UV format:
 
-    column / row:
-        Grid position inside the sprite sheet.
-
-    uv:
-        Nexora sprite UV format:
-
-            (
-                uv_x,
-                uv_y,
-                uv_width,
-                uv_height,
-            )
+        (
+            uv_x,
+            uv_y,
+            uv_width,
+            uv_height,
+        )
     """
 
     index: int
@@ -43,32 +36,10 @@ class TileRegion:
 
 class TileSet:
     """
-    Describes a regular tile sheet.
+    Describes a regular grid-based tile sheet.
 
-    TileSet itself does not own or load a texture.
-    It only describes the tile grid and calculates regions/UVs.
-
-    Example:
-
-        tileset = TileSet(
-            columns=16,
-            rows=16,
-            tile_width=32,
-            tile_height=32,
-        )
-
-        grass = tileset.region(
-            5
-        )
-
-        renderer.sprite(
-            texture,
-            x,
-            y,
-            width=32,
-            height=32,
-            uv=grass.uv,
-        )
+    TileSet does not own or load a texture.
+    It only describes the source layout.
     """
 
     def __init__(
@@ -132,23 +103,27 @@ class TileSet:
     def tile_count(
         self,
     ) -> int:
-        """
-        Total number of available tiles.
-        """
-
         return (
             self.columns
             * self.rows
         )
 
     @property
+    def tile_size(
+        self,
+    ) -> tuple[
+        int,
+        int,
+    ]:
+        return (
+            self.tile_width,
+            self.tile_height,
+        )
+
+    @property
     def texture_width(
         self,
     ) -> int:
-        """
-        Expected sprite-sheet width in pixels.
-        """
-
         return (
             self.columns
             * self.tile_width
@@ -158,10 +133,6 @@ class TileSet:
     def texture_height(
         self,
     ) -> int:
-        """
-        Expected sprite-sheet height in pixels.
-        """
-
         return (
             self.rows
             * self.tile_height
@@ -179,18 +150,6 @@ class TileSet:
             self.texture_height,
         )
 
-    @property
-    def tile_size(
-        self,
-    ) -> tuple[
-        int,
-        int,
-    ]:
-        return (
-            self.tile_width,
-            self.tile_height,
-        )
-
     # ==============================================================
     # Validation
     # ==============================================================
@@ -199,13 +158,9 @@ class TileSet:
         self,
         index: int,
     ) -> bool:
-        """
-        Return True if a tile index exists.
-        """
-
         return (
             0
-            <= index
+            <= int(index)
             < self.tile_count
         )
 
@@ -222,7 +177,7 @@ class TileSet:
         ):
             raise IndexError(
                 f"Tile index {index} is outside "
-                f"TileSet range "
+                f"the valid range "
                 f"0..{self.tile_count - 1}."
             )
 
@@ -250,7 +205,7 @@ class TileSet:
         ):
             raise IndexError(
                 f"Tile column {column} is outside "
-                f"TileSet range "
+                f"the valid range "
                 f"0..{self.columns - 1}."
             )
 
@@ -260,7 +215,7 @@ class TileSet:
         ):
             raise IndexError(
                 f"Tile row {row} is outside "
-                f"TileSet range "
+                f"the valid range "
                 f"0..{self.rows - 1}."
             )
 
@@ -270,7 +225,7 @@ class TileSet:
         )
 
     # ==============================================================
-    # Index / grid conversion
+    # Index / cell conversion
     # ==============================================================
 
     def index(
@@ -278,10 +233,6 @@ class TileSet:
         column: int,
         row: int,
     ) -> int:
-        """
-        Convert grid coordinates to a linear tile index.
-        """
-
         column, row = (
             self._validate_cell(
                 column,
@@ -302,38 +253,22 @@ class TileSet:
         int,
         int,
     ]:
-        """
-        Convert a linear tile index to:
-
-            (
-                column,
-                row,
-            )
-        """
-
         index = (
             self._validate_index(
                 index
             )
         )
 
-        column = (
-            index
-            % self.columns
-        )
-
-        row = (
-            index
-            // self.columns
-        )
-
         return (
-            column,
-            row,
+            index
+            % self.columns,
+
+            index
+            // self.columns,
         )
 
     # ==============================================================
-    # UV
+    # UVs
     # ==============================================================
 
     def uv(
@@ -346,16 +281,7 @@ class TileSet:
         float,
     ]:
         """
-        Return Nexora UV coordinates for a tile.
-
-        Format:
-
-            (
-                uv_x,
-                uv_y,
-                uv_width,
-                uv_height,
-            )
+        Return Nexora sprite UV coordinates for a tile.
         """
 
         column, row = (
@@ -400,10 +326,6 @@ class TileSet:
         float,
         float,
     ]:
-        """
-        Return UV coordinates directly from grid coordinates.
-        """
-
         return self.uv(
             self.index(
                 column,
@@ -412,17 +334,13 @@ class TileSet:
         )
 
     # ==============================================================
-    # Region
+    # Regions
     # ==============================================================
 
     def region(
         self,
         index: int,
     ) -> TileRegion:
-        """
-        Return complete information about one tile.
-        """
-
         index = (
             self._validate_index(
                 index
@@ -449,10 +367,6 @@ class TileSet:
         column: int,
         row: int,
     ) -> TileRegion:
-        """
-        Return a region using tile grid coordinates.
-        """
-
         return self.region(
             self.index(
                 column,
@@ -461,7 +375,7 @@ class TileSet:
         )
 
     # ==============================================================
-    # Pixel regions
+    # Pixel coordinates
     # ==============================================================
 
     def pixel_rect(
@@ -474,7 +388,7 @@ class TileSet:
         int,
     ]:
         """
-        Return the tile rectangle inside the source texture:
+        Return the source pixel rectangle:
 
             (
                 x,

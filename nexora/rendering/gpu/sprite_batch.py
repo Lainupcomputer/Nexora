@@ -1558,6 +1558,35 @@ class GPUSpriteBatch:
         self._texture = None
         self._instance_data = bytearray()
 
+
+    def flush(
+        self,
+    ) -> None:
+        """
+        Render the currently prepared sprite instances into the
+        already active GPU frame.
+
+        This method does NOT begin or end a GPU frame.
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        if self._sprite_count <= 0:
+            return
+
+        if not self.context.frame_active:
+            raise RuntimeError(
+                "GPUSpriteBatch.flush() requires "
+                "an active GPU frame."
+            )
+
+        # The GPU upload/render code from the old end()
+        # goes here.
+
+
     # ==========================================================
     # CONTEXT MANAGER
     # ==========================================================

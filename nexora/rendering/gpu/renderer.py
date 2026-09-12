@@ -365,6 +365,7 @@ class GPURenderer:
             uv=uv,
         )
 
+
     def sprites(
         self,
         texture,
@@ -372,15 +373,56 @@ class GPURenderer:
         *,
         workers: int | None = None,
     ) -> int:
+        """
+        Submit many sprites to the current GPU frame.
+
+        All sprites must currently use the same texture as the
+        active sprite batch.
+
+        Expected sprite format:
+
+            (
+                x,
+                y,
+                width,
+                height,
+                rotation,
+                origin_x,
+                origin_y,
+                alpha,
+                flip_x,
+                flip_y,
+                uv_x,
+                uv_y,
+                uv_width,
+                uv_height,
+            )
+        """
+
         self._require_frame()
 
-        self._set_texture(texture)
+        if texture is None:
+            return 0
+
+        if not hasattr(
+            sprites,
+            "__len__",
+        ):
+            sprites = list(
+                sprites
+            )
+
+        if not sprites:
+            return 0
+
+        self._set_texture(
+            texture
+        )
 
         return self.sprite_batch.add_many(
             sprites,
             workers=workers,
         )
-
     # ==========================================================
     # RECTANGLES
     # ==========================================================

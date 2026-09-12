@@ -141,6 +141,9 @@ class Renderer:
             uv=uv,
         )
 
+
+
+
     def sprites(
         self,
         texture,
@@ -148,12 +151,37 @@ class Renderer:
         *,
         workers: int | None = None,
     ) -> int:
+        """
+        Render many sprites using the GPU sprite batch.
+
+        Expected sprite format:
+
+            (
+                x,
+                y,
+                width,
+                height,
+                rotation,
+                origin_x,
+                origin_y,
+                alpha,
+                flip_x,
+                flip_y,
+                uv_x,
+                uv_y,
+                uv_width,
+                uv_height,
+            )
+
+        Returns the number of submitted sprites.
+        """
+
         return self.gpu.sprites(
             texture,
             sprites,
             workers=workers,
         )
-
+    
     def submit(
         self,
         snapshot: RenderSnapshot,

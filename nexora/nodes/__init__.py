@@ -27,6 +27,9 @@ from nexora.nodes.box_container import (
     VBoxContainer,
     HBoxContainer,
 )
+from nexora.nodes.tilemap_node import (
+    TileMapNode,
+)
 
 
 __all__ = [
