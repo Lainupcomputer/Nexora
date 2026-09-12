@@ -20,6 +20,7 @@ class GPURectBatch:
         size
         rotation
         origin
+        radius
         RGBA color
 
     The batch uses the same camera convention as GPUSpriteBatch:
@@ -33,8 +34,8 @@ class GPURectBatch:
 
     MAX_RECTS = 50000
 
-    INSTANCE_FLOATS = 11
-    INSTANCE_STRIDE = 44
+    INSTANCE_FLOATS = 12
+    INSTANCE_STRIDE = 48
 
     CAMERA_UNIFORM_SIZE = 32
 
@@ -251,13 +252,25 @@ class GPURectBatch:
 
         # ------------------------------------------------------
         # Attributes
+        #
+        # Instance layout:
+        #
+        # 0  -  8 : position
+        # 8  - 16 : size
+        # 16 - 20 : rotation
+        # 20 - 28 : origin
+        # 28 - 32 : radius
+        # 32 - 48 : color
         # ------------------------------------------------------
 
         attributes = (
-            sdl3.SDL_GPUVertexAttribute * 6
+            sdl3.SDL_GPUVertexAttribute * 7
         )()
 
+        # ------------------------------------------------------
         # Quad position
+        # ------------------------------------------------------
+
         attributes[0].location = 0
         attributes[0].buffer_slot = 0
         attributes[0].format = (
@@ -265,7 +278,10 @@ class GPURectBatch:
         )
         attributes[0].offset = 0
 
+        # ------------------------------------------------------
         # Instance position
+        # ------------------------------------------------------
+
         attributes[1].location = 1
         attributes[1].buffer_slot = 1
         attributes[1].format = (
@@ -273,7 +289,10 @@ class GPURectBatch:
         )
         attributes[1].offset = 0
 
+        # ------------------------------------------------------
         # Instance size
+        # ------------------------------------------------------
+
         attributes[2].location = 2
         attributes[2].buffer_slot = 1
         attributes[2].format = (
@@ -281,7 +300,10 @@ class GPURectBatch:
         )
         attributes[2].offset = 8
 
+        # ------------------------------------------------------
         # Rotation
+        # ------------------------------------------------------
+
         attributes[3].location = 3
         attributes[3].buffer_slot = 1
         attributes[3].format = (
@@ -289,7 +311,10 @@ class GPURectBatch:
         )
         attributes[3].offset = 16
 
+        # ------------------------------------------------------
         # Origin
+        # ------------------------------------------------------
+
         attributes[4].location = 4
         attributes[4].buffer_slot = 1
         attributes[4].format = (
@@ -297,13 +322,27 @@ class GPURectBatch:
         )
         attributes[4].offset = 20
 
-        # Color
+        # ------------------------------------------------------
+        # Radius
+        # ------------------------------------------------------
+
         attributes[5].location = 5
         attributes[5].buffer_slot = 1
         attributes[5].format = (
-            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
         attributes[5].offset = 28
+
+        # ------------------------------------------------------
+        # Color
+        # ------------------------------------------------------
+
+        attributes[6].location = 6
+        attributes[6].buffer_slot = 1
+        attributes[6].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4
+        )
+        attributes[6].offset = 32
 
         # ------------------------------------------------------
         # Rasterizer
@@ -449,7 +488,7 @@ class GPURectBatch:
             attributes
         )
 
-        vertex_input.num_vertex_attributes = 6
+        vertex_input.num_vertex_attributes = 7
 
         # ------------------------------------------------------
         # Pipeline
@@ -521,6 +560,7 @@ class GPURectBatch:
         color=(1.0, 1.0, 1.0, 1.0),
         rotation: float = 0.0,
         origin=(0.5, 0.5),
+        radius: float = 0.0,
     ):
         if self._destroyed:
             raise RuntimeError(
@@ -541,6 +581,7 @@ class GPURectBatch:
             height,
             rotation,
             origin,
+            radius,
             color,
         )
 
@@ -559,6 +600,7 @@ class GPURectBatch:
         height: float,
         rotation: float,
         origin,
+        radius: float,
         color,
     ):
         ox, oy = origin
@@ -570,21 +612,17 @@ class GPURectBatch:
         )
 
         struct.pack_into(
-            "<11f",
+            "<12f",
             self._instance_data,
             offset,
-
             float(x),
             float(y),
-
             float(width),
             float(height),
-
             float(rotation),
-
             float(ox),
             float(oy),
-
+            float(radius),
             float(r),
             float(g),
             float(b),
@@ -874,3 +912,4 @@ class GPURectBatch:
         traceback,
     ):
         self.destroy()
+

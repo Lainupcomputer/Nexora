@@ -2,6 +2,9 @@ import pytest
 from nexora.ecs.system import System
 
 from nexora.scene import Node, Scene
+from nexora.nodes.button import Button
+from nexora.input.input import InputManager
+
 
 
 def test_scene_creation():
@@ -158,4 +161,102 @@ def test_scene_fixed_update():
     assert system.update_count == 1
     assert system.last_delta == 0.02
 
-    
+def test_scene_updates_ui_input() -> None:
+    scene = Scene("UITest")
+
+    button = Button(
+        "Button",
+        scene.world,
+    )
+
+    button.size = (
+        200.0,
+        100.0,
+    )
+
+    scene.ui.add_child(
+        button,
+    )
+
+    input_manager = InputManager()
+
+    input_manager.initialize()
+
+    scene.ui_input.set_mouse_position(
+        50.0,
+        20.0,
+    )
+
+    # Mouse position is normally supplied by InputManager.
+    input_manager._mouse_x = 50.0
+    input_manager._mouse_y = 20.0
+
+    scene.update_input(
+        input_manager,
+    )
+
+    assert scene.ui_input.mouse_position == (
+        50.0,
+        20.0,
+    )
+
+    assert button.hovered is True
+
+def test_scene_updates_ui_from_input_manager() -> None:
+    scene = Scene("UITest")
+
+    button = Button(
+        "Button",
+        scene.world,
+    )
+
+    button.size = (
+        200.0,
+        100.0,
+    )
+
+    scene.ui.add_child(
+        button,
+    )
+
+    class FakeInputManager:
+        mouse_position = (
+            50.0,
+            20.0,
+        )
+
+        def mouse_down(
+            self,
+            button: str,
+        ) -> bool:
+            return True
+
+        def mouse_pressed(
+            self,
+            button: str,
+        ) -> bool:
+            return True
+
+        def mouse_released(
+            self,
+            button: str,
+        ) -> bool:
+            return False
+
+    input_manager = FakeInputManager()
+
+    scene.update_input(
+        input_manager,
+    )
+
+    assert scene.ui_input.mouse_position == (
+        50.0,
+        20.0,
+    )
+
+    assert scene.ui_input.mouse_left_down is True
+    assert scene.ui_input.mouse_left_pressed is True
+    assert scene.ui_input.mouse_left_released is False
+
+    assert button.hovered is True
+    assert button.pressed is True

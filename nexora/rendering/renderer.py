@@ -25,27 +25,74 @@ class Renderer:
         max_sprites: int = 10000,
         workers: int = 4,
         camera: Camera | None = None,
+        font=None,
     ) -> None:
-        # ------------------------------------------------------
-        # Camera
-        # ------------------------------------------------------
-
-        self.camera = camera if camera is not None else Camera()
-
-        # ------------------------------------------------------
-        # GPU renderer
-        # ------------------------------------------------------
+        self.camera = (
+            camera
+            if camera is not None
+            else Camera()
+        )
 
         self.gpu = GPURenderer(
             gpu_context,
             max_sprites=max_sprites,
             workers=workers,
             camera=self.camera,
+            font=font,
         )
 
-    # ==========================================================
-    # PROPERTIES
-    # ==========================================================
+    def rect(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        *,
+        color=(1.0, 1.0, 1.0, 1.0),
+        rotation: float = 0.0,
+        origin=(0.5, 0.5),
+        radius: float = 0.0,
+    ) -> None:
+        self.gpu.rect(
+            x,
+            y,
+            width,
+            height,
+            color=color,
+            rotation=rotation,
+            origin=origin,
+            radius=radius,
+        )
+
+    def text(
+        self,
+        *args,
+        **kwargs,
+    ):
+        return self.gpu.text(
+            *args,
+            **kwargs,
+        )
+
+    def text_measure(
+        self,
+        text: str,
+        *,
+        scale: float = 1.0,
+    ) -> tuple[float, float]:
+        return self.gpu.text_measure(
+            text,
+            scale=scale,
+        )
+
+    def text_baseline(
+        self,
+        *,
+        scale: float = 1.0,
+    ) -> float:
+        return self.gpu.text_baseline(
+            scale=scale,
+        )
 
     @property
     def width(self) -> int:
@@ -59,19 +106,11 @@ class Renderer:
     def driver(self) -> str:
         return self.gpu.driver
 
-    # ==========================================================
-    # FRAME
-    # ==========================================================
-
     def begin_frame(self) -> bool:
         return self.gpu.begin_frame()
 
     def end_frame(self) -> bool:
         return self.gpu.end_frame()
-
-    # ==========================================================
-    # SPRITES
-    # ==========================================================
 
     def sprite(
         self,
@@ -115,10 +154,6 @@ class Renderer:
             workers=workers,
         )
 
-    # ==========================================================
-    # ECS
-    # ==========================================================
-
     def submit(
         self,
         snapshot: RenderSnapshot,
@@ -128,10 +163,6 @@ class Renderer:
             snapshot,
             texture,
         )
-
-    # ==========================================================
-    # WINDOW
-    # ==========================================================
 
     def resize(
         self,
@@ -143,10 +174,5 @@ class Renderer:
             height,
         )
 
-    # ==========================================================
-    # SHUTDOWN
-    # ==========================================================
-
     def destroy(self) -> None:
         self.gpu.destroy()
-

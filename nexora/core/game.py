@@ -130,8 +130,19 @@ class Game:
             self._scene.fixed_update(fixed_delta_time)
 
     def render(self, interpolation: float) -> None:
-        if self._scene is not None:
-            self._scene.render(interpolation)
+        if self._scene is None:
+            return
+
+        self._scene.render(interpolation)
+
+        self._scene.ui.set_viewport_size(
+            self.renderer.width,
+            self.renderer.height,
+        )
+
+        self._scene.ui.render(
+            self.renderer,
+        )
 
     # ==========================================================
     # WINDOW

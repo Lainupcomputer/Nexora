@@ -322,7 +322,7 @@ class CameraExample(Game):
     # RENDER
     # ==========================================================
 
-    def render(self) -> None:
+    def render(self, interpolation: float) -> None:
         if self.texture is None:
             return
 

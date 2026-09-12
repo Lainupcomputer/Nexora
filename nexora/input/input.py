@@ -27,6 +27,7 @@ class InputManager:
 
     def __init__(self, logger: Logger | None = None):
         self.logger = logger
+        self._window = None
 
         # Physical keyboard state.
         self._keys_down: set[int] = set()
@@ -48,6 +49,12 @@ class InputManager:
         self._wheel_x = 0.0
         self._wheel_y = 0.0
 
+        # Text input.
+        self._text_input: list[str] = []
+        self._text_input_active = False
+        self._text_input_started = False
+        self._text_input_stopped = False
+
         # Actions.
         self._actions: dict[str, ActionState] = {}
         self._bindings: dict[str, list[Binding]] = {}
@@ -59,13 +66,15 @@ class InputManager:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def initialize(self) -> None:
+    def initialize(self, window=None) -> None:
         ThreadContext.assert_main_thread(
             "InputManager.initialize() must run on the main thread"
         )
 
-        self._initialized = True
+        if window is not None:
+            self._window = window
 
+        self._initialized = True
     # ------------------------------------------------------------------
     # Binding API
     # ------------------------------------------------------------------
@@ -155,6 +164,7 @@ class InputManager:
                 pass
 
             current = self._bindings[action]
+
             self._bindings[action] = [
                 item
                 for item in current
@@ -212,6 +222,11 @@ class InputManager:
         self._wheel_x = 0.0
         self._wheel_y = 0.0
 
+        # Clear text entered during the previous frame.
+        self._text_input.clear()
+        self._text_input_started = False
+        self._text_input_stopped = False
+
         # Process the SDL3 event queue.
         for event in events:
             self._process_event(event)
@@ -245,6 +260,29 @@ class InputManager:
 
             self._keys_down.discard(scancode)
             self._keys_released.add(scancode)
+            return
+
+        # --------------------------------------------------------------
+        # Text input
+        # --------------------------------------------------------------
+
+        if event_type == sdl3.SDL_EVENT_TEXT_INPUT:
+            print("TEXT INPUT EVENT:", repr(event.text.text))
+            text_event = event.text
+
+            text = text_event.text
+
+            if isinstance(text, bytes):
+                text = text.decode(
+                    "utf-8",
+                    errors="replace",
+                )
+
+            if text:
+                self._text_input.append(
+                    str(text),
+                )
+
             return
 
         # --------------------------------------------------------------
@@ -309,6 +347,14 @@ class InputManager:
 
             self._keys_down.clear()
             self._mouse_down.clear()
+
+            if self._text_input_active:
+                if self._window is not None:
+                    sdl3.SDL_StopTextInput(
+                        self._window,
+                    )
+
+                self._text_input_active = False
             return
 
         if event_type == sdl3.SDL_EVENT_WINDOW_FOCUS_GAINED:
@@ -355,6 +401,81 @@ class InputManager:
             state.down = down
             state.pressed = pressed
             state.released = released
+
+    # ------------------------------------------------------------------
+    # Text input API
+    # ------------------------------------------------------------------
+
+    def start_text_input(self) -> None:
+        """
+        Enable SDL text input.
+
+        SDL text input events will be collected during subsequent
+        frames.
+        """
+
+        ThreadContext.assert_main_thread(
+            "InputManager.start_text_input() must run on the main thread"
+        )
+
+        if self._text_input_active:
+            return
+
+        if self._window is None:
+            raise RuntimeError(
+                "InputManager has no SDL window."
+            )
+
+        sdl3.SDL_StartTextInput(
+            self._window,
+        )
+
+        self._text_input_active = True
+        self._text_input_started = True
+
+    def stop_text_input(self) -> None:
+        """
+        Disable SDL text input.
+        """
+
+        ThreadContext.assert_main_thread(
+            "InputManager.stop_text_input() must run on the main thread"
+        )
+
+        if not self._text_input_active:
+            return
+
+        if self._window is None:
+            return
+
+        sdl3.SDL_StopTextInput(
+            self._window,
+        )
+
+        self._text_input_active = False
+        self._text_input_stopped = True
+
+    @property
+    def text_input(self) -> tuple[str, ...]:
+        """
+        Text entered during the current frame.
+        """
+
+        return tuple(
+            self._text_input,
+        )
+
+    @property
+    def text_input_active(self) -> bool:
+        return self._text_input_active
+
+    @property
+    def text_input_started(self) -> bool:
+        return self._text_input_started
+
+    @property
+    def text_input_stopped(self) -> bool:
+        return self._text_input_stopped
 
     # ------------------------------------------------------------------
     # Direct keyboard API
@@ -460,3 +581,12 @@ class InputManager:
         ThreadContext.assert_main_thread(
             "InputManager.end_frame() must run on the main thread"
         )
+
+    @property
+    def keys_pressed(self) -> frozenset[int]:
+        return frozenset(self._keys_pressed)
+
+
+    @property
+    def keys_released(self) -> frozenset[int]:
+        return frozenset(self._keys_released)

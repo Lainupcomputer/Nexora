@@ -511,8 +511,6 @@ class GPUTextRenderer:
 
         color_target.blend_state = blend
 
-        # IMPORTANT:
-        # SDL3 expects a pointer to a C array here.
         color_targets = (
             sdl3.SDL_GPUColorTargetDescription * 1
         )()
@@ -582,6 +580,77 @@ class GPUTextRenderer:
         return self._text_color
 
     # ==============================================================
+    # Text measurement
+    # ==============================================================
+
+    def measure(
+        self,
+        text: str,
+        *,
+        scale: float = 1.0,
+    ) -> tuple[float, float]:
+        """
+        Measure the rendered size of a text string.
+
+        Returns:
+            (width, height)
+
+        Width is based on glyph advance values.
+        Height is based on the font line height / line skip.
+
+        The result uses the same metrics as draw().
+        """
+
+        if scale <= 0:
+            raise ValueError(
+                "scale must be greater than zero."
+            )
+
+        if not text:
+            return 0.0, 0.0
+
+        current_width = 0.0
+        max_width = 0.0
+        line_count = 1
+
+        for character in text:
+            if character == "\n":
+                max_width = max(
+                    max_width,
+                    current_width,
+                )
+
+                current_width = 0.0
+                line_count += 1
+
+                continue
+
+            glyph = self.font.glyph(
+                ord(character)
+            )
+
+            current_width += (
+                glyph.advance
+                * scale
+            )
+
+        max_width = max(
+            max_width,
+            current_width,
+        )
+
+        height = (
+            self.font.line_skip
+            * line_count
+            * scale
+        )
+
+        return (
+            max_width,
+            height,
+        )
+
+    # ==============================================================
     # Text generation
     # ==============================================================
 
@@ -647,8 +716,6 @@ class GPUTextRenderer:
                 codepoint
             )
 
-            # Character exists in font metrics but wasn't included
-            # in the atlas.
             if atlas_glyph is None:
                 cursor_x += (
                     glyph.advance
@@ -693,7 +760,6 @@ class GPUTextRenderer:
                 * scale
             )
 
-            # Our quad is centered around 0/0.
             instance_x = (
                 glyph_x
                 + glyph_width * 0.5
@@ -1100,4 +1166,3 @@ class GPUTextRenderer:
         traceback,
     ) -> None:
         self.destroy()
-
