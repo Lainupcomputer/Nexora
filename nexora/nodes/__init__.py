@@ -30,6 +30,10 @@ from nexora.nodes.box_container import (
 from nexora.nodes.tilemap_node import (
     TileMapNode,
 )
+from nexora.nodes.character_body_2d import (
+    CharacterBody2D,
+    Vector2,
+)
 
 
 __all__ = [

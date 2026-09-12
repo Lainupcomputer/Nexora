@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from nexora.tilemap.tile_metadata import TileMetadata
 
 
 @dataclass(
@@ -94,6 +95,11 @@ class TileSet:
 
         self.tile_width = tile_width
         self.tile_height = tile_height
+
+        self._metadata: dict[
+            int,
+            TileMetadata,
+        ] = {}
 
     # ==============================================================
     # Dimensions
@@ -414,4 +420,131 @@ class TileSet:
             self.tile_width,
 
             self.tile_height,
+        )
+
+    # ==============================================================
+    # Metadata
+    # ==============================================================
+
+    def set_metadata(
+        self,
+        index: int,
+        metadata: TileMetadata,
+    ) -> None:
+        index = self._validate_index(
+            index
+        )
+
+        if not isinstance(
+            metadata,
+            TileMetadata,
+        ):
+            raise TypeError(
+                "metadata must be TileMetadata."
+            )
+
+        self._metadata[
+            index
+        ] = metadata
+
+
+    def get_metadata(
+        self,
+        index: int,
+    ) -> TileMetadata | None:
+        index = self._validate_index(
+            index
+        )
+
+        return self._metadata.get(
+            index
+        )
+
+
+    def require_metadata(
+        self,
+        index: int,
+    ) -> TileMetadata:
+        metadata = self.get_metadata(
+            index
+        )
+
+        if metadata is None:
+            raise KeyError(
+                f"Tile {index} has no metadata."
+            )
+
+        return metadata
+
+
+    def metadata(
+        self,
+        index: int,
+    ) -> TileMetadata:
+        """
+        Return metadata for a tile.
+
+        Creates default metadata when none exists yet.
+        """
+
+        index = self._validate_index(
+            index
+        )
+
+        result = self._metadata.get(
+            index
+        )
+
+        if result is None:
+            result = TileMetadata()
+
+            self._metadata[
+                index
+            ] = result
+
+        return result
+
+
+    def remove_metadata(
+        self,
+        index: int,
+    ) -> TileMetadata | None:
+        index = self._validate_index(
+            index
+        )
+
+        return self._metadata.pop(
+            index,
+            None,
+        )
+
+
+    def is_solid(
+        self,
+        index: int,
+    ) -> bool:
+        metadata = self.get_metadata(
+            index
+        )
+
+        if metadata is None:
+            return False
+
+        return metadata.solid
+
+
+    def has_tag(
+        self,
+        index: int,
+        tag: str,
+    ) -> bool:
+        metadata = self.get_metadata(
+            index
+        )
+
+        if metadata is None:
+            return False
+
+        return metadata.has_tag(
+            tag
         )

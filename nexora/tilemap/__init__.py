@@ -23,6 +23,24 @@ from nexora.tilemap.tile_chunk_cache import (
     CachedTile,
     TileChunkRenderCache,
 )
+from nexora.tilemap.tile_metadata import (
+    TileMetadata,
+)
+from nexora.tilemap.tile_collision import (
+    SolidTileHit,
+    TileCollision,
+)
+
+from nexora.tilemap.tile_collision import (
+    SolidTileHit,
+    TileCollision,
+)
+
+from nexora.tilemap.tile_collision import (
+    SolidTileHit,
+    TileCollision,
+    TileMoveResult,
+)
 
 
 __all__ = [
