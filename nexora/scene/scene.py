@@ -48,10 +48,13 @@ class Scene:
             self.root.children
         )
 
+
     def create_node(
         self,
         name: str,
         parent: Node | None = None,
+        *,
+        node_type: type[Node] = Node,
     ) -> Node:
         if parent is None:
             parent = self.root
@@ -61,7 +64,7 @@ class Scene:
                 "Parent node does not belong to this scene."
             )
 
-        node = Node(
+        node = node_type(
             name,
             self.world,
         )
@@ -137,6 +140,10 @@ class Scene:
         self,
         delta_time: float,
     ) -> None:
+        self.root.update_tree(
+            delta_time
+        )
+
         self.world.update(
             delta_time
         )
@@ -145,6 +152,10 @@ class Scene:
         self,
         fixed_delta_time: float,
     ) -> None:
+        self.root.fixed_update_tree(
+            fixed_delta_time
+        )
+
         self.world.fixed_update(
             fixed_delta_time
         )
@@ -159,6 +170,16 @@ class Scene:
     ) -> None:
         self.world.render(
             interpolation
+        )
+
+    def render_nodes(
+        self,
+        renderer,
+        interpolation: float,
+    ) -> None:
+        self.root.render_tree(
+            renderer,
+            interpolation,
         )
 
     # ==============================================================

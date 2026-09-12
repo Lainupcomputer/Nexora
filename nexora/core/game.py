@@ -162,11 +162,33 @@ class Game:
         if self._scene is not None:
             self._scene.fixed_update(fixed_delta_time)
 
-    def render(self, interpolation: float) -> None:
+    def render(
+        self,
+        interpolation: float,
+    ) -> None:
         if self._scene is None:
             return
 
-        self._scene.render(interpolation)
+        # ----------------------------------------------------------
+        # ECS rendering
+        # ----------------------------------------------------------
+
+        self._scene.render(
+            interpolation
+        )
+
+        # ----------------------------------------------------------
+        # Scene node rendering
+        # ----------------------------------------------------------
+
+        self._scene.render_nodes(
+            self.renderer,
+            interpolation,
+        )
+
+        # ----------------------------------------------------------
+        # UI
+        # ----------------------------------------------------------
 
         self._scene.ui.set_viewport_size(
             self.renderer.width,
@@ -176,7 +198,6 @@ class Game:
         self._scene.ui.render(
             self.renderer,
         )
-
     # ==========================================================
     # WINDOW
     # ==========================================================
