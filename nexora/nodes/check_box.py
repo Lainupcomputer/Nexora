@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import sdl3
+
 from nexora.nodes.label import Label
 from nexora.nodes.panel import Panel
 from nexora.nodes.ui_node import UINode
@@ -9,14 +11,16 @@ from nexora.nodes.ui_node import UINode
 
 class CheckBox(UINode):
     """
-    A checkbox UI component.
+    A focusable checkbox UI component.
 
-    The checkbox consists of:
-        - a rectangular box
-        - a checkmark
-        - a text label
+    Interaction:
 
-    Clicking the checkbox toggles the `checked` state.
+        Mouse:
+            Click toggles the checkbox.
+
+        Keyboard:
+            Space toggles the checkbox.
+            Enter toggles the checkbox.
     """
 
     def __init__(
@@ -29,323 +33,512 @@ class CheckBox(UINode):
             world,
         )
 
-        # --------------------------------------------------
+        # ==========================================================
+        # Focus
+        # ==========================================================
+
+        self.focusable = True
+
+        # ==========================================================
         # State
-        # --------------------------------------------------
+        # ==========================================================
 
         self.checked: bool = False
 
-        self.hovered: bool = False
-        self.pressed: bool = False
-
-        self._press_started_inside: bool = False
-
-        # --------------------------------------------------
-        # Appearance
-        # --------------------------------------------------
-
-        self.box_size: tuple[float, float] = (
-            32.0,
-            32.0,
-        )
-
-        self.spacing: float = 10.0
+        # ==========================================================
+        # Content
+        # ==========================================================
 
         self.text: str = ""
 
         self.text_scale: float = 1.0
 
-        # --------------------------------------------------
-        # Colors
-        # --------------------------------------------------
+        # ==========================================================
+        # Size / layout
+        # ==========================================================
 
-        self.background: tuple[int, int, int, int] = (
+        self.box_size: float = 28.0
+        self.spacing: float = 10.0
+
+        self.size = (
+            220.0,
+            40.0,
+        )
+
+        # ==========================================================
+        # Colors
+        # ==========================================================
+
+        self.box_background: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
             32,
             34,
             37,
             255,
         )
 
-        self.hover_background: tuple[int, int, int, int] = (
-            55,
-            58,
-            64,
-            255,
-        )
-
-        self.checked_background: tuple[int, int, int, int] = (
+        self.box_hover_background: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
             45,
-            120,
+            48,
+            53,
+            255,
+        )
+
+        self.box_pressed_background: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            25,
+            27,
+            30,
+            255,
+        )
+
+        self.box_checked_background: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
             70,
-            255,
-        )
-
-        self.checked_hover_background: tuple[int, int, int, int] = (
-            60,
-            145,
-            85,
-            255,
-        )
-
-        self.border_color: tuple[int, int, int, int] = (
-            100,
-            100,
-            100,
-            255,
-        )
-
-        self.checked_border_color: tuple[int, int, int, int] = (
-            100,
-            220,
             130,
+            220,
             255,
         )
 
-        self.border_width: float = 2.0
+        self.box_disabled_background: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            20,
+            21,
+            23,
+            255,
+        )
 
-        self.border_radius: float = 4.0
+        self.normal_border_color: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            70,
+            72,
+            76,
+            255,
+        )
 
-        # --------------------------------------------------
+        self.focus_border_color: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            80,
+            140,
+            220,
+            255,
+        )
+
+        self.text_color: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            235,
+            235,
+            235,
+            255,
+        )
+
+        self.disabled_text_color: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            120,
+            120,
+            120,
+            255,
+        )
+
+        self.check_color: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            255,
+            255,
+            255,
+            255,
+        )
+
+        # ==========================================================
+        # Internal state
+        # ==========================================================
+
+        self._press_started_inside: bool = False
+        self._keyboard_pressed: bool = False
+
+        # ==========================================================
         # Callback
-        # --------------------------------------------------
+        # ==========================================================
 
-        self.on_change: Callable[[bool], None] | None = None
+        self.on_change: (
+            Callable[[bool], None]
+            | None
+        ) = None
 
-        # --------------------------------------------------
-        # Children
-        # --------------------------------------------------
+        # ==========================================================
+        # Child nodes
+        # ==========================================================
 
-        self.box = self.create_child(
+        self._box = self.create_child(
             "Box",
             node_type=Panel,
         )
 
-        self.checkmark = self.create_child(
-            "Checkmark",
+        self._check = self._box.create_child(
+            "Check",
             node_type=Label,
         )
 
-        self.label = self.create_child(
+        self._label = self.create_child(
             "Label",
             node_type=Label,
+        )
+
+        # ----------------------------------------------------------
+        # Check glyph
+        # ----------------------------------------------------------
+
+        self._check.text = "✓"
+
+        self._check.anchor = (
+            0.5,
+            0.5,
+        )
+
+        self._check.pivot = (
+            0.5,
+            0.5,
+        )
+
+        self._check.position = (
+            0.0,
+            0.0,
+        )
+
+        self._check.text_color = (
+            self.check_color
+        )
+
+        # ----------------------------------------------------------
+        # Text label
+        # ----------------------------------------------------------
+
+        self._label.anchor = (
+            0.0,
+            0.5,
+        )
+
+        self._label.pivot = (
+            0.0,
+            0.5,
         )
 
         self._sync_layout()
         self._sync_visuals()
 
-    # ======================================================
-    # Size
-    # ======================================================
+    # ==============================================================
+    # State
+    # ==============================================================
 
-    @property
-    def content_size(self) -> tuple[float, float]:
+    def set_checked(
+        self,
+        checked: bool,
+        *,
+        emit: bool = True,
+    ) -> None:
         """
-        Return the size of the complete checkbox.
+        Set the checked state.
         """
 
-        label_width = max(
-            0.0,
-            len(self.text)
-            * 16.0
-            * self.text_scale,
+        checked = bool(checked)
+
+        if self.checked == checked:
+            return
+
+        self.checked = checked
+
+        self._sync_visuals()
+
+        if emit:
+            callback = self.on_change
+
+            if callback is not None:
+                callback(
+                    self.checked
+                )
+
+    def toggle(self) -> None:
+        """
+        Toggle the checked state.
+        """
+
+        if not self.interactive:
+            return
+
+        self.set_checked(
+            not self.checked
         )
 
-        label_height = (
-            32.0
-            * self.text_scale
+    # ==============================================================
+    # Focus
+    # ==============================================================
+
+    def on_focus(self) -> None:
+        self._sync_visuals()
+
+    def on_blur(self) -> None:
+        self._keyboard_pressed = False
+        self._press_started_inside = False
+
+        self.set_pressed(
+            False
         )
 
-        return (
-            self.box_size[0]
-            + self.spacing
-            + label_width,
-            max(
-                self.box_size[1],
-                label_height,
-            ),
-        )
+        self._sync_visuals()
 
-    # ======================================================
+    # ==============================================================
     # Layout
-    # ======================================================
+    # ==============================================================
 
     def _sync_layout(self) -> None:
-        """
-        Synchronize the checkbox child layout.
-        """
+        width, height = self.size
 
-        self.size = self.content_size
-
-        # --------------------------------------------------
+        # ----------------------------------------------------------
         # Box
-        # --------------------------------------------------
+        # ----------------------------------------------------------
 
-        self.box.size = self.box_size
+        self._box.size = (
+            self.box_size,
+            self.box_size,
+        )
 
-        self.box.anchor = (
+        self._box.anchor = (
             0.0,
             0.5,
         )
 
-        self.box.pivot = (
+        self._box.pivot = (
             0.0,
             0.5,
         )
 
-        self.box.position = (
+        self._box.position = (
             0.0,
             0.0,
         )
 
-        # --------------------------------------------------
-        # Checkmark
-        # --------------------------------------------------
+        # ----------------------------------------------------------
+        # Check
+        # ----------------------------------------------------------
 
-        self.checkmark.text = "✓"
-
-        self.checkmark.scale = 0.9
-
-        self.checkmark.anchor = (
-            0.5,
-            0.5,
+        self._check.text_scale = (
+            self.text_scale
         )
 
-        self.checkmark.pivot = (
-            0.5,
-            0.5,
-        )
-
-        self.checkmark.position = (
-            self.box_size[0] / 2.0,
-            0.0,
-        )
-
-        # --------------------------------------------------
+        # ----------------------------------------------------------
         # Label
-        # --------------------------------------------------
+        # ----------------------------------------------------------
 
-        self.label.text = self.text
-        self.label.scale = self.text_scale
+        self._label.text = self.text
 
-        self.label.anchor = (
-            0.0,
-            0.5,
+        self._label.text_scale = (
+            self.text_scale
         )
 
-        self.label.pivot = (
-            0.0,
-            0.5,
-        )
-
-        self.label.position = (
-            self.box_size[0]
+        self._label.position = (
+            self.box_size
             + self.spacing,
             0.0,
         )
 
-    # ======================================================
-    # Visual state
-    # ======================================================
+    # ==============================================================
+    # Visuals
+    # ==============================================================
 
     def _sync_visuals(self) -> None:
-        """
-        Synchronize the checkbox appearance.
-        """
+        # ----------------------------------------------------------
+        # Box background
+        # ----------------------------------------------------------
 
-        if self.checked:
-            if self.hovered:
-                self.box.background = (
-                    self.checked_hover_background
-                )
-            else:
-                self.box.background = (
-                    self.checked_background
-                )
+        if not self.enabled:
+            self._box.background = (
+                self.box_disabled_background
+            )
 
-            self.box.border_color = (
-                self.checked_border_color
+        elif self.pressed:
+            self._box.background = (
+                self.box_pressed_background
+            )
+
+        elif self.checked:
+            self._box.background = (
+                self.box_checked_background
+            )
+
+        elif self.hovered:
+            self._box.background = (
+                self.box_hover_background
             )
 
         else:
-            if self.hovered:
-                self.box.background = (
-                    self.hover_background
-                )
-            else:
-                self.box.background = (
-                    self.background
-                )
-
-            self.box.border_color = (
-                self.border_color
+            self._box.background = (
+                self.box_background
             )
 
-        self.box.border_width = (
-            self.border_width
+        # ----------------------------------------------------------
+        # Border
+        # ----------------------------------------------------------
+
+        if (
+            self.focused
+            and self.enabled
+        ):
+            self._box.border_color = (
+                self.focus_border_color
+            )
+
+            self._box.border_width = 2.0
+
+        else:
+            self._box.border_color = (
+                self.normal_border_color
+            )
+
+            self._box.border_width = 1.0
+
+        self._box.border_radius = 4.0
+
+        # ----------------------------------------------------------
+        # Check mark
+        # ----------------------------------------------------------
+
+        self._check.visible = (
+            self.checked
         )
 
-        self.box.border_radius = (
-            self.border_radius
+        self._check.text_color = (
+            self.check_color
         )
 
-        self.checkmark.visible = self.checked
+        # ----------------------------------------------------------
+        # Label
+        # ----------------------------------------------------------
 
-    # ======================================================
-    # Hit testing
-    # ======================================================
+        if self.enabled:
+            self._label.text_color = (
+                self.text_color
+            )
+        else:
+            self._label.text_color = (
+                self.disabled_text_color
+            )
 
-    def contains_point(
+    # ==============================================================
+    # Keyboard
+    # ==============================================================
+
+    def _handle_keyboard(
         self,
-        x: float,
-        y: float,
-    ) -> bool:
-        """
-        Check whether a point is inside the checkbox.
-        """
+        ui_input,
+    ) -> None:
+        if not self.focused:
+            self._keyboard_pressed = False
+            return
 
-        rect_x, rect_y = (
-            self.calculate_position()
-        )
+        # ----------------------------------------------------------
+        # Key down
+        # ----------------------------------------------------------
 
-        width, height = (
-            self.content_size
-        )
+        if (
+            ui_input.key_pressed(
+                sdl3.SDL_SCANCODE_SPACE
+            )
+            or
+            ui_input.key_pressed(
+                sdl3.SDL_SCANCODE_RETURN
+            )
+            or
+            ui_input.key_pressed(
+                sdl3.SDL_SCANCODE_KP_ENTER
+            )
+        ):
+            self._keyboard_pressed = True
 
-        left = (
-            rect_x
-            - width * self.pivot[0]
-        )
+            self.set_pressed(
+                True
+            )
 
-        top = (
-            rect_y
-            - height * self.pivot[1]
-        )
+        # ----------------------------------------------------------
+        # Key release
+        # ----------------------------------------------------------
 
-        right = left + width
-        bottom = top + height
+        if self._keyboard_pressed:
+            released = (
+                ui_input.key_released(
+                    sdl3.SDL_SCANCODE_SPACE
+                )
+                or
+                ui_input.key_released(
+                    sdl3.SDL_SCANCODE_RETURN
+                )
+                or
+                ui_input.key_released(
+                    sdl3.SDL_SCANCODE_KP_ENTER
+                )
+            )
 
-        return (
-            left <= x <= right
-            and
-            top <= y <= bottom
-        )
+            if released:
+                self._keyboard_pressed = False
 
-    # ======================================================
+                self.set_pressed(
+                    False
+                )
+
+                self.toggle()
+
+    # ==============================================================
     # Input
-    # ======================================================
+    # ==============================================================
 
     def update_input(
         self,
         ui_input,
     ) -> None:
-        """
-        Process mouse input.
-        """
+        if not self.interactive:
+            self.reset_interaction_state()
 
-        if not self.visible or not self.enabled:
-            self.hovered = False
-            self.pressed = False
             self._press_started_inside = False
+            self._keyboard_pressed = False
 
             self._sync_visuals()
 
@@ -355,29 +548,24 @@ class CheckBox(UINode):
             ui_input.mouse_position
         )
 
-        self.hovered = self.contains_point(
+        self.update_hover(
             mouse_x,
             mouse_y,
         )
 
-        # --------------------------------------------------
-        # Mouse press
-        # --------------------------------------------------
+        # ==========================================================
+        # Mouse
+        # ==========================================================
 
         if ui_input.mouse_left_pressed:
             self._press_started_inside = (
                 self.hovered
             )
 
-        self.pressed = (
-            self._press_started_inside
-            and ui_input.mouse_left_down
-            and self.hovered
-        )
-
-        # --------------------------------------------------
-        # Mouse release
-        # --------------------------------------------------
+            if self._press_started_inside:
+                self.set_pressed(
+                    True
+                )
 
         if ui_input.mouse_left_released:
             should_toggle = (
@@ -385,37 +573,49 @@ class CheckBox(UINode):
                 and self.hovered
             )
 
-            self.pressed = False
             self._press_started_inside = False
 
+            if not self._keyboard_pressed:
+                self.set_pressed(
+                    False
+                )
+
             if should_toggle:
-                self.checked = not self.checked
+                self.toggle()
 
-                callback = self.on_change
+        # ==========================================================
+        # Keyboard
+        # ==========================================================
 
-                if callback is not None:
-                    callback(self.checked)
+        self._handle_keyboard(
+            ui_input
+        )
 
+        # ==========================================================
+        # Visuals
+        # ==========================================================
+
+        self._sync_layout()
         self._sync_visuals()
 
-    # ======================================================
-    # Render
-    # ======================================================
+    # ==============================================================
+    # Rendering
+    # ==============================================================
 
     def render(
         self,
         renderer,
     ) -> None:
-        """
-        Render the checkbox.
-        """
-
         if not self.visible:
             return
 
         self._sync_layout()
         self._sync_visuals()
 
-        self.box.render(renderer)
-        self.checkmark.render(renderer)
-        self.label.render(renderer)
+        self._box.render(
+            renderer
+        )
+
+        self._label.render(
+            renderer
+        )

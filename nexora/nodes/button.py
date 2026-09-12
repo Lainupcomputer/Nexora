@@ -2,13 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import sdl3
+
 from nexora.nodes.label import Label
 from nexora.nodes.panel import Panel
 
 
 class Button(Panel):
     """
-    A clickable UI button.
+    A clickable and focusable UI button.
+
+    Interaction:
+        Mouse:
+            Press + release inside the button triggers the click.
+
+        Keyboard:
+            Enter or Space triggers the button while focused.
     """
 
     def __init__(
@@ -20,6 +29,12 @@ class Button(Panel):
             name,
             world,
         )
+
+        # ----------------------------------------------------------
+        # Focus
+        # ----------------------------------------------------------
+
+        self.focusable = True
 
         # ----------------------------------------------------------
         # Text
@@ -84,6 +99,18 @@ class Button(Panel):
             255,
         )
 
+        self.focus_background: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            40,
+            44,
+            52,
+            255,
+        )
+
         self.disabled_background: tuple[
             int,
             int,
@@ -109,10 +136,42 @@ class Button(Panel):
         )
 
         # ----------------------------------------------------------
+        # Border
+        # ----------------------------------------------------------
+
+        self.normal_border_color: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            70,
+            72,
+            76,
+            255,
+        )
+
+        self.focus_border_color: tuple[
+            int,
+            int,
+            int,
+            int,
+        ] = (
+            80,
+            140,
+            220,
+            255,
+        )
+
+        self.normal_border_width: float = 1.0
+        self.focus_border_width: float = 2.0
+
+        # ----------------------------------------------------------
         # Click state
         # ----------------------------------------------------------
 
         self._press_started_inside: bool = False
+        self._keyboard_pressed: bool = False
 
         self.on_click: Callable[[], None] | None = None
 
@@ -130,6 +189,43 @@ class Button(Panel):
         )
 
         self._sync_label()
+        self._sync_visuals()
+
+    # ==============================================================
+    # Focus
+    # ==============================================================
+
+    def on_focus(self) -> None:
+        self._sync_visuals()
+
+    def on_blur(self) -> None:
+        self.pressed = False
+        self._keyboard_pressed = False
+        self._press_started_inside = False
+
+        self._sync_visuals()
+
+    # ==============================================================
+    # Click
+    # ==============================================================
+
+    def click(self) -> None:
+        """
+        Trigger the button callback.
+
+        Does nothing while the button is disabled or invisible.
+        """
+
+        if (
+            not self.visible
+            or not self.enabled
+        ):
+            return
+
+        callback = self.on_click
+
+        if callback is not None:
+            callback()
 
     # ==============================================================
     # State
@@ -138,6 +234,16 @@ class Button(Panel):
     def _sync_label(self) -> None:
         self._label.text = self.text
         self._label.scale = self.text_scale
+
+        if self.enabled:
+            self._label.color = (
+                self.text_color
+            )
+
+        else:
+            self._label.color = (
+                self.disabled_text_color
+            )
 
         self._label.anchor = (
             0.5,
@@ -154,37 +260,97 @@ class Button(Panel):
             0.0,
         )
 
-    def _sync_background(self) -> None:
+    def _sync_visuals(self) -> None:
+        # ----------------------------------------------------------
+        # Disabled
+        # ----------------------------------------------------------
+
         if not self.enabled:
             self.background = (
                 self.disabled_background
             )
 
-        elif self.pressed:
+            self.border_color = (
+                self.normal_border_color
+            )
+
+            self.border_width = (
+                self.normal_border_width
+            )
+
+            return
+
+        # ----------------------------------------------------------
+        # Pressed
+        # ----------------------------------------------------------
+
+        if self.pressed:
             self.background = (
                 self.pressed_background
             )
+
+        # ----------------------------------------------------------
+        # Hover
+        # ----------------------------------------------------------
 
         elif self.hovered:
             self.background = (
                 self.hover_background
             )
 
+        # ----------------------------------------------------------
+        # Focus
+        # ----------------------------------------------------------
+
+        elif self.focused:
+            self.background = (
+                self.focus_background
+            )
+
+        # ----------------------------------------------------------
+        # Normal
+        # ----------------------------------------------------------
+
         else:
             self.background = (
                 self.normal_background
+            )
+
+        # ----------------------------------------------------------
+        # Focus border
+        # ----------------------------------------------------------
+
+        if self.focused:
+            self.border_color = (
+                self.focus_border_color
+            )
+
+            self.border_width = (
+                self.focus_border_width
+            )
+
+        else:
+            self.border_color = (
+                self.normal_border_color
+            )
+
+            self.border_width = (
+                self.normal_border_width
             )
 
     # ==============================================================
     # Rendering
     # ==============================================================
 
-    def render(self, renderer) -> None:
+    def render(
+        self,
+        renderer,
+    ) -> None:
         if not self.visible:
             return
 
         self._sync_label()
-        self._sync_background()
+        self._sync_visuals()
 
         super().render(
             renderer,
@@ -201,15 +367,25 @@ class Button(Panel):
         """
         Update the button's input state.
 
-        A click is only generated when the mouse button was pressed
-        while the pointer was inside the button and released while
-        the pointer is still inside the button.
+        Mouse:
+            Click occurs when the mouse is pressed inside the button
+            and released while still inside.
+
+        Keyboard:
+            Enter or Space triggers the button while it is focused.
         """
 
-        if not self.visible or not self.enabled:
+        if (
+            not self.visible
+            or not self.enabled
+        ):
             self.hovered = False
             self.pressed = False
             self._press_started_inside = False
+            self._keyboard_pressed = False
+
+            self._sync_visuals()
+
             return
 
         mouse_x, mouse_y = (
@@ -221,28 +397,20 @@ class Button(Panel):
             mouse_y,
         )
 
-        # ----------------------------------------------------------
-        # Mouse button pressed
-        # ----------------------------------------------------------
+        # ==========================================================
+        # Mouse
+        # ==========================================================
 
         if ui_input.mouse_left_pressed:
             self._press_started_inside = (
                 self.hovered
             )
 
-        # ----------------------------------------------------------
-        # Mouse button held
-        # ----------------------------------------------------------
-
-        self.pressed = (
+        mouse_pressed_visual = (
             self._press_started_inside
             and ui_input.mouse_left_down
             and self.hovered
         )
-
-        # ----------------------------------------------------------
-        # Mouse button released
-        # ----------------------------------------------------------
 
         if ui_input.mouse_left_released:
             should_click = (
@@ -250,11 +418,92 @@ class Button(Panel):
                 and self.hovered
             )
 
-            self.pressed = False
             self._press_started_inside = False
 
             if should_click:
-                callback = self.on_click
+                self.click()
 
-                if callback is not None:
-                    callback()
+        # ==========================================================
+        # Keyboard
+        # ==========================================================
+
+        keyboard_down = False
+
+        if self.focused:
+            keyboard_down = (
+                ui_input.key_down(
+                    sdl3.SDL_SCANCODE_RETURN
+                )
+                or
+                ui_input.key_down(
+                    sdl3.SDL_SCANCODE_KP_ENTER
+                )
+                or
+                ui_input.key_down(
+                    sdl3.SDL_SCANCODE_SPACE
+                )
+            )
+
+            # ------------------------------------------------------
+            # Keyboard press
+            # ------------------------------------------------------
+
+            if (
+                ui_input.key_pressed(
+                    sdl3.SDL_SCANCODE_RETURN
+                )
+                or
+                ui_input.key_pressed(
+                    sdl3.SDL_SCANCODE_KP_ENTER
+                )
+                or
+                ui_input.key_pressed(
+                    sdl3.SDL_SCANCODE_SPACE
+                )
+            ):
+                self._keyboard_pressed = True
+
+            # ------------------------------------------------------
+            # Keyboard release
+            #
+            # Trigger click on release instead of press so the
+            # pressed visual state behaves like a real button.
+            # ------------------------------------------------------
+
+            if self._keyboard_pressed:
+                released = (
+                    ui_input.key_released(
+                        sdl3.SDL_SCANCODE_RETURN
+                    )
+                    or
+                    ui_input.key_released(
+                        sdl3.SDL_SCANCODE_KP_ENTER
+                    )
+                    or
+                    ui_input.key_released(
+                        sdl3.SDL_SCANCODE_SPACE
+                    )
+                )
+
+                if released:
+                    self._keyboard_pressed = False
+
+                    self.click()
+
+        else:
+            self._keyboard_pressed = False
+
+        # ==========================================================
+        # Final pressed state
+        # ==========================================================
+
+        self.pressed = (
+            mouse_pressed_visual
+            or (
+                self.focused
+                and self._keyboard_pressed
+                and keyboard_down
+            )
+        )
+
+        self._sync_visuals()

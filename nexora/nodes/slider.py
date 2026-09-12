@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import sdl3
+
 from nexora.nodes.panel import Panel
 from nexora.nodes.ui_node import UINode
 
@@ -17,6 +19,19 @@ class Slider(UINode):
     Vertical:
         min_value = bottom
         max_value = top
+
+    Keyboard:
+        Left / Down
+            Decrease value.
+
+        Right / Up
+            Increase value.
+
+        Home
+            Set minimum value.
+
+        End
+            Set maximum value.
     """
 
     def __init__(
@@ -30,12 +45,20 @@ class Slider(UINode):
         )
 
         # --------------------------------------------------
+        # Focus
+        # --------------------------------------------------
+
+        self.focusable = True
+
+        # --------------------------------------------------
         # Value
         # --------------------------------------------------
 
         self.min_value: float = 0.0
         self.max_value: float = 1.0
         self.value: float = 0.0
+
+        self.step: float = 0.1
 
         # --------------------------------------------------
         # Orientation
@@ -90,6 +113,20 @@ class Slider(UINode):
             255,
         )
 
+        self.handle_focus_background: tuple[int, int, int, int] = (
+            200,
+            215,
+            255,
+            255,
+        )
+
+        self.focus_border_color: tuple[int, int, int, int] = (
+            80,
+            140,
+            220,
+            255,
+        )
+
         # --------------------------------------------------
         # State
         # --------------------------------------------------
@@ -127,6 +164,19 @@ class Slider(UINode):
         self._sync_visuals()
 
     # ======================================================
+    # Focus
+    # ======================================================
+
+    def on_focus(self) -> None:
+        self._sync_visuals()
+
+    def on_blur(self) -> None:
+        self._dragging = False
+        self.pressed = False
+
+        self._sync_visuals()
+
+    # ======================================================
     # Value
     # ======================================================
 
@@ -155,7 +205,9 @@ class Slider(UINode):
         Set the slider value.
         """
 
-        new_value = self._clamp_value(value)
+        new_value = self._clamp_value(
+            value
+        )
 
         if new_value == self.value:
             return
@@ -166,7 +218,34 @@ class Slider(UINode):
             callback = self.on_change
 
             if callback is not None:
-                callback(self.value)
+                callback(
+                    self.value
+                )
+
+        self._sync_layout()
+        self._sync_visuals()
+
+    def increase(
+        self,
+    ) -> None:
+        """
+        Increase the slider value by one step.
+        """
+
+        self.set_value(
+            self.value + self.step
+        )
+
+    def decrease(
+        self,
+    ) -> None:
+        """
+        Decrease the slider value by one step.
+        """
+
+        self.set_value(
+            self.value - self.step
+        )
 
     @property
     def normalized_value(self) -> float:
@@ -223,10 +302,6 @@ class Slider(UINode):
                 self.handle_size,
             )
 
-            # ----------------------------------------------
-            # Track
-            # ----------------------------------------------
-
             self.track.size = (
                 self.length,
                 self.track_size,
@@ -246,10 +321,6 @@ class Slider(UINode):
                 self.length / 2.0,
                 0.0,
             )
-
-            # ----------------------------------------------
-            # Fill
-            # ----------------------------------------------
 
             fill_width = (
                 self.length
@@ -275,10 +346,6 @@ class Slider(UINode):
                 fill_width / 2.0,
                 0.0,
             )
-
-            # ----------------------------------------------
-            # Handle
-            # ----------------------------------------------
 
             handle_x = (
                 self.length
@@ -315,10 +382,6 @@ class Slider(UINode):
                 self.length,
             )
 
-            # ----------------------------------------------
-            # Track
-            # ----------------------------------------------
-
             self.track.size = (
                 self.track_size,
                 self.length,
@@ -338,12 +401,6 @@ class Slider(UINode):
                 0.0,
                 self.length / 2.0,
             )
-
-            # ----------------------------------------------
-            # Fill
-            #
-            # Fill grows from bottom to top.
-            # ----------------------------------------------
 
             fill_height = (
                 self.length
@@ -369,13 +426,6 @@ class Slider(UINode):
                 0.0,
                 -fill_height / 2.0,
             )
-
-            # ----------------------------------------------
-            # Handle
-            #
-            # 0   = bottom
-            # 1   = top
-            # ----------------------------------------------
 
             handle_y = (
                 self.length
@@ -425,20 +475,43 @@ class Slider(UINode):
             self.track_size / 2.0
         )
 
+        # --------------------------------------------------
+        # Handle color
+        # --------------------------------------------------
+
         if self.pressed:
             self.handle.background = (
                 self.handle_pressed_background
             )
+
         elif self.hovered:
             self.handle.background = (
                 self.handle_hover_background
             )
+
+        elif self.focused:
+            self.handle.background = (
+                self.handle_focus_background
+            )
+
         else:
             self.handle.background = (
                 self.handle_background
             )
 
-        self.handle.border_width = 0.0
+        # --------------------------------------------------
+        # Focus border
+        # --------------------------------------------------
+
+        if self.focused:
+            self.handle.border_width = 2.0
+            self.handle.border_color = (
+                self.focus_border_color
+            )
+
+        else:
+            self.handle.border_width = 0.0
+
         self.handle.border_radius = (
             self.handle_size / 2.0
         )
@@ -488,14 +561,6 @@ class Slider(UINode):
     ) -> float:
         """
         Convert a mouse position into a slider value.
-
-        Horizontal:
-            left  = min
-            right = max
-
-        Vertical:
-            bottom = min
-            top    = max
         """
 
         rect_x, rect_y = (
@@ -507,10 +572,6 @@ class Slider(UINode):
 
         vertical = self._is_vertical()
 
-        # --------------------------------------------------
-        # Horizontal
-        # --------------------------------------------------
-
         if not vertical:
             left = (
                 rect_x
@@ -520,10 +581,6 @@ class Slider(UINode):
             normalized = (
                 x - left
             ) / self.length
-
-        # --------------------------------------------------
-        # Vertical
-        # --------------------------------------------------
 
         else:
             top = (
@@ -535,8 +592,6 @@ class Slider(UINode):
                 y - top
             ) / self.length
 
-            # Screen Y grows downward.
-            # Therefore top = max and bottom = min.
             normalized = (
                 1.0 - normalized
             )
@@ -559,6 +614,75 @@ class Slider(UINode):
         )
 
     # ======================================================
+    # Keyboard
+    # ======================================================
+
+    def _handle_keyboard(
+        self,
+        ui_input,
+    ) -> None:
+        if not self.focused:
+            return
+
+        vertical = self._is_vertical()
+
+        # --------------------------------------------------
+        # Decrease
+        # --------------------------------------------------
+
+        decrease = (
+            ui_input.key_pressed(
+                sdl3.SDL_SCANCODE_LEFT
+            )
+            or
+            ui_input.key_pressed(
+                sdl3.SDL_SCANCODE_DOWN
+            )
+        )
+
+        # --------------------------------------------------
+        # Increase
+        # --------------------------------------------------
+
+        increase = (
+            ui_input.key_pressed(
+                sdl3.SDL_SCANCODE_RIGHT
+            )
+            or
+            ui_input.key_pressed(
+                sdl3.SDL_SCANCODE_UP
+            )
+        )
+
+        if decrease:
+            self.decrease()
+
+        if increase:
+            self.increase()
+
+        # --------------------------------------------------
+        # Minimum
+        # --------------------------------------------------
+
+        if ui_input.key_pressed(
+            sdl3.SDL_SCANCODE_HOME
+        ):
+            self.set_value(
+                self.min_value
+            )
+
+        # --------------------------------------------------
+        # Maximum
+        # --------------------------------------------------
+
+        if ui_input.key_pressed(
+            sdl3.SDL_SCANCODE_END
+        ):
+            self.set_value(
+                self.max_value
+            )
+
+    # ======================================================
     # Input
     # ======================================================
 
@@ -566,7 +690,10 @@ class Slider(UINode):
         self,
         ui_input,
     ) -> None:
-        if not self.visible or not self.enabled:
+        if (
+            not self.visible
+            or not self.enabled
+        ):
             self.hovered = False
             self.pressed = False
             self._dragging = False
@@ -585,7 +712,7 @@ class Slider(UINode):
         )
 
         # --------------------------------------------------
-        # Start dragging
+        # Mouse
         # --------------------------------------------------
 
         if ui_input.mouse_left_pressed:
@@ -599,10 +726,6 @@ class Slider(UINode):
                     )
                 )
 
-        # --------------------------------------------------
-        # Continue dragging
-        # --------------------------------------------------
-
         if self._dragging:
             if ui_input.mouse_left_down:
                 self.set_value(
@@ -612,15 +735,20 @@ class Slider(UINode):
                     )
                 )
 
-        # --------------------------------------------------
-        # Stop dragging
-        # --------------------------------------------------
-
         if ui_input.mouse_left_released:
             self._dragging = False
 
         self.pressed = self._dragging
 
+        # --------------------------------------------------
+        # Keyboard
+        # --------------------------------------------------
+
+        self._handle_keyboard(
+            ui_input
+        )
+
+        self._sync_layout()
         self._sync_visuals()
 
     # ======================================================
@@ -637,6 +765,14 @@ class Slider(UINode):
         self._sync_layout()
         self._sync_visuals()
 
-        self.track.render(renderer)
-        self.fill.render(renderer)
-        self.handle.render(renderer)
+        self.track.render(
+            renderer
+        )
+
+        self.fill.render(
+            renderer
+        )
+
+        self.handle.render(
+            renderer
+        )

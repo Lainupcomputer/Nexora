@@ -14,7 +14,7 @@ class TextInput(UINode):
     A single-line text input UI component.
 
     The node handles:
-        - focus by mouse click
+        - focus through UIRoot
         - text display
         - placeholder display
         - cursor position
@@ -25,7 +25,7 @@ class TextInput(UINode):
         - enter / submit
         - visual focus state
 
-    Keyboard input is handled separately by the engine input system.
+    Focus ownership is managed centrally by UIRoot.
     """
 
     def __init__(
@@ -38,6 +38,10 @@ class TextInput(UINode):
             world,
         )
 
+        # ----------------------------------------------------------
+        # Content
+        # ----------------------------------------------------------
+
         self.text: str = ""
         self.placeholder: str = ""
 
@@ -45,11 +49,20 @@ class TextInput(UINode):
 
         self.text_scale: float = 1.0
 
-        self.focused: bool = False
+        # ----------------------------------------------------------
+        # Interaction
+        # ----------------------------------------------------------
+
+        self.focusable = True
+
         self.hovered: bool = False
         self.pressed: bool = False
 
         self.cursor_position: int = 0
+
+        # ----------------------------------------------------------
+        # Appearance
+        # ----------------------------------------------------------
 
         self.background: tuple[int, int, int, int] = (
             32,
@@ -112,8 +125,16 @@ class TextInput(UINode):
 
         self.padding: float = 10.0
 
+        # ----------------------------------------------------------
+        # Callbacks
+        # ----------------------------------------------------------
+
         self.on_change: Callable[[str], None] | None = None
         self.on_submit: Callable[[str], None] | None = None
+
+        # ----------------------------------------------------------
+        # Child nodes
+        # ----------------------------------------------------------
 
         self.panel = self.create_child(
             "Panel",
@@ -132,6 +153,10 @@ class TextInput(UINode):
 
         self._sync_layout()
         self._sync_visuals()
+
+    # ==============================================================
+    # Content
+    # ==============================================================
 
     def set_text(
         self,
@@ -160,24 +185,40 @@ class TextInput(UINode):
             if callback is not None:
                 callback(self.text)
 
+        self._sync_layout()
+        self._sync_visuals()
+
     def clear(self) -> None:
         self.set_text("")
 
-    def set_focus(
-        self,
-        focused: bool,
-    ) -> None:
-        focused = bool(focused)
+    # ==============================================================
+    # Focus
+    # ==============================================================
 
-        if self.focused == focused:
-            return
+    def on_focus(self) -> None:
+        """
+        Called by UINode/UIRoot when this TextInput receives focus.
+        """
 
-        self.focused = focused
+        self.cursor_position = len(
+            self.text
+        )
 
-        if self.focused:
-            self.cursor_position = len(self.text)
+        self._sync_layout()
+        self._sync_visuals()
+
+    def on_blur(self) -> None:
+        """
+        Called by UINode/UIRoot when this TextInput loses focus.
+        """
+
+        self.pressed = False
 
         self._sync_visuals()
+
+    # ==============================================================
+    # Display
+    # ==============================================================
 
     @property
     def displayed_text(self) -> str:
@@ -213,10 +254,18 @@ class TextInput(UINode):
             ),
         )
 
+    # ==============================================================
+    # Layout
+    # ==============================================================
+
     def _sync_layout(self) -> None:
         self.size = self.content_size
 
         width, height = self.size
+
+        # ----------------------------------------------------------
+        # Background panel
+        # ----------------------------------------------------------
 
         self.panel.size = (
             width,
@@ -238,6 +287,10 @@ class TextInput(UINode):
             0.0,
         )
 
+        # ----------------------------------------------------------
+        # Text
+        # ----------------------------------------------------------
+
         self.label.text = self.displayed_text
         self.label.scale = self.text_scale
 
@@ -255,6 +308,10 @@ class TextInput(UINode):
             self.padding,
             0.0,
         )
+
+        # ----------------------------------------------------------
+        # Cursor
+        # ----------------------------------------------------------
 
         self.cursor.size = (
             2.0,
@@ -283,25 +340,34 @@ class TextInput(UINode):
             0.0,
         )
 
+    # ==============================================================
+    # Visuals
+    # ==============================================================
+
     def _sync_visuals(self) -> None:
         if self.focused:
             self.panel.background = (
                 self.focus_background
             )
+
             self.panel.border_color = (
                 self.focus_border_color
             )
+
         elif self.hovered:
             self.panel.background = (
                 self.hover_background
             )
+
             self.panel.border_color = (
                 self.border_color
             )
+
         else:
             self.panel.background = (
                 self.background
             )
+
             self.panel.border_color = (
                 self.border_color
             )
@@ -318,6 +384,7 @@ class TextInput(UINode):
             self.label.color = (
                 self.text_color
             )
+
         else:
             self.label.color = (
                 self.placeholder_color
@@ -334,45 +401,23 @@ class TextInput(UINode):
             self.focused
         )
 
-    def contains_point(
-        self,
-        x: float,
-        y: float,
-    ) -> bool:
-        rect_x, rect_y = (
-            self.calculate_position()
-        )
-
-        width, height = self.size
-
-        left = (
-            rect_x
-            - width * self.pivot[0]
-        )
-
-        top = (
-            rect_y
-            - height * self.pivot[1]
-        )
-
-        right = left + width
-        bottom = top + height
-
-        return (
-            left <= x <= right
-            and
-            top <= y <= bottom
-        )
+    # ==============================================================
+    # Input
+    # ==============================================================
 
     def update_input(
         self,
         ui_input,
     ) -> None:
-        if not self.visible or not self.enabled:
+        if (
+            not self.visible
+            or not self.enabled
+        ):
             self.hovered = False
             self.pressed = False
-            self.focused = False
+
             self._sync_visuals()
+
             return
 
         mouse_x, mouse_y = (
@@ -384,24 +429,27 @@ class TextInput(UINode):
             mouse_y,
         )
 
-        if ui_input.mouse_left_pressed:
-            self.pressed = self.hovered
+        # ----------------------------------------------------------
+        # Mouse
+        # ----------------------------------------------------------
 
-            if self.hovered:
-                self.set_focus(True)
-            else:
-                self.set_focus(False)
+        if ui_input.mouse_left_pressed:
+            self.pressed = (
+                self.hovered
+            )
 
         if ui_input.mouse_left_released:
             self.pressed = False
 
-        # --------------------------------------------------
+        # ----------------------------------------------------------
         # Keyboard / text input
-        # --------------------------------------------------
+        # ----------------------------------------------------------
 
         if self.focused:
             for text in ui_input.text_input:
-                self._insert_text(text)
+                self._insert_text(
+                    text
+                )
 
             if ui_input.key_pressed(
                 sdl3.SDL_SCANCODE_BACKSPACE
@@ -437,7 +485,9 @@ class TextInput(UINode):
             if ui_input.key_pressed(
                 sdl3.SDL_SCANCODE_END
             ):
-                self.cursor_position = len(self.text)
+                self.cursor_position = len(
+                    self.text
+                )
 
             if ui_input.key_pressed(
                 sdl3.SDL_SCANCODE_RETURN
@@ -445,10 +495,16 @@ class TextInput(UINode):
                 callback = self.on_submit
 
                 if callback is not None:
-                    callback(self.text)
+                    callback(
+                        self.text
+                    )
 
         self._sync_layout()
         self._sync_visuals()
+
+    # ==============================================================
+    # Rendering
+    # ==============================================================
 
     def render(
         self,
@@ -460,9 +516,21 @@ class TextInput(UINode):
         self._sync_layout()
         self._sync_visuals()
 
-        self.panel.render(renderer)
-        self.label.render(renderer)
-        self.cursor.render(renderer)
+        self.panel.render(
+            renderer
+        )
+
+        self.label.render(
+            renderer
+        )
+
+        self.cursor.render(
+            renderer
+        )
+
+    # ==============================================================
+    # Text editing
+    # ==============================================================
 
     def _insert_text(
         self,
@@ -491,12 +559,16 @@ class TextInput(UINode):
             + self.text[self.cursor_position:]
         )
 
-        self.cursor_position += len(text)
+        self.cursor_position += len(
+            text
+        )
 
         callback = self.on_change
 
         if callback is not None:
-            callback(self.text)
+            callback(
+                self.text
+            )
 
     def _backspace(self) -> None:
         if self.cursor_position <= 0:
@@ -512,10 +584,14 @@ class TextInput(UINode):
         callback = self.on_change
 
         if callback is not None:
-            callback(self.text)
+            callback(
+                self.text
+            )
 
     def _delete(self) -> None:
-        if self.cursor_position >= len(self.text):
+        if self.cursor_position >= len(
+            self.text
+        ):
             return
 
         self.text = (
@@ -526,4 +602,6 @@ class TextInput(UINode):
         callback = self.on_change
 
         if callback is not None:
-            callback(self.text)
+            callback(
+                self.text
+            )
