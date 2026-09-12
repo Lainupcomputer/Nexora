@@ -60,8 +60,7 @@ class TileMapTest(Game):
         # Debug
         # ======================================================
 
-        self._last_visible_tiles = -1
-        self._last_rendered_tiles = -1
+        self._last_stats = None
 
     # ==============================================================
     # Initialize
@@ -135,8 +134,6 @@ class TileMapTest(Game):
             )
         )
 
-        # Fill complete map with a repeating pattern.
-
         for y in range(
             self.MAP_HEIGHT
         ):
@@ -204,8 +201,6 @@ class TileMapTest(Game):
             )
         )
 
-        # A diagonal pattern through the entire map.
-
         for index in range(
             min(
                 self.MAP_WIDTH,
@@ -238,8 +233,6 @@ class TileMapTest(Game):
                 "foreground"
             )
         )
-
-        # Sparse final layer using last four tiles.
 
         for y in range(
             2,
@@ -292,7 +285,6 @@ class TileMapTest(Game):
             self.texture,
         )
 
-        # Map center starts in screen center.
         self.map_node.transform.x = 0.0
         self.map_node.transform.y = 0.0
 
@@ -375,6 +367,14 @@ class TileMapTest(Game):
 
         print(
             "  Moving the map should update the culling area."
+        )
+
+        print(
+            "  Static chunks should produce cache hits."
+        )
+
+        print(
+            "  Newly visible or modified chunks should rebuild."
         )
 
         print()
@@ -766,41 +766,51 @@ class TileMapTest(Game):
             return
 
         # ----------------------------------------------------------
-        # Print statistics only when they change.
+        # Collect full renderer/cache statistics.
         # ----------------------------------------------------------
 
-        visible = (
-            self.map_node.last_visible_tiles
+        current_stats = (
+            self.map_node.last_visible_tiles,
+            self.map_node.last_visible_chunks,
+            self.map_node.last_rendered_tiles,
+            self.map_node.last_cache_rebuilds,
+            self.map_node.last_cache_hits,
+            self.map_node.chunk_cache_count,
+            self.map_node.transform.x,
+            self.map_node.transform.y,
         )
 
-        rendered = (
-            self.map_node.last_rendered_tiles
+        # ----------------------------------------------------------
+        # Print only when something changes.
+        # ----------------------------------------------------------
+
+        if current_stats == self._last_stats:
+            return
+
+        print(
+            "[TileMap] "
+            f"visible tiles = "
+            f"{self.map_node.last_visible_tiles}, "
+            f"visible chunks = "
+            f"{self.map_node.last_visible_chunks}, "
+            f"rendered = "
+            f"{self.map_node.last_rendered_tiles}, "
+            f"cache rebuilds = "
+            f"{self.map_node.last_cache_rebuilds}, "
+            f"cache hits = "
+            f"{self.map_node.last_cache_hits}, "
+            f"cached chunks = "
+            f"{self.map_node.chunk_cache_count}, "
+            f"position = "
+            f"("
+            f"{self.map_node.transform.x:.1f}, "
+            f"{self.map_node.transform.y:.1f}"
+            f")"
         )
 
-        if (
-            visible
-            != self._last_visible_tiles
-            or rendered
-            != self._last_rendered_tiles
-        ):
-            print(
-                "[TileMap] "
-                f"visible area = {visible}, "
-                f"rendered = {rendered}, "
-                f"position = "
-                f"("
-                f"{self.map_node.transform.x:.1f}, "
-                f"{self.map_node.transform.y:.1f}"
-                f")"
-            )
-
-            self._last_visible_tiles = (
-                visible
-            )
-
-            self._last_rendered_tiles = (
-                rendered
-            )
+        self._last_stats = (
+            current_stats
+        )
 
     # ==============================================================
     # Input
@@ -843,11 +853,6 @@ class TileMapTest(Game):
 
         # ----------------------------------------------------------
         # Movement
-        #
-        # We move the map itself.
-        #
-        # This effectively behaves like moving a camera in the
-        # opposite direction and is enough to verify culling.
         # ----------------------------------------------------------
 
         if (

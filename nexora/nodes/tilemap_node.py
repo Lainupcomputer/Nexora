@@ -4,7 +4,7 @@ import math
 
 from nexora.nodes.node import Node
 from nexora.tilemap import (
-    EMPTY_TILE,
+    TileChunkRenderCache,
     TileMap,
     TileSet,
 )
@@ -22,7 +22,13 @@ class TileMapNode(Node):
 
     but does not own any of them.
 
-    Only visible tiles are submitted to the renderer.
+    Rendering uses:
+
+        - viewport culling
+        - chunk culling
+        - empty-chunk skipping
+        - chunk render caches
+        - bulk GPU sprite submission
     """
 
     def __init__(
@@ -51,18 +57,41 @@ class TileMapNode(Node):
 
         # Additional tile margin around the viewport.
         #
-        # 1 means one extra row/column outside the viewport.
+        # 1 means one extra row / column outside the viewport.
         self.culling_margin: int = 1
 
         # Rendering origin of the TileMap.
         #
-        # By default local coordinate (0, 0) represents the center
-        # of the complete map.
+        # When True:
+        #
+        #     local (0, 0)
+        #
+        # represents the center of the complete map.
         self.centered: bool = True
 
-        # Debug/statistics.
+        # ======================================================
+        # Chunk render cache
+        # ======================================================
+
+        self._chunk_caches: dict[
+            tuple[
+                int,
+                int,
+                int,
+            ],
+            TileChunkRenderCache,
+        ] = {}
+
+        # ======================================================
+        # Debug / statistics
+        # ======================================================
+
         self.last_visible_tiles: int = 0
+        self.last_visible_chunks: int = 0
         self.last_rendered_tiles: int = 0
+
+        self.last_cache_hits: int = 0
+        self.last_cache_rebuilds: int = 0
 
     # ==============================================================
     # Configuration
@@ -87,6 +116,70 @@ class TileMapNode(Node):
         self.tilemap = tilemap
         self.tileset = tileset
         self.texture = texture
+
+        # A different map / tileset invalidates all previous
+        # chunk render caches.
+        self._chunk_caches.clear()
+
+    # ==============================================================
+    # Cache
+    # ==============================================================
+
+    def _get_chunk_cache(
+        self,
+        layer,
+        chunk,
+    ) -> TileChunkRenderCache:
+        """
+        Return the render cache for a specific layer/chunk pair.
+
+        A cache is created lazily the first time the chunk becomes
+        relevant for rendering.
+        """
+
+        key = (
+            id(
+                layer
+            ),
+            chunk.chunk_x,
+            chunk.chunk_y,
+        )
+
+        cache = (
+            self._chunk_caches.get(
+                key
+            )
+        )
+
+        if cache is None:
+            cache = TileChunkRenderCache(
+                chunk
+            )
+
+            self._chunk_caches[
+                key
+            ] = cache
+
+        return cache
+
+    def clear_chunk_caches(
+        self,
+    ) -> None:
+        """
+        Remove every cached chunk representation.
+
+        The caches will be rebuilt lazily when needed.
+        """
+
+        self._chunk_caches.clear()
+
+    @property
+    def chunk_cache_count(
+        self,
+    ) -> int:
+        return len(
+            self._chunk_caches
+        )
 
     # ==============================================================
     # Map information
@@ -200,8 +293,8 @@ class TileMapNode(Node):
         float,
     ]:
         """
-        Transform one tile center from local map space into world
-        coordinates.
+        Transform one tile center from local TileMap space into
+        world coordinates.
         """
 
         local_x, local_y = (
@@ -265,7 +358,7 @@ class TileMapNode(Node):
         )
 
     # ==============================================================
-    # Culling
+    # Tile culling
     # ==============================================================
 
     def visible_bounds(
@@ -300,16 +393,20 @@ class TileMapNode(Node):
                 -1,
             )
 
-        # ------------------------------------------------------
-        # Rotated TileMaps use a conservative full-map fallback.
-        #
-        # We can later replace this with proper rotated viewport
-        # projection without changing the public API.
-        # ------------------------------------------------------
-
         transform = (
             self.world_transform
         )
+
+        # ------------------------------------------------------
+        # Rotated maps
+        # ------------------------------------------------------
+        #
+        # Proper rotated viewport projection will be implemented
+        # separately.
+        #
+        # Until then, use the complete map as a conservative
+        # fallback.
+        # ------------------------------------------------------
 
         if (
             not self.culling_enabled
@@ -351,8 +448,9 @@ class TileMapNode(Node):
             * scale_y
         )
 
-        # Nexora world/sprite coordinates use screen center as
-        # viewport origin.
+        # Nexora world coordinates use the center of the viewport
+        # as origin.
+
         viewport_left = (
             -renderer.width
             / 2.0
@@ -374,7 +472,7 @@ class TileMapNode(Node):
         )
 
         # ------------------------------------------------------
-        # Map top-left world position
+        # Map top-left position in world space
         # ------------------------------------------------------
 
         if self.centered:
@@ -412,37 +510,53 @@ class TileMapNode(Node):
             ),
         )
 
-        min_x = math.floor(
-            (
-                viewport_left
-                - map_left
+        min_x = (
+            math.floor(
+                (
+                    viewport_left
+                    - map_left
+                )
+                / tile_width
             )
-            / tile_width
-        ) - margin
+            - margin
+        )
 
-        min_y = math.floor(
-            (
-                viewport_top
-                - map_top
+        min_y = (
+            math.floor(
+                (
+                    viewport_top
+                    - map_top
+                )
+                / tile_height
             )
-            / tile_height
-        ) - margin
+            - margin
+        )
 
-        max_x = math.floor(
-            (
-                viewport_right
-                - map_left
+        max_x = (
+            math.floor(
+                (
+                    viewport_right
+                    - map_left
+                )
+                / tile_width
             )
-            / tile_width
-        ) + margin
+            + margin
+        )
 
-        max_y = math.floor(
-            (
-                viewport_bottom
-                - map_top
+        max_y = (
+            math.floor(
+                (
+                    viewport_bottom
+                    - map_top
+                )
+                / tile_height
             )
-            / tile_height
-        ) + margin
+            + margin
+        )
+
+        # ------------------------------------------------------
+        # Clamp against map
+        # ------------------------------------------------------
 
         min_x = max(
             0,
@@ -483,15 +597,147 @@ class TileMapNode(Node):
         )
 
     # ==============================================================
+    # Chunk culling
+    # ==============================================================
+
+    def visible_chunk_bounds(
+        self,
+        renderer,
+        layer,
+    ) -> tuple[
+        int,
+        int,
+        int,
+        int,
+    ]:
+        """
+        Calculate visible chunk bounds for a TileLayer.
+
+        Returns:
+
+            (
+                min_chunk_x,
+                min_chunk_y,
+                max_chunk_x,
+                max_chunk_y,
+            )
+
+        max values are inclusive.
+        """
+
+        if self.tilemap is None:
+            return (
+                0,
+                0,
+                -1,
+                -1,
+            )
+
+        (
+            min_tile_x,
+            min_tile_y,
+            max_tile_x,
+            max_tile_y,
+        ) = self.visible_bounds(
+            renderer
+        )
+
+        if (
+            max_tile_x < min_tile_x
+            or max_tile_y < min_tile_y
+        ):
+            return (
+                0,
+                0,
+                -1,
+                -1,
+            )
+
+        chunk_size = (
+            layer.chunk_size
+        )
+
+        min_chunk_x = (
+            min_tile_x
+            // chunk_size
+        )
+
+        min_chunk_y = (
+            min_tile_y
+            // chunk_size
+        )
+
+        max_chunk_x = (
+            max_tile_x
+            // chunk_size
+        )
+
+        max_chunk_y = (
+            max_tile_y
+            // chunk_size
+        )
+
+        # ------------------------------------------------------
+        # Clamp against chunk grid
+        # ------------------------------------------------------
+
+        min_chunk_x = max(
+            0,
+            min_chunk_x,
+        )
+
+        min_chunk_y = max(
+            0,
+            min_chunk_y,
+        )
+
+        max_chunk_x = min(
+            layer.chunk_columns - 1,
+            max_chunk_x,
+        )
+
+        max_chunk_y = min(
+            layer.chunk_rows - 1,
+            max_chunk_y,
+        )
+
+        if (
+            min_chunk_x > max_chunk_x
+            or min_chunk_y > max_chunk_y
+        ):
+            return (
+                0,
+                0,
+                -1,
+                -1,
+            )
+
+        return (
+            min_chunk_x,
+            min_chunk_y,
+            max_chunk_x,
+            max_chunk_y,
+        )
+
+    # ==============================================================
     # Render
     # ==============================================================
+
     def render(
         self,
         renderer,
         interpolation: float,
     ) -> None:
+        # ------------------------------------------------------
+        # Statistics
+        # ------------------------------------------------------
+
+        self.last_visible_chunks = 0
         self.last_visible_tiles = 0
         self.last_rendered_tiles = 0
+
+        self.last_cache_hits = 0
+        self.last_cache_rebuilds = 0
 
         if not self.ready:
             return
@@ -518,7 +764,7 @@ class TileMapNode(Node):
             return
 
         # ==========================================================
-        # Render size
+        # Render dimensions
         # ==========================================================
 
         tile_width = (
@@ -544,34 +790,34 @@ class TileMapNode(Node):
         )
 
         # ==========================================================
-        # Culling
+        # Exact visible tile bounds
         # ==========================================================
 
         (
-            min_x,
-            min_y,
-            max_x,
-            max_y,
+            min_tile_x,
+            min_tile_y,
+            max_tile_x,
+            max_tile_y,
         ) = self.visible_bounds(
             renderer
         )
 
         if (
-            max_x < min_x
-            or max_y < min_y
+            max_tile_x < min_tile_x
+            or max_tile_y < min_tile_y
         ):
             return
 
         self.last_visible_tiles = (
             (
-                max_x
-                - min_x
+                max_tile_x
+                - min_tile_x
                 + 1
             )
             *
             (
-                max_y
-                - min_y
+                max_tile_y
+                - min_tile_y
                 + 1
             )
         )
@@ -598,124 +844,199 @@ class TileMapNode(Node):
             if alpha <= 0.0:
                 continue
 
-            # ------------------------------------------------------
-            # Build one GPU batch for this layer
-            # ------------------------------------------------------
+            # ======================================================
+            # Visible chunk range
+            # ======================================================
+
+            (
+                min_chunk_x,
+                min_chunk_y,
+                max_chunk_x,
+                max_chunk_y,
+            ) = self.visible_chunk_bounds(
+                renderer,
+                layer,
+            )
+
+            if (
+                max_chunk_x < min_chunk_x
+                or max_chunk_y < min_chunk_y
+            ):
+                continue
 
             sprites: list[
-                tuple[
-                    float,
-                    ...,
-                ]
+                tuple
             ] = []
 
-            for y in range(
-                min_y,
-                max_y + 1,
+            # ======================================================
+            # Chunks
+            # ======================================================
+
+            for chunk_y in range(
+                min_chunk_y,
+                max_chunk_y + 1,
             ):
-                for x in range(
-                    min_x,
-                    max_x + 1,
+                for chunk_x in range(
+                    min_chunk_x,
+                    max_chunk_x + 1,
                 ):
-                    tile_id = (
-                        layer.get_tile(
-                            x,
-                            y,
+                    chunk = (
+                        layer.get_chunk(
+                            chunk_x,
+                            chunk_y,
                         )
                     )
 
-                    if tile_id == EMPTY_TILE:
+                    if chunk is None:
                         continue
 
-                    if not self.tileset.contains(
-                        tile_id
-                    ):
-                        raise IndexError(
-                            f"Tile ID {tile_id} in "
-                            f"layer {layer.name!r} "
-                            f"is outside TileSet range."
+                    self.last_visible_chunks += 1
+
+                    # ==============================================
+                    # Chunk cache
+                    # ==============================================
+
+                    cache = (
+                        self._get_chunk_cache(
+                            layer,
+                            chunk,
+                        )
+                    )
+
+                    was_valid = (
+                        cache.valid
+                    )
+
+                    cached_tiles = (
+                        cache.get(
+                            self.tileset
+                        )
+                    )
+
+                    if was_valid:
+                        self.last_cache_hits += 1
+
+                    else:
+                        self.last_cache_rebuilds += 1
+
+                    # Empty chunks are represented by an empty
+                    # cache and require no more work.
+
+                    if not cached_tiles:
+                        continue
+
+                    # ==============================================
+                    # Chunk origin
+                    # ==============================================
+
+                    chunk_origin_x = (
+                        chunk.chunk_x
+                        * layer.chunk_size
+                    )
+
+                    chunk_origin_y = (
+                        chunk.chunk_y
+                        * layer.chunk_size
+                    )
+
+                    # ==============================================
+                    # Cached tiles
+                    # ==============================================
+
+                    for cached_tile in cached_tiles:
+                        x = (
+                            chunk_origin_x
+                            + cached_tile.x
                         )
 
-                    # ----------------------------------------------
-                    # Position
-                    # ----------------------------------------------
+                        y = (
+                            chunk_origin_y
+                            + cached_tile.y
+                        )
 
-                    world_x, world_y = (
-                        self.tile_world_position(
+                        # ------------------------------------------
+                        # Exact tile culling
+                        #
+                        # The visible chunk may only partially be
+                        # inside the viewport.
+                        # ------------------------------------------
+
+                        if (
+                            x < min_tile_x
+                            or x > max_tile_x
+                            or y < min_tile_y
+                            or y > max_tile_y
+                        ):
+                            continue
+
+                        # ==========================================
+                        # World position
+                        # ==========================================
+
+                        (
+                            world_x,
+                            world_y,
+                        ) = self.tile_world_position(
                             x,
                             y,
                         )
-                    )
 
-                    # ----------------------------------------------
-                    # UV
-                    # ----------------------------------------------
+                        # ==========================================
+                        # GPU instance
+                        # ==========================================
 
-                    (
-                        uv_x,
-                        uv_y,
-                        uv_width,
-                        uv_height,
-                    ) = self.tileset.uv(
-                        tile_id
-                    )
+                        sprites.append(
+                            (
+                                float(
+                                    world_x
+                                ),
+                                float(
+                                    world_y
+                                ),
 
-                    # ----------------------------------------------
-                    # Instance
-                    # ----------------------------------------------
+                                float(
+                                    tile_width
+                                ),
+                                float(
+                                    tile_height
+                                ),
 
-                    sprites.append(
-                        (
-                            float(
-                                world_x
-                            ),
-                            float(
-                                world_y
-                            ),
+                                float(
+                                    transform.rotation
+                                ),
 
-                            float(
-                                tile_width
-                            ),
-                            float(
-                                tile_height
-                            ),
+                                0.5,
+                                0.5,
 
-                            float(
-                                transform.rotation
-                            ),
+                                float(
+                                    alpha
+                                ),
 
-                            0.5,
-                            0.5,
+                                bool(
+                                    flip_x
+                                ),
+                                bool(
+                                    flip_y
+                                ),
 
-                            float(
-                                alpha
-                            ),
-
-                            bool(
-                                flip_x
-                            ),
-                            bool(
-                                flip_y
-                            ),
-
-                            float(
-                                uv_x
-                            ),
-                            float(
-                                uv_y
-                            ),
-                            float(
-                                uv_width
-                            ),
-                            float(
-                                uv_height
-                            ),
+                                float(
+                                    cached_tile.uv_x
+                                ),
+                                float(
+                                    cached_tile.uv_y
+                                ),
+                                float(
+                                    cached_tile.uv_width
+                                ),
+                                float(
+                                    cached_tile.uv_height
+                                ),
+                            )
                         )
-                    )
 
-            # ------------------------------------------------------
-            # One bulk submission for this layer
-            # ------------------------------------------------------
+            # ======================================================
+            # Bulk GPU submission
+            # ======================================================
 
             if not sprites:
                 continue

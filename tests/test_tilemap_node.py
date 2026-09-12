@@ -601,3 +601,186 @@ def test_scale_changes_rendered_tile_size():
     assert call["height"] == pytest.approx(
         96.0
     )
+
+def test_visible_chunk_bounds():
+    node = create_node(
+        map_width=100,
+        map_height=100,
+    )
+
+    assert node.tilemap is not None
+
+    layer = (
+        node.tilemap.create_layer(
+            "ground"
+        )
+    )
+
+    node.culling_margin = 0
+
+    renderer = DummyRenderer(
+        width=320,
+        height=320,
+    )
+
+    (
+        min_chunk_x,
+        min_chunk_y,
+        max_chunk_x,
+        max_chunk_y,
+    ) = node.visible_chunk_bounds(
+        renderer,
+        layer,
+    )
+
+    assert min_chunk_x >= 0
+    assert min_chunk_y >= 0
+
+    assert (
+        max_chunk_x
+        < layer.chunk_columns
+    )
+
+    assert (
+        max_chunk_y
+        < layer.chunk_rows
+    )
+
+
+def test_chunk_render_skips_empty_chunks():
+    node = create_node(
+        map_width=100,
+        map_height=100,
+    )
+
+    assert node.tilemap is not None
+
+    layer = (
+        node.tilemap.create_layer(
+            "ground"
+        )
+    )
+
+    # One tile in the center area.
+    layer.set_tile(
+        50,
+        50,
+        3,
+    )
+
+    renderer = DummyRenderer(
+        width=320,
+        height=320,
+    )
+
+    node.render(
+        renderer,
+        0.0,
+    )
+
+    assert (
+        node.last_visible_chunks
+        > 0
+    )
+
+    assert (
+        node.last_rendered_tiles
+        == 1
+    )
+
+
+def test_chunk_render_preserves_tile_uv():
+    node = create_node(
+        map_width=100,
+        map_height=100,
+    )
+
+    assert node.tilemap is not None
+    assert node.tileset is not None
+
+    layer = (
+        node.tilemap.create_layer(
+            "ground"
+        )
+    )
+
+    layer.set_tile(
+        50,
+        50,
+        7,
+    )
+
+    renderer = DummyRenderer(
+        width=320,
+        height=320,
+    )
+
+    node.render(
+        renderer,
+        0.0,
+    )
+
+    assert len(
+        renderer.calls
+    ) == 1
+
+    assert renderer.calls[0][
+        "uv"
+    ] == pytest.approx(
+        node.tileset.uv(
+            7
+        )
+    )
+
+
+def test_chunk_render_handles_tile_on_chunk_boundary():
+    node = create_node(
+        map_width=100,
+        map_height=100,
+    )
+
+    assert node.tilemap is not None
+
+    layer = (
+        node.tilemap.create_layer(
+            "ground"
+        )
+    )
+
+    # Boundary between chunk 0 and chunk 1.
+    layer.set_tile(
+        31,
+        50,
+        1,
+    )
+
+    layer.set_tile(
+        32,
+        50,
+        2,
+    )
+
+    # Move map so this region is around screen center.
+
+    node.transform.x = (
+        (
+            50
+            - 31.5
+        )
+        * 32.0
+    )
+
+    renderer = DummyRenderer(
+        width=320,
+        height=320,
+    )
+
+    node.render(
+        renderer,
+        0.0,
+    )
+
+    assert (
+        node.last_rendered_tiles
+        >= 2
+    )

@@ -629,3 +629,304 @@ def test_set_opacity_clamps():
     assert layer.opacity == pytest.approx(
         1.0
     )
+
+# ==============================================================
+# Chunk integration
+# ==============================================================
+
+
+def test_layer_default_chunk_grid():
+    layer = TileLayer(
+        "Large",
+        width=100,
+        height=100,
+    )
+
+    assert layer.chunk_size == 32
+
+    assert layer.chunk_columns == 4
+    assert layer.chunk_rows == 4
+
+    assert layer.chunk_grid_size == (
+        4,
+        4,
+    )
+
+    assert layer.chunk_count == 16
+
+
+def test_edge_chunks_have_correct_size():
+    layer = TileLayer(
+        "Large",
+        width=100,
+        height=70,
+    )
+
+    assert layer.chunk_grid_size == (
+        4,
+        3,
+    )
+
+    bottom_right = (
+        layer.require_chunk(
+            3,
+            2,
+        )
+    )
+
+    # Width:
+    #
+    # 100 - 3 * 32 = 4
+    #
+    # Height:
+    #
+    # 70 - 2 * 32 = 6
+
+    assert bottom_right.width == 4
+    assert bottom_right.height == 6
+
+
+def test_tile_resolves_to_correct_chunk():
+    layer = TileLayer(
+        "Large",
+        width=100,
+        height=100,
+    )
+
+    chunk, local_x, local_y = (
+        layer.resolve_tile(
+            70,
+            35,
+        )
+    )
+
+    assert chunk.coordinates == (
+        2,
+        1,
+    )
+
+    assert local_x == 6
+    assert local_y == 3
+
+
+def test_set_tile_marks_only_target_chunk_dirty():
+    layer = TileLayer(
+        "Large",
+        width=100,
+        height=100,
+    )
+
+    layer.mark_chunks_clean()
+
+    layer.set_tile(
+        70,
+        35,
+        8,
+    )
+
+    dirty = list(
+        layer.iter_dirty_chunks()
+    )
+
+    assert len(
+        dirty
+    ) == 1
+
+    assert dirty[0].coordinates == (
+        2,
+        1,
+    )
+
+
+def test_multiple_chunks_can_become_dirty():
+    layer = TileLayer(
+        "Large",
+        width=100,
+        height=100,
+    )
+
+    layer.mark_chunks_clean()
+
+    layer.set_tile(
+        1,
+        1,
+        1,
+    )
+
+    layer.set_tile(
+        40,
+        1,
+        2,
+    )
+
+    layer.set_tile(
+        90,
+        90,
+        3,
+    )
+
+    dirty = {
+        chunk.coordinates
+        for chunk
+        in layer.iter_dirty_chunks()
+    }
+
+    assert dirty == {
+        (
+            0,
+            0,
+        ),
+        (
+            1,
+            0,
+        ),
+        (
+            2,
+            2,
+        ),
+    }
+
+
+def test_iter_chunks_can_skip_empty_chunks():
+    layer = TileLayer(
+        "Large",
+        width=100,
+        height=100,
+    )
+
+    layer.set_tile(
+        40,
+        40,
+        5,
+    )
+
+    chunks = list(
+        layer.iter_chunks(
+            include_empty=False
+        )
+    )
+
+    assert len(
+        chunks
+    ) == 1
+
+    assert chunks[0].coordinates == (
+        1,
+        1,
+    )
+
+
+def test_iter_chunk_tiles_returns_global_coordinates():
+    layer = TileLayer(
+        "Large",
+        width=100,
+        height=100,
+    )
+
+    layer.set_tile(
+        33,
+        34,
+        7,
+    )
+
+    layer.set_tile(
+        40,
+        50,
+        9,
+    )
+
+    chunk = (
+        layer.require_chunk(
+            1,
+            1,
+        )
+    )
+
+    assert list(
+        layer.iter_chunk_tiles(
+            chunk
+        )
+    ) == [
+        (
+            33,
+            34,
+            7,
+        ),
+        (
+            40,
+            50,
+            9,
+        ),
+    ]
+
+
+def test_tiles_snapshot_preserves_global_row_major_order():
+    layer = TileLayer(
+        "Test",
+        width=4,
+        height=3,
+        chunk_size=2,
+    )
+
+    layer.set_tile(
+        0,
+        0,
+        1,
+    )
+
+    layer.set_tile(
+        3,
+        0,
+        2,
+    )
+
+    layer.set_tile(
+        1,
+        2,
+        3,
+    )
+
+    assert layer.tiles == (
+        1,
+        EMPTY_TILE,
+        EMPTY_TILE,
+        2,
+
+        EMPTY_TILE,
+        EMPTY_TILE,
+        EMPTY_TILE,
+        EMPTY_TILE,
+
+        EMPTY_TILE,
+        3,
+        EMPTY_TILE,
+        EMPTY_TILE,
+    )
+
+
+def test_count_tiles_uses_chunk_counts():
+    layer = TileLayer(
+        "Large",
+        width=100,
+        height=100,
+    )
+
+    layer.set_tile(
+        1,
+        1,
+        3,
+    )
+
+    layer.set_tile(
+        50,
+        50,
+        4,
+    )
+
+    layer.set_tile(
+        99,
+        99,
+        5,
+    )
+
+    assert layer.count_tiles() == 3
