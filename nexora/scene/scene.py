@@ -2,25 +2,51 @@ from __future__ import annotations
 
 from nexora.ecs.world import World
 from nexora.nodes.node import Node
+from nexora.nodes.text_input import TextInput
 from nexora.nodes.ui_root import UIRoot
 from nexora.ui import UIInput
 
 
 class Scene:
-    """A hierarchical collection of nodes backed by an ECS world."""
+    """
+    A hierarchical collection of nodes backed by an ECS world.
+    """
 
-    def __init__(self, name: str) -> None:
+    def __init__(
+        self,
+        name: str,
+    ) -> None:
         self.name = name
+
         self.world = World()
 
-        self.root = Node("Root", self.world)
-        self.ui = UIRoot("UI", self.world)
+        self.root = Node(
+            "Root",
+            self.world,
+        )
+
+        self.ui = UIRoot(
+            "UI",
+            self.world,
+        )
+
         self.ui_input = UIInput()
 
+    # ==============================================================
+    # Nodes
+    # ==============================================================
+
     @property
-    def nodes(self) -> tuple[Node, ...]:
-        """Return the direct children of the scene root."""
-        return tuple(self.root.children)
+    def nodes(
+        self,
+    ) -> tuple[Node, ...]:
+        """
+        Return the direct children of the scene root.
+        """
+
+        return tuple(
+            self.root.children
+        )
 
     def create_node(
         self,
@@ -35,8 +61,14 @@ class Scene:
                 "Parent node does not belong to this scene."
             )
 
-        node = Node(name, self.world)
-        parent.add_child(node)
+        node = Node(
+            name,
+            self.world,
+        )
+
+        parent.add_child(
+            node
+        )
 
         return node
 
@@ -63,7 +95,9 @@ class Scene:
                 "Parent node does not belong to this scene."
             )
 
-        parent.add_child(node)
+        parent.add_child(
+            node
+        )
 
     def remove_node(
         self,
@@ -80,7 +114,9 @@ class Scene:
             )
 
         if node.parent is not None:
-            node.parent.remove_child(node)
+            node.parent.remove_child(
+                node
+            )
 
     def find(
         self,
@@ -89,44 +125,111 @@ class Scene:
         if self.root.name == name:
             return self.root
 
-        return self.root.find_child(name)
+        return self.root.find_child(
+            name
+        )
+
+    # ==============================================================
+    # Update
+    # ==============================================================
 
     def update(
         self,
         delta_time: float,
     ) -> None:
-        self.world.update(delta_time)
+        self.world.update(
+            delta_time
+        )
 
     def fixed_update(
         self,
         fixed_delta_time: float,
     ) -> None:
-        self.world.fixed_update(fixed_delta_time)
+        self.world.fixed_update(
+            fixed_delta_time
+        )
+
+    # ==============================================================
+    # Render
+    # ==============================================================
 
     def render(
         self,
         interpolation: float,
     ) -> None:
-        self.world.render(interpolation)
+        self.world.render(
+            interpolation
+        )
 
-    def destroy(self) -> None:
-        self.root.destroy()
-        self.ui.destroy()
+    # ==============================================================
+    # Input
+    # ==============================================================
 
     def update_input(
         self,
         input_manager,
     ) -> None:
-        wheel_x, wheel_y = input_manager.wheel
+        """
+        Transfer InputManager state into the scene UI system.
+
+        InputManager stores SDL mouse coordinates with the origin in
+        the top-left corner.
+
+        Nexora UI coordinates use the center of the viewport as
+        (0, 0), so the mouse position must be converted here.
+        """
+
+        # ----------------------------------------------------------
+        # Mouse
+        # ----------------------------------------------------------
+
+        mouse_x, mouse_y = (
+            input_manager.mouse_position
+        )
+
+        viewport_width = (
+            self.ui.size[0]
+        )
+
+        viewport_height = (
+            self.ui.size[1]
+        )
+
+        ui_mouse_x = (
+            mouse_x
+            - viewport_width / 2.0
+        )
+
+        ui_mouse_y = (
+            mouse_y
+            - viewport_height / 2.0
+        )
+
+        wheel_x, wheel_y = (
+            input_manager.wheel
+        )
 
         self.ui_input.update_mouse(
-            position=input_manager.mouse_position,
-            down=input_manager.mouse_down("left"),
-            pressed=input_manager.mouse_pressed("left"),
-            released=input_manager.mouse_released("left"),
+            position=(
+                ui_mouse_x,
+                ui_mouse_y,
+            ),
+            down=input_manager.mouse_down(
+                "left",
+            ),
+            pressed=input_manager.mouse_pressed(
+                "left",
+            ),
+            released=input_manager.mouse_released(
+                "left",
+            ),
             wheel_x=wheel_x,
             wheel_y=wheel_y,
         )
+
+        # ----------------------------------------------------------
+        # Keyboard
+        # ----------------------------------------------------------
 
         self.ui_input.update_keyboard(
             keys_down=input_manager.keys_down,
@@ -134,17 +237,45 @@ class Scene:
             keys_released=input_manager.keys_released,
         )
 
+        # ----------------------------------------------------------
+        # Text
+        # ----------------------------------------------------------
+
         self.ui_input.update_text_input(
             input_manager.text_input,
         )
+
+        # ----------------------------------------------------------
+        # UI
+        # ----------------------------------------------------------
 
         self.ui.update_input(
             self.ui_input,
         )
 
-        focused_node = self.ui.focused_node
+        # ----------------------------------------------------------
+        # SDL text input mode
+        # ----------------------------------------------------------
 
-        if focused_node is not None:
+        focused_node = (
+            self.ui.focused_node
+        )
+
+        if isinstance(
+            focused_node,
+            TextInput,
+        ):
             input_manager.start_text_input()
+
         else:
             input_manager.stop_text_input()
+
+    # ==============================================================
+    # Destroy
+    # ==============================================================
+
+    def destroy(
+        self,
+    ) -> None:
+        self.root.destroy()
+        self.ui.destroy()

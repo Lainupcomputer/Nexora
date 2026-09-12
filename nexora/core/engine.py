@@ -72,8 +72,17 @@ class Engine:
             window_mode=window_mode,
         )
 
+        self.default_font = (
+            self.assets.load_font(
+                "fonts/Roboto-Regular.ttf",
+                24.0,
+            )
+        )
+
+
         self.renderer = Renderer(
             self.gpu_context,
+            font=self.default_font,
         )
 
         # ------------------------------------------------------
@@ -151,7 +160,9 @@ class Engine:
             "Engine.initialize"
         )
 
-        self.input.initialize()
+        self.input.initialize(
+            self.gpu_context.window,
+        )
         self.audio.initialize()
 
         initialize = getattr(
@@ -229,7 +240,7 @@ class Engine:
         # ------------------------------------------------------
 
         self.renderer.destroy()
-
+        self.assets.shutdown()
         # ------------------------------------------------------
         # Destroy GPU context after all GPU resources.
         # ------------------------------------------------------

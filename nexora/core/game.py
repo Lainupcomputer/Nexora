@@ -117,12 +117,45 @@ class Game:
         """Handle an SDL3 event."""
         pass
 
-    def update(self, delta_time: float) -> None:
-        """Update game logic."""
 
-        if self._scene is not None:
-            self._scene.update(delta_time)
+    def update(
+        self,
+        delta_time: float,
+    ) -> None:
+        """
+        Update input and game logic.
+        """
 
+        if self._scene is None:
+            return
+
+        # ----------------------------------------------------------
+        # Keep UI viewport synchronized before input processing.
+        # ----------------------------------------------------------
+
+        if self.renderer is not None:
+            self._scene.ui.set_viewport_size(
+                self.renderer.width,
+                self.renderer.height,
+            )
+
+        # ----------------------------------------------------------
+        # UI input
+        # ----------------------------------------------------------
+
+        if self.input is not None:
+            self._scene.update_input(
+                self.input,
+            )
+
+        # ----------------------------------------------------------
+        # Scene update
+        # ----------------------------------------------------------
+
+        self._scene.update(
+            delta_time
+        )
+    
     def fixed_update(self, fixed_delta_time: float) -> None:
         """Update fixed-timestep game logic."""
 
