@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 import pytest
 
 from nexora.audio import AudioCache, Sound
@@ -18,12 +17,12 @@ def test_audio_cache_loads_sound(monkeypatch, tmp_path):
 
     sound = object()
 
-    def fake_load(self, load_path):
-        assert load_path == path
+    def fake_load(load_path):
+        assert load_path == path.resolve()
         return sound
 
     monkeypatch.setattr(
-        "nexora.audio.cache.WavLoader.load",
+        "nexora.audio.cache.Sound.load",
         fake_load,
     )
 
@@ -43,7 +42,7 @@ def test_audio_cache_returns_cached_sound(monkeypatch, tmp_path):
 
     calls = 0
 
-    def fake_load(self, load_path):
+    def fake_load(load_path):
         nonlocal calls
         calls += 1
 
@@ -53,7 +52,7 @@ def test_audio_cache_returns_cached_sound(monkeypatch, tmp_path):
         return second
 
     monkeypatch.setattr(
-        "nexora.audio.cache.WavLoader.load",
+        "nexora.audio.cache.Sound.load",
         fake_load,
     )
 
@@ -107,6 +106,7 @@ def test_audio_cache_clear(tmp_path):
 
     assert cache.sounds == ()
 
+
 def test_audio_cache_normalizes_paths(
     monkeypatch,
     tmp_path,
@@ -119,7 +119,7 @@ def test_audio_cache_normalizes_paths(
     sound = object()
     calls = 0
 
-    def fake_load(self, load_path):
+    def fake_load(load_path):
         nonlocal calls
         calls += 1
 
@@ -128,7 +128,7 @@ def test_audio_cache_normalizes_paths(
         return sound
 
     monkeypatch.setattr(
-        "nexora.audio.cache.WavLoader.load",
+        "nexora.audio.cache.Sound.load",
         fake_load,
     )
 
@@ -163,6 +163,7 @@ def test_audio_cache_remove_normalizes_paths(tmp_path):
     )
 
     assert cache.sounds == ()
+
 
 def test_audio_cache_count():
     cache = AudioCache()

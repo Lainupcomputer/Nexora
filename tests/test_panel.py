@@ -115,6 +115,7 @@ def test_panel_style() -> None:
     panel.border_width = 2.0
     panel.border_radius = 8.0
 
+
     assert panel.background == (
         20,
         22,

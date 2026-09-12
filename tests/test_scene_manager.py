@@ -94,3 +94,4 @@ def test_scene_manager_clear():
 
     assert not scene_a.world.is_alive(node_a.entity)
     assert not scene_b.world.is_alive(node_b.entity)
+    

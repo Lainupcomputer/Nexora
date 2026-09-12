@@ -18,6 +18,9 @@ dist/
 .coverage
 htmlcov/
 
+# Documentation build
+docs/build/
+
 # IDE
 .vscode/
 .idea/
@@ -32,3 +35,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Project archives
+*.zip

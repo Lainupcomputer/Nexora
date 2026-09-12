@@ -260,3 +260,4 @@ def test_scene_updates_ui_from_input_manager() -> None:
 
     assert button.hovered is True
     assert button.pressed is True
+    

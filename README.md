@@ -1,871 +1,826 @@
 # Nexora Engine
 
-**Nexora Engine** is a modern 2D game engine for Python, designed around **Python 3.13 free-threading (No-GIL)** and a low-level **SDL3 + Vulkan rendering backend**.
+**Nexora Engine** is a modern, experimental **2D game engine for Python**, built on **SDL3** and **SDL_GPU**.
 
-The engine focuses on GPU-accelerated rendering, parallel game logic, data-oriented architecture, low boilerplate, and a clean modular design while keeping game development accessible to Python developers.
+It is designed around **Python 3.13 free-threading / No-GIL**, with parallel execution, GPU-accelerated rendering, a data-oriented ECS, a scene/node system, UI, audio, input management, and a clean modular architecture.
 
-> ⚠️ **Nexora Engine is currently in early development.**
+The goal of Nexora is to provide a capable 2D game engine while keeping game development accessible from Python.
+
+> [!WARNING]
+> **Nexora Engine is currently in early alpha development.**
 >
-> APIs, rendering systems, scene architecture, and internal implementation details may still change significantly.
+> APIs, internal systems, project structure, and behavior may change significantly as development continues.
+>
+> Nexora is not yet recommended for production projects.
 
 ---
 
-## ✨ Features
+## Features
 
-### Core Engine
+### Core
 
-Nexora provides the foundation required to create and run games:
+Nexora provides the core systems required to run real-time 2D applications and games.
 
-* Engine lifecycle management
-* Variable timestep updates
+* Engine lifecycle
+* Game abstraction
 * Fixed timestep updates
+* Variable timestep updates
 * Frame timing
+* Frame interpolation
 * Configurable target FPS
 * Time scaling
-* Frame interpolation
-* Automatic window handling
+* Window management
 * Resizable windows
 * Fullscreen support
 * VSync support
-* Main-thread management
-* Engine shutdown handling
-* Central game lifecycle
-
-The game loop separates normal updates, fixed updates, rendering, input processing, and engine events.
+* SDL3 integration
 
 ---
 
-## ⚡ Python 3.13 Free-Threading
+### Parallel Execution
 
-Nexora is designed specifically around **Python 3.13 free-threading / No-GIL**.
+Nexora is designed with **Python 3.13 free-threading / No-GIL** in mind.
 
-Parallel execution is treated as an important part of the engine architecture rather than an optional add-on.
+Parallel execution is treated as a core engine feature rather than an optional layer added later.
 
-The engine includes its own threading infrastructure with:
+Features include:
 
 * Worker threads
-* Priority-based task scheduling
+* Task scheduler
+* Priority-based task execution
 * Futures
 * Task cancellation
 * Task callbacks
-* Task statistics
 * Worker identification
+* Thread context management
 * Thread-safety checks
 * Main-thread execution support
-* Controlled worker synchronization
+* Parallel CPU-bound workloads
 
-CPU-heavy workloads can be moved away from the main thread while SDL3, windowing, and GPU operations remain inside their required thread boundaries.
-
-When using a free-threaded Python build, Nexora can be started with:
+When using a free-threaded Python build, Nexora can be run with:
 
 ```bash
-python -Xgil=0
+python -Xgil=0 main.py
 ```
 
 ---
 
-# 🧩 Entity Component System
+## Entity Component System
 
-Nexora includes a data-oriented **Entity Component System (ECS)** designed with parallel processing in mind.
+Nexora includes a data-oriented **Entity Component System** designed for scalable game logic and parallel execution.
 
-The ECS currently includes:
+Features include:
 
 * Entities
 * Components
 * Systems
 * Archetypes
 * Archetype-based storage
-* Chunk-based processing
-* Parallel chunk processing
-* System dependencies
-* System scheduling
-* System conflict detection
-* Parallel system execution
 * Command buffers
+* System dependencies
+* Automatic system conflict detection
+* Parallel system execution
+* Parallel archetype processing
 * Fixed-update systems
 * Render systems
-
-Built-in example components include:
-
-* `Transform`
-* `Velocity`
-* `Sprite`
-* `Health`
-
-The ECS is designed to allow independent workloads to execute concurrently while keeping structural changes controlled.
-
----
-
-# 🌳 Scene & Node System
-
-Nexora now includes a hierarchical **Scene / Node system** built on top of the ECS.
-
-Scenes provide the hierarchical structure and lifetime management of game objects, while ECS provides the underlying data and processing architecture.
-
-Example hierarchy:
-
-```text
-MainScene
-├── World
-│   └── Tilemap
-│       ├── Ground
-│       ├── Decoration
-│       └── Collision
-├── Player
-├── Enemies
-├── Camera
-└── UI
-```
-
-The current Scene system provides:
-
-* `Scene`
-* `Node`
-* Hierarchical parent/child relationships
-* Scene root nodes
-* Scene node creation
-* Node lookup
-* Node removal
-* Node destruction
-* ECS entity integration
-* ECS `Transform` integration
-* Local transforms
-* World position
-* World rotation
-* World scale
-* Combined world transforms
-* Scene update forwarding
-* Fixed-update forwarding
-* Render forwarding
+* ECS scheduler
 
 Example:
 
 ```python
-from nexora.scene import Scene
+from dataclasses import dataclass
 
-scene = Scene("MainScene")
+from nexora.ecs import Component
 
-world = scene.create_node("World")
-player = scene.create_node("Player", parent=world)
-weapon = scene.create_node("Weapon", parent=player)
 
-player.transform.x = 100.0
-weapon.transform.x = 50.0
-weapon.transform.rotation = 45.0
+@dataclass(slots=True)
+class Position(Component):
+    x: float = 0.0
+    y: float = 0.0
 ```
 
-Nodes are backed by ECS entities, allowing the scene hierarchy and ECS architecture to work together without maintaining a separate object system.
+The ECS is designed to work together with Nexora's threading system, allowing independent systems and workloads to execute in parallel where possible.
 
 ---
 
-# 🎬 Scene Manager
+## GPU Rendering
 
-Nexora includes a `SceneManager` for managing multiple loaded scenes.
+Rendering in Nexora is built on **SDL_GPU** instead of SDL's traditional 2D renderer.
 
-It currently supports:
+This gives Nexora direct access to modern GPU rendering concepts while keeping the engine portable through SDL3.
 
-* Loading scenes
-* Unloading scenes
-* Activating scenes
-* Retrieving scenes
-* Checking whether a scene is loaded
-* Clearing all scenes
-* Tracking the active scene
+The rendering system currently includes:
 
-Example:
-
-```python
-scene = Scene("MainMenu")
-
-game.scenes.load(scene)
-game.scenes.activate("MainMenu")
-```
-
-The scene system is intended to support game states such as:
-
-```text
-Scenes/
-├── MainMenu
-├── Settings
-├── CharacterSelect
-├── Game
-├── PauseMenu
-└── GameOver
-```
-
-The future editor architecture will build on top of this scene hierarchy.
-
----
-
-# 🎮 Input
-
-Nexora provides an action-oriented input system instead of requiring games to manually process SDL events.
-
-Actions provide state information such as:
-
-* Down
-* Pressed
-* Released
-
-Bindings can be configured using readable action names:
-
-```python
-self.input.bind("left", "A")
-self.input.bind("right", "D")
-self.input.bind("jump", "SPACE")
-self.input.bind("escape", "ESCAPE")
-```
-
-Gameplay code can then query the action:
-
-```python
-if self.input.action("jump").pressed:
-    player.jump()
-```
-
-Mouse input includes:
-
-* Position
-* Movement delta
-* Button state
-* Press/release detection
-* Mouse wheel
-
-The input system remains independent from individual gameplay systems.
-
----
-
-# 🖥️ Rendering
-
-Nexora's renderer is based on **SDL3 + Vulkan**.
-
-Rendering is GPU-based rather than relying on CPU-side `pygame.Surface` drawing.
-
-Current rendering functionality includes:
-
-* Vulkan GPU context
-* Vulkan swapchain
-* SDL3 window integration
-* GPU-based 2D rendering
-* Rectangles
-* Circles
-* Lines
-* Polygons
-* Pixels
-* Sprites
-* GPU textures
+* GPU context management
+* Swapchain handling
+* Graphics pipelines
+* GPU buffers
+* Shader management
+* Texture management
+* Samplers
+* Sprite rendering
+* Sprite batching
+* Rectangle batching
+* Shape batching
+* Line batching
 * Text rendering
-* World-space rendering
-* Screen-space rendering
-* Camera transformations
-* Frame interpolation
+* Font atlases
+* Render snapshots
+* Camera support
+* VSync
+* Window resizing
 
-The renderer is designed as a low-level GPU backend on top of which higher-level rendering systems can be built.
+Nexora currently supports the graphics backends provided by SDL_GPU, depending on platform and SDL configuration.
 
-Rendering operations that interact with SDL3, window, and GPU resources are kept within the required main-thread boundaries.
-
----
-
-# 🖼️ GPU Textures & Sprites
-
-Nexora supports GPU textures that can be created from loaded image data.
-
-A basic rendering flow looks like:
-
-```python
-image = self.assets.load_texture("demo_sprite.png")
-
-texture = GPUTexture(
-    self.engine.gpu_context.device,
-    image.width,
-    image.height,
-    data=image.pixels,
-    bytes_per_pixel=image.bytes_per_pixel,
-)
-
-self.renderer.sprite(
-    texture,
-    x,
-    y,
-    width=image.width,
-    height=image.height,
-)
-```
-
-Sprites support properties including:
-
-* Position
-* Width
-* Height
-* Rotation
-* Scaling
-
-The sprite renderer is already usable for basic 2D game rendering.
-
-More advanced batching and resource management are planned for later development.
+Development is currently primarily tested using **Vulkan**.
 
 ---
 
-# 🔤 GPU Text Rendering
+## Text Rendering
 
-Nexora includes a dedicated GPU text-rendering path.
+Nexora includes its own GPU-accelerated text rendering system.
 
-The current text renderer integrates:
+Fonts are rasterized into glyph atlases and rendered through the GPU renderer.
 
-* SDL3
-* SDL3_ttf
-* Vulkan
-* GPU texture resources
-* Text image generation
-* GPU rendering
+Features include:
 
-Text is converted into GPU-compatible image data and rendered through the Vulkan pipeline.
-
-The text renderer is being developed separately from the higher-level 2D rendering API so that it can eventually participate efficiently in the same GPU rendering pipeline as other graphical objects.
-
----
-
-# 📷 Camera
-
-Nexora includes a camera system for world/screen coordinate transformations.
-
-Current functionality includes:
-
-* World-to-screen conversion
-* Screen-to-world conversion
-* Zoom
-* Zoom limits
-* Camera following
-* Dead zones
-* World bounds
-* Camera shake
-* Smooth movement
+* Font loading
+* Glyph caching
+* Font atlases
+* GPU text rendering
+* Text measurement
+* Font metrics
+* Dynamic glyph management
 
 Example:
 
 ```python
-camera.follow(
-    player_x,
-    player_y,
-    smooth=0.12,
-    delta_time=delta_time,
+font = text_system.font(
+    "assets/fonts/Roboto-Regular.ttf",
+    32,
 )
-
-camera.set_zoom(1.5)
-
-camera.shake(25.0, 0.5)
 ```
-
-The renderer uses world coordinates and applies the camera transformation before presenting the final image.
 
 ---
 
-# 🔊 Audio
+## Scene System
 
-Nexora includes a basic audio subsystem for game audio playback.
+Games can be organized using Nexora's scene and node architecture.
+
+The scene system provides:
+
+* Scenes
+* Scene manager
+* Node hierarchy
+* Parent/child relationships
+* Node transforms
+* Scene activation
+* Scene deactivation
+* ECS integration
+* UI integration
+
+A scene acts as a container for the objects and systems required by a part of the game.
+
+---
+
+## UI Framework
+
+Nexora contains a custom UI framework built directly on top of the engine's scene/node and GPU rendering systems.
+
+Currently available UI components include:
+
+* `UIRoot`
+* `UINode`
+* `Panel`
+* `Label`
+* `Button`
+* `CheckBox`
+* `RadioButton`
+* `RadioButtonGroup`
+* `Slider`
+* `ProgressBar`
+* `TextInput`
+* `Dropdown`
+* `ScrollView`
+* `ListView`
+
+The UI system supports concepts such as:
+
+* Node-based UI hierarchy
+* Mouse interaction
+* Hover states
+* Pressed states
+* UI clipping
+* Scrollable content
+* Interactive controls
+* Text input
+* Selection controls
+
+Example:
+
+```python
+from nexora.nodes import Button
+
+button = Button(
+    text="Start Game",
+    width=220,
+    height=50,
+)
+```
+
+The UI framework is still under active development.
+
+Planned improvements include:
+
+* Focus management
+* Keyboard navigation
+* Layout containers
+* Improved event propagation
+* Themes and styling
+* More advanced UI controls
+
+---
+
+## Input
+
+Nexora provides an input abstraction on top of SDL3.
+
+The input system currently supports:
+
+* Keyboard input
+* Mouse input
+* Mouse buttons
+* Mouse position
+* Mouse movement delta
+* Mouse wheel
+* Pressed state
+* Released state
+* Held state
+* Action bindings
+
+Instead of directly checking physical keys everywhere, games can define logical actions.
+
+Example:
+
+```python
+input_manager.bind(
+    "move_left",
+    "A",
+)
+
+input_manager.bind(
+    "move_left",
+    "LEFT",
+)
+
+input_manager.bind(
+    "jump",
+    "SPACE",
+)
+```
+
+Game code can then work with actions instead of specific keys.
+
+```python
+if input_manager.action_down("move_left"):
+    ...
+
+if input_manager.action_pressed("jump"):
+    ...
+```
+
+This keeps gameplay code independent from the actual input configuration.
+
+---
+
+## Audio
+
+Nexora includes a custom audio subsystem built around SDL3 audio.
 
 The current audio architecture includes:
 
-* Audio player
-* Audio playback
+* Audio system
+* Audio device management
+* Audio buffers
+* PCM audio
+* WAV loading
+* Sound effects
+* Music playback
+* Audio channels
+* Audio mixer
+* Audio buses
+* Audio sources
+* Audio listeners
 * Audio caching
-* Sound loading
-* Playback state management
-* Audio updates integrated into the main game loop
+* Spatial audio foundations
+
+Major audio components include:
+
+```text
+AudioSystem
+AudioDevice
+AudioBuffer
+AudioMixer
+AudioBus
+AudioChannel
+AudioPlayer
+MusicPlayer
+Sound
+AudioSource
+AudioListener
+AudioCache
+```
+
+The audio system is designed so that sound effects, music, buses, sources, and listeners can later be integrated directly with scenes and gameplay systems.
+
+---
+
+## Asset Management
+
+Nexora contains a growing asset management system for loading and managing game resources.
+
+Current functionality includes:
+
+* Asset abstraction
+* Asset loaders
+* Asset manager
+* Texture loading
+* Audio asset integration
+* Asset caching foundations
+
+The asset system is still under development.
+
+Future work is expected to include:
+
+* Asset handles
+* Asset registry
+* Asynchronous loading
+* Dependency tracking
+* Reference management
+* Asset unloading
+* Hot reloading
+
+---
+
+## Command Line Interface
+
+Installing Nexora also provides the `nexora` command.
+
+New game projects can be created using:
+
+```bash
+nexora create MyGame
+```
+
+The generated project structure includes directories for common game resources and code.
 
 Example:
 
-```python
-sound = self.assets.load_sound("jump.wav")
-self.audio.player.play(sound)
+```text
+MyGame/
+├── assets/
+│   ├── audio/
+│   ├── fonts/
+│   └── sprites/
+├── scenes/
+├── scripts/
+├── main.py
+├── README.md
+└── .gitignore
 ```
 
-Audio is currently functional but remains less mature than the rendering and ECS systems.
-
-More advanced features such as mixing, music management, spatial audio, and effects are planned for later development.
+The project generator is still under development and will be expanded as Nexora's public game API stabilizes.
 
 ---
 
-# 📦 Asset System
+## Project Structure
 
-Nexora includes an asset-loading layer used by the engine and examples.
-
-The current asset functionality includes loading resources such as:
-
-* Textures
-* Sounds
-
-Assets can be loaded through the game's asset interface:
-
-```python
-image = self.assets.load_texture("demo_sprite.png")
-```
-
-The asset system is currently being expanded toward a more complete resource management architecture.
-
-Planned improvements include stronger caching, lifecycle management, and additional asset types.
-
----
-
-# 🧵 Threading Model
-
-Nexora separates work according to its thread requirements.
+The engine itself is organized into independent subsystems.
 
 ```text
-                         Nexora Engine
-                              │
-              ┌───────────────┴───────────────┐
-              │                               │
-         Main Thread                    Worker Threads
-              │                               │
-       ┌──────┼──────┐                 ┌──────┼──────┐
-       │      │      │                 │      │      │
-     Window  Input  Vulkan             ECS   Tasks  Loading
-                    Rendering
+nexora/
+├── assets/
+├── audio/
+├── cli/
+├── core/
+├── ecs/
+├── input/
+├── nodes/
+├── rendering/
+│   └── gpu/
+├── scene/
+└── threading/
 ```
 
-The main thread is responsible for operations that require SDL3, window, or GPU context access.
-
-Worker threads are intended for CPU-heavy workloads such as:
-
-* ECS processing
-* Gameplay calculations
-* Pathfinding
-* Procedural generation
-* Asset preparation
-* Data processing
-* Background tasks
-
-The goal is to keep the main thread responsive while making use of available CPU cores.
+The architecture intentionally keeps engine systems separated so they can evolve independently.
 
 ---
 
-# 🧱 Architecture
+## Installation
 
-Nexora is split into independent subsystems rather than being implemented as one monolithic engine.
-
-The current architecture is centered around:
-
-```text
-Nexora
-│
-├── Core
-│   ├── Engine
-│   ├── Game
-│   ├── Game Loop
-│   ├── Time
-│   └── Configuration
-│
-├── Threading
-│   ├── Scheduler
-│   ├── Workers
-│   ├── Tasks
-│   ├── Futures
-│   └── Context
-│
-├── Window
-│   ├── SDL3 Window
-│   └── Viewport
-│
-├── Rendering
-│   ├── Vulkan
-│   ├── GPU Context
-│   ├── Renderer
-│   ├── GPU Textures
-│   ├── Text Renderer
-│   └── Camera
-│
-├── Input
-│   ├── Actions
-│   ├── Bindings
-│   └── Mouse Input
-│
-├── Audio
-│   ├── Audio Player
-│   └── Audio Cache
-│
-├── Assets
-│   └── Asset Loading
-│
-├── Scene
-│   ├── Scene
-│   ├── Node
-│   └── Scene Manager
-│
-├── ECS
-│   ├── Entities
-│   ├── Components
-│   ├── Systems
-│   ├── Archetypes
-│   ├── Chunks
-│   ├── Scheduler
-│   └── Commands
-│
-└── Debug
-    └── Logging
-```
-
-The architecture intentionally separates:
-
-**Scene hierarchy**
-
-from
-
-**ECS data and processing**
-
-and from
-
-**GPU rendering**.
-
-This allows the individual systems to evolve independently.
-
----
-
-# 🚧 Roadmap
-
-Nexora is actively being developed.
-
-### Core
-
-* [x] Engine lifecycle
-* [x] Variable timestep
-* [x] Fixed timestep
-* [x] Frame timing
-* [x] Target FPS
-* [x] Time scaling
-* [x] Frame interpolation
-* [x] Window management
-* [x] Resizable windows
-* [x] Fullscreen support
-
-### Input
-
-* [x] Keyboard input
-* [x] Action bindings
-* [x] Pressed / released / down states
-* [x] Mouse input
-* [x] Mouse wheel
-
-### Rendering
-
-* [x] SDL3 window integration
-* [x] Vulkan context
-* [x] Swapchain
-* [x] GPU rendering
-* [x] 2D primitives
-* [x] GPU textures
-* [x] Sprite rendering
-* [x] Camera
-* [x] GPU text rendering
-* [ ] Advanced batching
-* [ ] Sprite batching
-* [ ] Texture atlases
-* [ ] Render command batching
-* [ ] Advanced GPU resource management
-
-### ECS
-
-* [x] Entities
-* [x] Components
-* [x] Systems
-* [x] Archetypes
-* [x] Chunk processing
-* [x] Parallel ECS processing
-* [x] System scheduling
-* [x] System dependencies
-* [x] Conflict detection
-* [x] Command buffers
-* [x] Fixed-update systems
-* [x] Render systems
-
-### Scene
-
-* [x] Scene
-* [x] Node hierarchy
-* [x] Parent / child relationships
-* [x] ECS entity integration
-* [x] Transform integration
-* [x] World transforms
-* [x] SceneManager
-* [x] Scene activation
-* [x] Scene destruction
-* [ ] Advanced node API
-* [ ] Node lifecycle callbacks
-* [ ] Scene serialization
-* [ ] Scene file format
-* [ ] Editor integration
-
-### Assets
-
-* [x] Texture loading
-* [x] Sound loading
-* [ ] Complete asset manager
-* [ ] Advanced caching
-* [ ] Asset lifecycle management
-* [ ] Additional asset types
-* [ ] Resource dependency management
-
-### Audio
-
-* [x] Basic sound playback
-* [x] Audio cache
-* [x] Game-loop audio updates
-* [ ] Music management
-* [ ] Audio mixing
-* [ ] Spatial audio
-* [ ] Audio effects
-
-### Gameplay Systems
-
-* [ ] Animation system
-* [ ] Particle system
-* [ ] Tweening
-* [ ] Object pooling
-* [ ] Coroutines
-* [ ] Game state management
-* [ ] Loading screens
-
-### UI & Tools
-
-* [ ] UI framework
-* [ ] Debug console
-* [ ] Debug overlay
-* [ ] Profiler
-* [ ] Inspector
-* [ ] Settings system
-* [ ] Localization
-* [ ] Save system
-* [ ] Replay system
-* [ ] Hot reload
-* [ ] Plugin system
-* [ ] Nexora Editor
-
-The roadmap will evolve as the engine architecture matures.
-
----
-
-# 📦 Requirements
+### Requirements
 
 Nexora currently targets:
 
-* **Python 3.13**
-* **Python free-threaded / No-GIL build**
-* **SDL3**
-* **SDL3_ttf**
-* **Vulkan-capable GPU and driver**
-
-Development is currently focused primarily on **Windows**.
-
-Linux support is expected to become more important as the engine matures.
-
----
-
-# 🔧 Installation
+* Python 3.13+
+* SDL3
+* PySDL3
+* A GPU/backend supported by SDL_GPU
 
 Clone the repository:
 
 ```bash
-git clone git@github.com:Lainupcomputer/Nexora.git
+git clone https://github.com/Lainupcomputer/Nexora.git
 cd Nexora
 ```
 
 Create a virtual environment:
 
+### Windows
+
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+### Linux
+
 ```bash
-python -m venv .venv
+python3.13 -m venv .venv
+source .venv/bin/activate
 ```
 
-Activate it on Windows:
+Install Nexora in editable mode:
 
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Install Nexora:
-
-```powershell
+```bash
 pip install -e .
 ```
 
----
+For development dependencies:
 
-# 🚀 Running Nexora
-
-Nexora contains examples and tests for the individual engine systems.
-
-Because the engine is designed around Python's free-threaded runtime, development and test programs should be started with:
-
-```powershell
-python -Xgil=0 ...
+```bash
+pip install -e ".[dev]"
 ```
-
-For example:
-
-```powershell
-python -Xgil=0 examples\scene_example.py
-```
-
-The Scene example demonstrates:
-
-* Scene creation
-* Node hierarchy
-* Parent/child relationships
-* ECS-backed transforms
-* World transforms
-* Sprite rendering
-* Player movement
-* Rotation
-* Scaling
-
-Other examples demonstrate individual engine subsystems.
 
 ---
 
-# 🧪 Testing
+## Running with Free-Threading
 
-Nexora contains tests for individual engine subsystems.
+Nexora is designed to take advantage of Python's free-threaded execution mode.
 
-Current test coverage includes areas such as:
+You can verify the GIL state with:
 
-* Core engine behavior
-* Game loop
-* Timing
-* Thread scheduler
-* Futures
-* Task cancellation
-* Task callbacks
-* Task priorities
-* Parallel CPU workloads
-* ECS
-* Archetypes
-* Parallel ECS processing
-* System scheduling
-* Input
-* Rendering
-* GPU text rendering
-* Camera transformations
-* Scene
-* Node
-* SceneManager
-* Game/Scene integration
-* Game loop / Scene integration
-* Audio
-
-Tests are executed using the free-threaded Python runtime:
-
-```powershell
-python -Xgil=0 tests\test_node.py
+```bash
+python -Xgil=0 -c "import sys; print(sys._is_gil_enabled())"
 ```
 
-For example, the current Scene and Node tests verify:
+A free-threaded runtime should report:
 
 ```text
-Node tests
-    7 / 7 passed
-
-Scene tests
-    12 / 12 passed
-
-Game / Scene tests
-    8 / 8 passed
-
-Game Loop / Scene tests
-    5 / 5 passed
+False
 ```
 
-GPU rendering tests can be executed with:
+Nexora applications can then be started with:
 
-```powershell
-python -Xgil=0 tests\test_text_renderer.py
+```bash
+python -Xgil=0 main.py
 ```
 
-The parallel execution tests are particularly important because they verify that CPU-bound workloads can execute concurrently under Python's free-threaded runtime.
+> [!NOTE]
+> Nexora can contain systems that must remain on the main thread, especially functionality interacting directly with SDL or GPU resources.
+>
+> The engine's threading architecture is designed to distinguish these workloads from tasks that can safely execute in parallel.
 
 ---
 
-# 🎯 Design Goals
+## Development
 
-Nexora is built around several core principles.
+Install the development dependencies:
 
-### Performance
+```bash
+pip install -e ".[dev]"
+```
 
-Use data-oriented structures, GPU acceleration, parallel execution, caching, and efficient update paths where they provide real benefits.
+Run the normal test suite:
 
-### Parallel by Design
+```bash
+pytest
+```
 
-Multithreading should not be something developers have to manually bolt onto every game.
+GPU-dependent tests are marked separately because they require SDL3, a windowing environment, and compatible GPU hardware.
 
-Nexora should make parallel workloads a natural part of game development.
+They can be executed explicitly when required.
 
-### GPU First
+---
 
-Rendering should make use of the GPU rather than relying on CPU-side drawing wherever possible.
+## Tests
 
-The Vulkan backend provides the foundation for a scalable modern rendering pipeline.
+Nexora contains automated tests covering multiple engine systems, including:
 
-### Low Boilerplate
+* Core game loop
+* Nodes
+* Scenes
+* Scene manager
+* Assets
+* Audio
+* Rendering
+* GPU text measurement
+* UI nodes
+* UI root
+* Panels
+* Labels
+* Buttons
+* UI input
 
-Creating a game should require as little engine-specific code as possible.
+GPU tests are separated from normal unit tests where possible.
 
-### Safe Thread Boundaries
+The test suite will continue to grow as the public engine API stabilizes.
 
-SDL3, windowing, and graphics operations must respect their thread requirements while CPU-heavy workloads can run concurrently on worker threads.
+---
 
-### Modular Architecture
+## Documentation
 
-Engine systems should remain independent enough to evolve without turning Nexora into a monolithic framework.
+Project documentation is maintained alongside the engine source.
+
+Documentation can be rebuilt locally during development.
+
+The documentation is still evolving together with the engine API and may occasionally lag behind the latest development branch.
+
+---
+
+# Roadmap
+
+Nexora is under active development.
+
+The roadmap below represents the current direction and is not a strict release schedule.
+
+## Core
+
+* [x] Engine lifecycle
+* [x] Game loop
+* [x] Fixed timestep
+* [x] Variable timestep
+* [x] Frame interpolation
+* [x] Time scaling
+* [x] Window management
+* [x] Resizable windows
+* [x] Fullscreen support
+* [x] VSync
+
+## Threading
+
+* [x] Worker threads
+* [x] Task scheduler
+* [x] Futures
+* [x] Task priorities
+* [x] Task cancellation
+* [x] Main-thread execution
+* [x] Free-threading / No-GIL architecture
+* [ ] Additional profiling and diagnostics
+
+## ECS
+
+* [x] Entities
+* [x] Components
+* [x] Systems
+* [x] Archetypes
+* [x] Command buffers
+* [x] System scheduler
+* [x] System dependencies
+* [x] Conflict detection
+* [x] Parallel system execution
+* [ ] Additional performance profiling
+* [ ] ECS debugging tools
+
+## Rendering
+
+* [x] SDL_GPU rendering
+* [x] GPU context
+* [x] Graphics pipelines
+* [x] GPU buffers
+* [x] Shaders
+* [x] Textures
+* [x] Samplers
+* [x] Sprite rendering
+* [x] Sprite batching
+* [x] Rectangle batching
+* [x] Shape rendering
+* [x] Line rendering
+* [x] GPU text rendering
+* [x] Font atlas
+* [x] Camera support
+* [ ] Sprite animation
+* [ ] Particle system
+* [ ] Render targets
+* [ ] Post-processing
+* [ ] Lighting
+
+## Scene System
+
+* [x] Nodes
+* [x] Node hierarchy
+* [x] Scenes
+* [x] Scene manager
+* [x] Scene lifecycle foundations
+* [x] ECS integration
+* [ ] Scene serialization
+* [ ] Scene files
+* [ ] Prefabs
+* [ ] Extended node lifecycle
+
+## UI
+
+* [x] UI node system
+* [x] UI root
+* [x] Panels
+* [x] Labels
+* [x] Buttons
+* [x] Check boxes
+* [x] Radio buttons
+* [x] Sliders
+* [x] Progress bars
+* [x] Text input
+* [x] Dropdowns
+* [x] Scroll views
+* [x] List views
+* [ ] Focus management
+* [ ] Keyboard navigation
+* [ ] Layout containers
+* [ ] UI themes
+* [ ] Extended styling system
+* [ ] Additional widgets
+
+## Input
+
+* [x] Keyboard
+* [x] Mouse
+* [x] Mouse wheel
+* [x] Input states
+* [x] Action bindings
+* [ ] Gamepad support
+* [ ] Controller mapping
+* [ ] Input rebinding
+* [ ] Input contexts
+
+## Audio
+
+* [x] Audio device management
+* [x] PCM audio
+* [x] WAV loading
+* [x] Sound playback
+* [x] Audio buffers
+* [x] Audio cache
+* [x] Audio channels
+* [x] Audio mixer
+* [x] Audio buses
+* [x] Music playback
+* [x] Audio sources
+* [x] Audio listener
+* [x] Spatial audio foundations
+* [ ] Additional audio formats
+* [ ] Streaming improvements
+* [ ] Audio effects
+* [ ] Advanced spatial audio
+
+## Assets
+
+* [x] Asset abstraction
+* [x] Asset loaders
+* [x] Asset manager
+* [x] Basic caching
+* [ ] Asset handles
+* [ ] Asset registry
+* [ ] Async loading
+* [ ] Dependency tracking
+* [ ] Hot reload
+* [ ] Automatic unloading
+
+## Gameplay
+
+* [ ] Sprite animation system
+* [ ] Animation state machines
+* [ ] Tweening
+* [ ] Tilemaps
+* [ ] Collision detection
+* [ ] Physics
+* [ ] Navigation
+* [ ] Particle system
+* [ ] Object pooling
+* [ ] Coroutines
+* [ ] Save system
+
+## Tooling
+
+* [x] Basic project CLI
+* [x] Project generator
+* [ ] Complete generated starter project
+* [ ] Asset tools
+* [ ] Profiler
+* [ ] Debug overlay
+* [ ] Scene editor
+* [ ] Asset browser
+* [ ] Inspector
+
+---
+
+# Current Development Status
+
+Nexora is currently in **early alpha**.
+
+The fundamental engine architecture is already in place:
+
+```text
+Core
+ ↓
+Threading
+ ↓
+ECS
+ ↓
+Scene / Nodes
+ ↓
+Rendering + Input + Audio
+ ↓
+UI + Assets
+```
+
+Current development is increasingly focused on turning these low-level systems into a convenient game-development workflow.
+
+Major upcoming areas include:
+
+1. Completing the UI framework
+2. Improving the project generator
+3. Sprite animation
+4. Tilemaps
+5. Collision and physics
+6. Gameplay-oriented APIs
+7. Integration testing through real Nexora games
+
+Building small real games with Nexora will be used to identify missing APIs and validate the engine architecture.
+
+---
+
+# Design Goals
+
+Nexora aims to follow a few core principles.
 
 ### Python First
 
-Nexora aims to combine Python's simplicity and flexibility with modern GPU rendering and parallel execution.
+Game code should remain readable and feel natural to Python developers.
+
+### Modern GPU Rendering
+
+Rendering should use modern GPU APIs through SDL_GPU instead of relying on legacy software-style rendering abstractions.
+
+### Parallel by Design
+
+Parallel execution should be part of the engine architecture from the beginning rather than being added as an optimization later.
+
+### Modular Architecture
+
+Rendering, audio, ECS, input, scenes, assets, and threading should remain clearly separated engine systems.
+
+### Low Boilerplate
+
+Common game-development tasks should require as little setup code as reasonably possible.
+
+### Build Real Games
+
+Engine features should ultimately be driven by real game requirements rather than existing only as isolated technical demonstrations.
 
 ---
 
-# 📌 Current Status
+# Contributing
 
-Nexora is currently **experimental and under active development**.
+Nexora is currently evolving quickly.
 
-The engine already has working foundations for:
+Contributions, experiments, bug reports, and technical discussions are welcome, but contributors should expect APIs to change while the engine is in alpha.
 
-* Core engine lifecycle
-* Variable and fixed game updates
-* Frame timing
-* Frame interpolation
-* Python 3.13 free-threaded execution
-* Worker thread scheduler
-* Futures
-* ECS
-* Archetypes
-* Parallel ECS processing
-* System scheduling
-* Input
-* SDL3 window handling
-* Vulkan rendering
-* GPU textures
-* Sprite rendering
-* GPU text rendering
-* Camera system
-* Basic audio playback
-* Asset loading
-* Scene / Node hierarchy
-* ECS-backed transforms
-* Scene management
-* Automated tests
+When contributing:
 
-The **Scene / Node system is currently being expanded**, while the rendering and ECS architecture remain important areas of development.
-
-The engine should currently be considered **experimental** and the API is **not yet stable**.
+* Keep systems modular
+* Avoid unnecessary dependencies
+* Add tests where practical
+* Keep SDL/GPU thread restrictions in mind
+* Prefer explicit APIs over hidden global state
+* Preserve compatibility with Python free-threading where possible
 
 ---
 
-# 📄 License
+# License
 
 See [`LICENSE`](LICENSE) for license information.
 
 ---
 
-# 🌐 Repository
+# Status
 
-**GitHub:**
+**Nexora Engine — Early Alpha**
 
-[github.com/Lainupcomputer/Nexora](https://github.com/Lainupcomputer/Nexora)
+Built with:
+
+* Python 3.13+
+* SDL3
+* SDL_GPU
+* PySDL3
+
+Designed for modern, GPU-accelerated and parallel 2D game development in Python.

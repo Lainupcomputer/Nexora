@@ -2,6 +2,7 @@
 requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
+
 [project]
 name = "nexora-engine"
 version = "0.1.0"
@@ -14,21 +15,50 @@ dependencies = [
     "PySDL3>=0.9.12b1",
 ]
 
+
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0",
 ]
 
+docs = [
+    "sphinx>=9.0",
+    "furo",
+]
+
+
 [tool.setuptools.packages.find]
-include = ["nexora*"]
+include = [
+    "nexora*",
+]
+
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "-ra -m 'not gpu'"
+testpaths = [
+    "tests",
+]
+
+python_files = [
+    "test_*.py",
+]
+
+python_classes = [
+    "Test*",
+]
+
+python_functions = [
+    "test_*",
+]
+
+addopts = [
+    "-ra",
+    "-m",
+    "not gpu",
+]
 
 markers = [
     "gpu: tests requiring SDL3 and a GPU",
 ]
+
+[project.scripts]
+nexora = "nexora.cli.main:main"

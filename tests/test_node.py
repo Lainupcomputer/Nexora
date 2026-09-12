@@ -1,6 +1,7 @@
+
 from nexora.ecs.component import Transform
 from nexora.ecs.world import World
-from nexora.scene.node import Node
+from nexora.nodes.node import Node
 
 
 def test_node_hierarchy():
