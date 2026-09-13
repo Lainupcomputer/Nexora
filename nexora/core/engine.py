@@ -138,15 +138,27 @@ class Engine:
 
     @property
     def delta_time(self) -> float:
-        return self.loop.delta_time
+        return self.time.delta_time
+
+    @property
+    def unscaled_delta_time(self) -> float:
+        return self.time.unscaled_delta_time
 
     @property
     def total_time(self) -> float:
-        return self.loop.total_time
+        return self.time.total_time
+
+    @property
+    def fixed_time(self) -> float:
+        return self.time.fixed_time
 
     @property
     def frame(self) -> int:
-        return self.loop.frame
+        return self.time.frame
+
+    @property
+    def fixed_frame(self) -> int:
+        return self.time.fixed_frame
 
     # ==========================================================
     # INITIALIZATION

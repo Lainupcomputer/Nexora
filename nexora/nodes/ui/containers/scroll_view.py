@@ -9,23 +9,16 @@ class ScrollView(Panel):
     A vertically scrollable UI container.
 
     The ScrollView provides a viewport for a larger content area.
-    Mouse wheel input moves the content vertically.
 
-    Content children are created through `create_content_child()` and
-    use the content area's top-left corner as their local origin.
+    Coordinates:
+        Content children use the content area's top-left corner
+        as their local layout reference.
 
-    Attributes:
-        scroll_y:
-            Current vertical scroll position.
-
-        scroll_speed:
-            Amount of content movement per mouse-wheel unit.
-
-        content_size:
-            Size of the scrollable content area.
-
-        on_scroll:
-            Optional callback receiving the current scroll position.
+    Notes:
+        Current clipping is node-based culling. Nodes completely
+        outside the viewport are skipped. True pixel/scissor clipping
+        is handled separately by the renderer and is not implemented
+        here yet.
     """
 
     def __init__(
@@ -38,9 +31,9 @@ class ScrollView(Panel):
             world,
         )
 
-        # --------------------------------------------------------------
+        # ==========================================================
         # Scrolling
-        # --------------------------------------------------------------
+        # ==========================================================
 
         self.scroll_y: float = 0.0
         self.scroll_speed: float = 40.0
@@ -52,9 +45,9 @@ class ScrollView(Panel):
 
         self.on_scroll = None
 
-        # --------------------------------------------------------------
+        # ==========================================================
         # Content
-        # --------------------------------------------------------------
+        # ==========================================================
 
         self.content = self.create_child(
             "Content",
@@ -81,43 +74,47 @@ class ScrollView(Panel):
             0.0,
         )
 
-        # --------------------------------------------------------------
+        # ==========================================================
         # Internal state
-        # --------------------------------------------------------------
+        # ==========================================================
 
-        self._hovered = False
-        self._last_scroll_y = 0.0
+        self._hovered: bool = False
 
-        self._culled_nodes: list[UINode] = []
+        self._culled_nodes: list[
+            UINode
+        ] = []
 
-    # ------------------------------------------------------------------
+    # ==============================================================
     # Properties
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     @property
-    def max_scroll_y(self) -> float:
+    def max_scroll_y(
+        self,
+    ) -> float:
         """
-        Return the maximum vertical scroll position.
+        Maximum vertical scroll position.
         """
 
         visible_height = max(
-            self.size[1],
+            float(self.size[1]),
             0.0,
         )
 
         content_height = max(
-            self.content_size[1],
+            float(self.content_size[1]),
             0.0,
         )
 
         return max(
-            content_height - visible_height,
+            content_height
+            - visible_height,
             0.0,
         )
 
-    # ------------------------------------------------------------------
+    # ==============================================================
     # Content
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def set_content_size(
         self,
@@ -125,17 +122,30 @@ class ScrollView(Panel):
         height: float,
     ) -> None:
         """
-        Set the size of the scrollable content area.
+        Set the total scrollable content size.
         """
 
         self.content_size = (
-            max(float(width), 0.0),
-            max(float(height), 0.0),
+            max(
+                float(width),
+                0.0,
+            ),
+            max(
+                float(height),
+                0.0,
+            ),
         )
 
-        self.content.size = self.content_size
+        self.content.size = (
+            self.content_size
+        )
 
-        self._clamp_scroll()
+        # Resizing the content may reduce the valid scroll range.
+        self.set_scroll_y(
+            self.scroll_y,
+        )
+
+        self._sync_content_layout()
 
     def create_content_child(
         self,
@@ -143,7 +153,7 @@ class ScrollView(Panel):
         node_type: type[UINode] | None = None,
     ) -> UINode:
         """
-        Create a UI node inside the scrollable content area.
+        Create a node inside the scrollable content.
         """
 
         return self.content.create_child(
@@ -151,154 +161,202 @@ class ScrollView(Panel):
             node_type=node_type,
         )
 
-    # ------------------------------------------------------------------
+    # ==============================================================
     # Scrolling
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def set_scroll_y(
         self,
         value: float,
         *,
         emit: bool = True,
-    ) -> None:
+    ) -> bool:
         """
         Set the vertical scroll position.
+
+        Returns True when the scroll position changed.
         """
 
-        old_value = self.scroll_y
-
-        self.scroll_y = float(value)
-
-        self._clamp_scroll()
-
-        if (
-            emit
-            and self.scroll_y != old_value
-        ):
-            callback = self.on_scroll
-
-            if callback is not None:
-                callback(self.scroll_y)
-
-    def scroll_by(
-        self,
-        amount: float,
-    ) -> None:
-        """
-        Move the content vertically.
-        """
-
-        self.set_scroll_y(
-            self.scroll_y + float(amount),
+        old_value = float(
+            self.scroll_y
         )
 
-    def scroll_to_top(self) -> None:
-        """Scroll to the top of the content."""
-
-        self.set_scroll_y(0.0)
-
-    def scroll_to_bottom(self) -> None:
-        """Scroll to the bottom of the content."""
-
-        self.set_scroll_y(
-            self.max_scroll_y,
-        )
-
-    def _clamp_scroll(self) -> None:
-        self.scroll_y = max(
+        new_value = max(
             0.0,
             min(
-                self.scroll_y,
+                float(value),
                 self.max_scroll_y,
             ),
         )
 
-    # ------------------------------------------------------------------
-    # Layout
-    # ------------------------------------------------------------------
+        if new_value == old_value:
+            return False
 
-    def _sync_content_layout(self) -> None:
-        self.content.size = self.content_size
+        self.scroll_y = (
+            new_value
+        )
+
+        self._sync_content_layout()
+
+        if emit:
+            callback = (
+                self.on_scroll
+            )
+
+            if callback is not None:
+                callback(
+                    self.scroll_y
+                )
+
+        return True
+
+    def scroll_by(
+        self,
+        amount: float,
+    ) -> bool:
+        """
+        Move the current scroll position.
+        """
+
+        return self.set_scroll_y(
+            self.scroll_y
+            + float(amount),
+        )
+
+    def scroll_to_top(
+        self,
+    ) -> bool:
+        return self.set_scroll_y(
+            0.0
+        )
+
+    def scroll_to_bottom(
+        self,
+    ) -> bool:
+        return self.set_scroll_y(
+            self.max_scroll_y
+        )
+
+    def _clamp_scroll(
+        self,
+    ) -> None:
+        """
+        Clamp without emitting a callback.
+
+        Used internally for layout/render synchronization.
+        """
+
+        self.scroll_y = max(
+            0.0,
+            min(
+                float(
+                    self.scroll_y
+                ),
+                self.max_scroll_y,
+            ),
+        )
+
+    # ==============================================================
+    # Layout
+    # ==============================================================
+
+    def _sync_content_layout(
+        self,
+    ) -> None:
+        self.content.size = (
+            self.content_size
+        )
 
         offset_y = (
-            self.content_size[1] - self.size[1]
-        ) / 2.0
+            self.content_size[1]
+            - self.size[1]
+        ) * 0.5
 
         self.content.position = (
             0.0,
-            offset_y - self.scroll_y,
+            offset_y
+            - self.scroll_y,
         )
-            
-    # ------------------------------------------------------------------
+
+    # ==============================================================
     # Viewport
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def _get_viewport_rect(
         self,
-    ) -> tuple[float, float, float, float]:
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ]:
         """
-        Return the visible viewport rectangle.
+        Return:
 
-        Returns:
-            (left, top, right, bottom)
+            left, top, right, bottom
         """
 
-        view_x, view_y = self.calculate_position()
+        x, y = (
+            self.calculate_position()
+        )
 
-        width = self.size[0]
-        height = self.size[1]
+        width, height = (
+            self.size
+        )
 
         left = (
-            view_x
-            - width * self.pivot[0]
+            x
+            - width
+            * self.pivot[0]
         )
 
         top = (
-            view_y
-            - height * self.pivot[1]
+            y
+            - height
+            * self.pivot[1]
         )
-
-        right = left + width
-        bottom = top + height
 
         return (
             left,
             top,
-            right,
-            bottom,
+            left + width,
+            top + height,
         )
 
     def _get_node_rect(
         self,
         node: UINode,
-    ) -> tuple[float, float, float, float]:
-        """
-        Return a UI node's world-space rectangle.
-        """
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ]:
+        x, y = (
+            node.calculate_position()
+        )
 
-        x, y = node.calculate_position()
-
-        width = node.size[0]
-        height = node.size[1]
+        width, height = (
+            node.size
+        )
 
         left = (
             x
-            - width * node.pivot[0]
+            - width
+            * node.pivot[0]
         )
 
         top = (
             y
-            - height * node.pivot[1]
+            - height
+            * node.pivot[1]
         )
-
-        right = left + width
-        bottom = top + height
 
         return (
             left,
             top,
-            right,
-            bottom,
+            left + width,
+            top + height,
         )
 
     def _is_inside_viewport(
@@ -306,7 +364,7 @@ class ScrollView(Panel):
         node: UINode,
     ) -> bool:
         """
-        Check whether a node intersects the ScrollView viewport.
+        Return True when any part of the node intersects the viewport.
         """
 
         (
@@ -314,7 +372,9 @@ class ScrollView(Panel):
             node_top,
             node_right,
             node_bottom,
-        ) = self._get_node_rect(node)
+        ) = self._get_node_rect(
+            node
+        )
 
         (
             view_left,
@@ -330,113 +390,165 @@ class ScrollView(Panel):
             or node_top > view_bottom
         )
 
-    # ------------------------------------------------------------------
+    def _point_inside_viewport(
+        self,
+        x: float,
+        y: float,
+    ) -> bool:
+        """
+        Explicit viewport hit test.
+
+        This is used for input so children cannot react to mouse
+        interaction outside the ScrollView rectangle.
+        """
+
+        (
+            left,
+            top,
+            right,
+            bottom,
+        ) = self._get_viewport_rect()
+
+        return (
+            left <= x <= right
+            and top <= y <= bottom
+        )
+
+    # ==============================================================
     # Culling
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def _collect_culled_nodes(
         self,
         node: UINode,
     ) -> None:
-        """
-        Collect nodes that are outside the visible viewport.
-
-        The original `visible` state is never modified permanently.
-        """
-
         for child in node.children:
-            if not isinstance(child, UINode):
+            if not isinstance(
+                child,
+                UINode,
+            ):
                 continue
 
+            # Respect user-controlled visibility.
             if not child.visible:
                 continue
 
-            if not self._is_inside_viewport(child):
-                self._culled_nodes.append(child)
+            if not self._is_inside_viewport(
+                child
+            ):
+                self._culled_nodes.append(
+                    child
+                )
+
+                # Children cannot be visible if their parent
+                # is culled.
                 continue
 
-            self._collect_culled_nodes(child)
+            self._collect_culled_nodes(
+                child
+            )
 
-    def _apply_culling(self) -> None:
-        """
-        Temporarily hide nodes outside the viewport.
-        """
-
+    def _apply_culling(
+        self,
+    ) -> None:
         self._culled_nodes.clear()
 
         self._collect_culled_nodes(
-            self.content,
+            self.content
         )
 
         for node in self._culled_nodes:
-            node._scroll_view_visible = node.visible
+            node._scroll_view_original_visible = (
+                node.visible
+            )
+
             node.visible = False
 
-    def _restore_culling(self) -> None:
-        """
-        Restore the original visibility of culled nodes.
-        """
-
+    def _restore_culling(
+        self,
+    ) -> None:
         for node in self._culled_nodes:
             original_visible = getattr(
                 node,
-                "_scroll_view_visible",
+                "_scroll_view_original_visible",
                 True,
             )
 
-            node.visible = original_visible
+            node.visible = (
+                original_visible
+            )
 
             if hasattr(
                 node,
-                "_scroll_view_visible",
+                "_scroll_view_original_visible",
             ):
-                del node._scroll_view_visible
+                delattr(
+                    node,
+                    "_scroll_view_original_visible",
+                )
 
         self._culled_nodes.clear()
 
-    # ------------------------------------------------------------------
+    # ==============================================================
     # Input
-    # ------------------------------------------------------------------
+    # ==============================================================
 
     def update_input(
         self,
         ui_input,
     ) -> None:
-        if (
-            not self.visible
-            or not self.enabled
-        ):
+        # ----------------------------------------------------------
+        # Disabled / hidden
+        # ----------------------------------------------------------
+
+        if not self.interactive:
             self._hovered = False
+            self.reset_interaction_state()
+
+            # Also clear child interaction state so a button cannot
+            # remain hovered/pressed when its ScrollView is disabled.
+            self._reset_content_interaction(
+                self.content
+            )
+
             return
 
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
         # Layout
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
 
         self._clamp_scroll()
         self._sync_content_layout()
 
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
         # Mouse
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
 
         mouse_x, mouse_y = (
             ui_input.mouse_position
         )
 
-        self._hovered = self.contains_point(
-            mouse_x,
-            mouse_y,
+        self._hovered = (
+            self._point_inside_viewport(
+                mouse_x,
+                mouse_y,
+            )
         )
 
-        # --------------------------------------------------------------
-        # Mouse wheel
-        # --------------------------------------------------------------
+        self.hovered = (
+            self._hovered
+        )
 
-        wheel_y = getattr(
-            ui_input,
-            "mouse_wheel_y",
-            0.0,
+        # ----------------------------------------------------------
+        # Wheel
+        # ----------------------------------------------------------
+
+        wheel_y = float(
+            getattr(
+                ui_input,
+                "mouse_wheel_y",
+                0.0,
+            )
         )
 
         if (
@@ -444,44 +556,72 @@ class ScrollView(Panel):
             and wheel_y != 0.0
         ):
             self.scroll_by(
-                -wheel_y * self.scroll_speed,
+                -wheel_y
+                * self.scroll_speed
             )
 
-        # --------------------------------------------------------------
-        # Update layout after scrolling
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
+        # Child input
+        # ----------------------------------------------------------
 
         self._clamp_scroll()
         self._sync_content_layout()
 
-        # --------------------------------------------------------------
-        # Child input
-        # --------------------------------------------------------------
+        if self._hovered:
+            self._apply_culling()
 
-        self._apply_culling()
+            try:
+                self.content.update_input(
+                    ui_input
+                )
 
-        try:
-            self.content.update_input(
-                ui_input,
+            finally:
+                self._restore_culling()
+
+        else:
+            # Pointer interaction outside the viewport must not
+            # remain active in content controls.
+            self._clear_content_hover(
+                self.content
             )
-        finally:
-            self._restore_culling()
 
-        # --------------------------------------------------------------
-        # Callback
-        # --------------------------------------------------------------
+    def _clear_content_hover(
+        self,
+        node: UINode,
+    ) -> None:
+        for child in node.children:
+            if not isinstance(
+                child,
+                UINode,
+            ):
+                continue
 
-        if self.scroll_y != self._last_scroll_y:
-            callback = self.on_scroll
+            child.hovered = False
 
-            if callback is not None:
-                callback(self.scroll_y)
+            self._clear_content_hover(
+                child
+            )
 
-            self._last_scroll_y = self.scroll_y
+    def _reset_content_interaction(
+        self,
+        node: UINode,
+    ) -> None:
+        for child in node.children:
+            if not isinstance(
+                child,
+                UINode,
+            ):
+                continue
 
-    # ------------------------------------------------------------------
-    # Render
-    # ------------------------------------------------------------------
+            child.reset_interaction_state()
+
+            self._reset_content_interaction(
+                child
+            )
+
+    # ==============================================================
+    # Rendering
+    # ==============================================================
 
     def render(
         self,
@@ -493,11 +633,13 @@ class ScrollView(Panel):
         self._clamp_scroll()
         self._sync_content_layout()
 
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
         # Background
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
 
-        x, y = self.calculate_position()
+        x, y = (
+            self.calculate_position()
+        )
 
         renderer.rect(
             x,
@@ -505,20 +647,21 @@ class ScrollView(Panel):
             self.size[0],
             self.size[1],
             color=self._color_to_float(
-                self.background,
+                self.background
             ),
             radius=self.border_radius,
         )
 
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
         # Content
-        # --------------------------------------------------------------
+        # ----------------------------------------------------------
 
         self._apply_culling()
 
         try:
             self.content.render(
-                renderer,
+                renderer
             )
+
         finally:
             self._restore_culling()

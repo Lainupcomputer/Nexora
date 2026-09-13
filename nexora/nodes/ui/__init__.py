@@ -23,14 +23,15 @@ from .containers import (
 from .output import (
     Label,
     ProgressBar,
-)
-from .output import (
     NotificationAnchor,
     NotificationCenter,
     NotificationType,
+    Tooltip,
 )
 
+
 __all__ = [
+    # Base
     "UINode",
     "UIRoot",
 
@@ -54,4 +55,8 @@ __all__ = [
     # Output
     "Label",
     "ProgressBar",
+    "NotificationAnchor",
+    "NotificationCenter",
+    "NotificationType",
+    "Tooltip",
 ]

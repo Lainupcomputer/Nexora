@@ -1,10 +1,14 @@
 from .label import Label
 from .progress_bar import ProgressBar
+
 from .notification_center import (
     NotificationAnchor,
     NotificationCenter,
     NotificationType,
 )
+
+from .tooltip import Tooltip
+
 
 __all__ = [
     "Label",
@@ -12,4 +16,5 @@ __all__ = [
     "NotificationAnchor",
     "NotificationCenter",
     "NotificationType",
+    "Tooltip",
 ]
