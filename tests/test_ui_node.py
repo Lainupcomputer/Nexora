@@ -1,8 +1,8 @@
 
 from nexora.scene import Scene, UINode
-from nexora.nodes.panel import Panel
-from nexora.nodes.button import Button
-from nexora.nodes.ui_root import UIRoot
+from nexora.nodes.ui.containers.panel import Panel
+from nexora.nodes.ui.controls.button import Button
+from nexora.nodes.ui.ui_root import UIRoot
 from nexora.ui import UIInput
 
 

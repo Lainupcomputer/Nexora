@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from nexora.ecs.world import World
 from nexora.nodes.node import Node
-from nexora.nodes.text_input import TextInput
-from nexora.nodes.ui_root import UIRoot
+from nexora.nodes.ui.controls.text_input import TextInput
+from nexora.nodes.ui.ui_root import UIRoot
 from nexora.ui import UIInput
 
 

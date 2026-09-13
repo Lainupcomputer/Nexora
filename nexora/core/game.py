@@ -3,6 +3,9 @@ from __future__ import annotations
 from nexora.core.engine import Engine
 from nexora.rendering.gpu import WindowMode
 from nexora.scene import Scene, SceneManager
+from pathlib import Path
+
+from nexora.settings import SettingsStore
 
 
 class Game:
@@ -25,6 +28,8 @@ class Game:
         fullscreen: bool = False,
         window_mode: WindowMode | str | None = None,
         vsync: bool = False,
+        settings_path: str | Path = "settings.json",
+        settings_defaults: dict | None = None,
     ) -> None:
         self.engine: Engine | None = None
 
@@ -46,6 +51,10 @@ class Game:
         self._shutdown = False
         self._scene: Scene | None = None
         self._scenes = SceneManager()
+        self._settings = SettingsStore(
+            settings_path,
+            defaults=settings_defaults,
+        )
 
     # ==========================================================
     # LIFECYCLE
@@ -116,7 +125,6 @@ class Game:
     def handle_event(self, event) -> None:
         """Handle an SDL3 event."""
         pass
-
 
     def update(
         self,
@@ -230,6 +238,12 @@ class Game:
         self.window.set_vsync(enabled)
 
     @property
+    def settings(
+        self,
+    ) -> SettingsStore:
+        return self._settings
+
+    @property
     def window_mode(self) -> WindowMode:
         self._require_window()
         return self.window.window_mode
@@ -259,25 +273,58 @@ class Game:
         return self._scenes
 
     @property
-    def scene(self) -> Scene | None:
-        return self._scenes.active_scene
+    def scene(
+        self,
+    ) -> Scene | None:
+        return self._scene
+
 
     @scene.setter
-    def scene(self, value: Scene | None) -> None:
+    def scene(
+        self,
+        value: Scene | None,
+    ) -> None:
+        # ----------------------------------------------------------
+        # Nothing changed.
+        # ----------------------------------------------------------
+
         if value is self._scene:
             return
 
-        if self._scene is not None:
-            self._scene.destroy()
+        # ----------------------------------------------------------
+        # Clear active scene.
+        # ----------------------------------------------------------
+
+        if value is None:
+            self._scene = None
+
+            return
+
+        # ----------------------------------------------------------
+        # Make sure the scene is known by the SceneManager.
+        # ----------------------------------------------------------
+
+        if not self._scenes.is_loaded(
+            value.name
+        ):
+            self._scenes.load(
+                value
+            )
+
+        # ----------------------------------------------------------
+        # Activate scene.
+        # ----------------------------------------------------------
+
+        if (
+            self._scenes.active_scene
+            is not value
+        ):
+            self._scenes.activate(
+                value.name
+            )
 
         self._scene = value
 
-        if value is not None:
-            if not self._scenes.is_loaded(value.name):
-                self._scenes.load(value)
-
-            if self._scenes.active_scene is not value:
-                self._scenes.activate(value.name)
 
     @property
     def audio(self):

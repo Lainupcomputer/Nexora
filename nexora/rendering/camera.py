@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
+import math
 
 
 @dataclass(slots=True)
@@ -17,6 +18,7 @@ class Camera:
     y: float = 0.0
 
     zoom: float = 1.0
+    rotation: float = 0.0
 
     # --------------------------------------------------------------
     # Smooth zoom

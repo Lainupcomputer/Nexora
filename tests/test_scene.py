@@ -2,7 +2,7 @@ import pytest
 from nexora.ecs.system import System
 
 from nexora.scene import Node, Scene
-from nexora.nodes.button import Button
+from nexora.nodes.ui.controls.button import Button
 from nexora.input.input import InputManager
 
 

@@ -1,5 +1,5 @@
 from nexora.ecs.world import World
-from nexora.nodes.panel import Panel
+from nexora.nodes.ui.containers.panel import Panel
 
 
 def test_panel_creation() -> None:
