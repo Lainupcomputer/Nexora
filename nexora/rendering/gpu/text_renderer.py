@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import math
 import struct
 from pathlib import Path
 
@@ -138,6 +140,10 @@ class GPUTextRenderer:
         )
 
         self._glyph_count = 0
+
+        self._clip_rects: list[
+            tuple[float, float, float, float] | None
+        ] = []
 
         self._text_color = (
             1.0,
@@ -552,6 +558,7 @@ class GPUTextRenderer:
 
     def clear(self) -> None:
         self._glyph_count = 0
+        self._clip_rects.clear()
 
     @property
     def glyph_count(self) -> int:
@@ -663,6 +670,12 @@ class GPUTextRenderer:
         rotation: float = 0.0,
         alpha: float = 1.0,
         scale: float = 1.0,
+        clip_rect: tuple[
+            float,
+            float,
+            float,
+            float,
+        ] | None = None,
     ) -> None:
         """
         Adds text to the current batch.
@@ -815,6 +828,19 @@ class GPUTextRenderer:
                 atlas_glyph.v_size,
             )
 
+            if clip_rect is None:
+                self._clip_rects.append(None)
+            else:
+                clip_x, clip_y, clip_width, clip_height = clip_rect
+                self._clip_rects.append(
+                    (
+                        float(clip_x),
+                        float(clip_y),
+                        max(float(clip_width), 0.0),
+                        max(float(clip_height), 0.0),
+                    )
+                )
+
             self._glyph_count += 1
 
             # ------------------------------------------------------
@@ -854,6 +880,65 @@ class GPUTextRenderer:
                 self._instances
             )[:data_size],
         )
+
+    # ==============================================================
+    # Scissor
+    # ==============================================================
+
+    def _make_scissor_rect(
+        self,
+        clip_rect: tuple[
+            float,
+            float,
+            float,
+            float,
+        ] | None,
+    ) -> sdl3.SDL_Rect:
+        """
+        Convert a Nexora screen-space clip rectangle to SDL_Rect.
+
+        Nexora uses the screen center as (0, 0). SDL scissor
+        rectangles use the framebuffer top-left as (0, 0).
+        """
+
+        viewport_width = max(
+            int(self.context.swapchain_width),
+            0,
+        )
+
+        viewport_height = max(
+            int(self.context.swapchain_height),
+            0,
+        )
+
+        if clip_rect is None:
+            left = 0
+            top = 0
+            right = viewport_width
+            bottom = viewport_height
+        else:
+            x, y, width, height = clip_rect
+
+            half_width = viewport_width * 0.5
+            half_height = viewport_height * 0.5
+
+            left = math.floor(x + half_width)
+            top = math.floor(y + half_height)
+            right = math.ceil(x + width + half_width)
+            bottom = math.ceil(y + height + half_height)
+
+            left = max(0, min(left, viewport_width))
+            top = max(0, min(top, viewport_height))
+            right = max(left, min(right, viewport_width))
+            bottom = max(top, min(bottom, viewport_height))
+
+        rect = sdl3.SDL_Rect()
+        rect.x = int(left)
+        rect.y = int(top)
+        rect.w = int(right - left)
+        rect.h = int(bottom - top)
+
+        return rect
 
     # ==============================================================
     # Draw
@@ -1002,15 +1087,45 @@ class GPUTextRenderer:
         )
 
         # ----------------------------------------------------------
-        # Draw all glyphs
+        # Draw consecutive clip groups
         # ----------------------------------------------------------
 
-        sdl3.SDL_DrawGPUPrimitives(
+        run_start = 0
+
+        while run_start < self._glyph_count:
+            clip_rect = self._clip_rects[run_start]
+            run_end = run_start + 1
+
+            while (
+                run_end < self._glyph_count
+                and self._clip_rects[run_end] == clip_rect
+            ):
+                run_end += 1
+
+            scissor = self._make_scissor_rect(clip_rect)
+
+            if scissor.w > 0 and scissor.h > 0:
+                sdl3.SDL_SetGPUScissor(
+                    render_pass,
+                    ctypes.byref(scissor),
+                )
+
+                sdl3.SDL_DrawGPUPrimitives(
+                    render_pass,
+                    6,
+                    run_end - run_start,
+                    0,
+                    run_start,
+                )
+
+            run_start = run_end
+
+        # Restore effectively-unclipped state for following batches.
+        full_scissor = self._make_scissor_rect(None)
+
+        sdl3.SDL_SetGPUScissor(
             render_pass,
-            6,
-            self._glyph_count,
-            0,
-            0,
+            ctypes.byref(full_scissor),
         )
 
     # ==============================================================
@@ -1150,6 +1265,7 @@ class GPUTextRenderer:
             self.atlas.destroy()
             self.atlas = None
 
+        self._clip_rects.clear()
         self._destroyed = True
 
     # ==============================================================

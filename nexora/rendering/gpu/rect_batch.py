@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import math
 import struct
 from pathlib import Path
 
@@ -95,6 +96,21 @@ class GPURectBatch:
 
         self._rect_count = 0
 
+        # One clip rectangle per rectangle instance.
+        #
+        # Coordinates use Nexora's centered screen convention:
+        #
+        #     (0, 0) = viewport center
+        #
+        self._clip_rects: list[
+            tuple[
+                float,
+                float,
+                float,
+                float,
+            ] | None
+        ] = []
+
         self._camera_data = bytearray(
             self.CAMERA_UNIFORM_SIZE
         )
@@ -108,8 +124,13 @@ class GPURectBatch:
     # ==========================================================
 
     @staticmethod
-    def _decode_error(error) -> str:
-        if isinstance(error, bytes):
+    def _decode_error(
+        error,
+    ) -> str:
+        if isinstance(
+            error,
+            bytes,
+        ):
             return error.decode(
                 "utf-8",
                 errors="replace",
@@ -118,9 +139,15 @@ class GPURectBatch:
         if error is None:
             return "<unknown SDL error>"
 
-        return str(error)
+        return str(
+            error
+        )
 
-    def _check(self, condition, message):
+    def _check(
+        self,
+        condition,
+        message,
+    ):
         if not condition:
             error = self._decode_error(
                 sdl3.SDL_GetError()
@@ -134,7 +161,9 @@ class GPURectBatch:
     # RESOURCE CREATION
     # ==========================================================
 
-    def _create_resources(self):
+    def _create_resources(
+        self,
+    ):
         self._create_shaders()
         self._create_quad()
         self._create_instance_buffer()
@@ -144,7 +173,9 @@ class GPURectBatch:
     # SHADERS
     # ==========================================================
 
-    def _create_shaders(self):
+    def _create_shaders(
+        self,
+    ):
         self.vertex_shader = GPUShader(
             self.device,
             self.vertex_shader_path,
@@ -166,7 +197,9 @@ class GPURectBatch:
     # QUAD
     # ==========================================================
 
-    def _create_quad(self):
+    def _create_quad(
+        self,
+    ):
         """
         Unit quad.
 
@@ -181,19 +214,31 @@ class GPURectBatch:
             "<12f",
 
             # Triangle 1
-            -0.5, -0.5,
-             0.5, -0.5,
-             0.5,  0.5,
+            -0.5,
+            -0.5,
+
+            0.5,
+            -0.5,
+
+            0.5,
+            0.5,
 
             # Triangle 2
-            -0.5, -0.5,
-             0.5,  0.5,
-            -0.5,  0.5,
+            -0.5,
+            -0.5,
+
+            0.5,
+            0.5,
+
+            -0.5,
+            0.5,
         )
 
         self.quad_buffer = GPUBuffer(
             self.device,
-            len(vertices),
+            len(
+                vertices
+            ),
             sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
             initial_data=vertices,
         )
@@ -202,10 +247,14 @@ class GPURectBatch:
     # INSTANCE BUFFER
     # ==========================================================
 
-    def _create_instance_buffer(self):
+    def _create_instance_buffer(
+        self,
+    ):
         self.instance_buffer = GPUBuffer(
             self.device,
-            len(self._instance_data),
+            len(
+                self._instance_data
+            ),
             sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
             dynamic=True,
             frames_in_flight=3,
@@ -215,9 +264,12 @@ class GPURectBatch:
     # PIPELINE
     # ==========================================================
 
-    def _create_pipeline(self):
+    def _create_pipeline(
+        self,
+    ):
         vertex_buffer_descriptions = (
-            sdl3.SDL_GPUVertexBufferDescription * 2
+            sdl3.SDL_GPUVertexBufferDescription
+            * 2
         )()
 
         # ------------------------------------------------------
@@ -232,7 +284,9 @@ class GPURectBatch:
             sdl3.SDL_GPU_VERTEXINPUTRATE_VERTEX
         )
 
-        vertex_buffer_descriptions[0].instance_step_rate = 0
+        vertex_buffer_descriptions[
+            0
+        ].instance_step_rate = 0
 
         # ------------------------------------------------------
         # Instance buffer
@@ -240,15 +294,21 @@ class GPURectBatch:
 
         vertex_buffer_descriptions[1].slot = 1
 
-        vertex_buffer_descriptions[1].pitch = (
+        vertex_buffer_descriptions[
+            1
+        ].pitch = (
             self.INSTANCE_STRIDE
         )
 
-        vertex_buffer_descriptions[1].input_rate = (
+        vertex_buffer_descriptions[
+            1
+        ].input_rate = (
             sdl3.SDL_GPU_VERTEXINPUTRATE_INSTANCE
         )
 
-        vertex_buffer_descriptions[1].instance_step_rate = 0
+        vertex_buffer_descriptions[
+            1
+        ].instance_step_rate = 0
 
         # ------------------------------------------------------
         # Attributes
@@ -264,7 +324,8 @@ class GPURectBatch:
         # ------------------------------------------------------
 
         attributes = (
-            sdl3.SDL_GPUVertexAttribute * 7
+            sdl3.SDL_GPUVertexAttribute
+            * 7
         )()
 
         # ------------------------------------------------------
@@ -273,9 +334,11 @@ class GPURectBatch:
 
         attributes[0].location = 0
         attributes[0].buffer_slot = 0
+
         attributes[0].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[0].offset = 0
 
         # ------------------------------------------------------
@@ -284,9 +347,11 @@ class GPURectBatch:
 
         attributes[1].location = 1
         attributes[1].buffer_slot = 1
+
         attributes[1].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[1].offset = 0
 
         # ------------------------------------------------------
@@ -295,9 +360,11 @@ class GPURectBatch:
 
         attributes[2].location = 2
         attributes[2].buffer_slot = 1
+
         attributes[2].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[2].offset = 8
 
         # ------------------------------------------------------
@@ -306,9 +373,11 @@ class GPURectBatch:
 
         attributes[3].location = 3
         attributes[3].buffer_slot = 1
+
         attributes[3].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
+
         attributes[3].offset = 16
 
         # ------------------------------------------------------
@@ -317,9 +386,11 @@ class GPURectBatch:
 
         attributes[4].location = 4
         attributes[4].buffer_slot = 1
+
         attributes[4].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[4].offset = 20
 
         # ------------------------------------------------------
@@ -328,9 +399,11 @@ class GPURectBatch:
 
         attributes[5].location = 5
         attributes[5].buffer_slot = 1
+
         attributes[5].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
+
         attributes[5].offset = 28
 
         # ------------------------------------------------------
@@ -339,9 +412,11 @@ class GPURectBatch:
 
         attributes[6].location = 6
         attributes[6].buffer_slot = 1
+
         attributes[6].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4
         )
+
         attributes[6].offset = 32
 
         # ------------------------------------------------------
@@ -381,7 +456,10 @@ class GPURectBatch:
 
         multisample.sample_mask = 0
         multisample.enable_mask = False
-        multisample.enable_alpha_to_coverage = False
+
+        multisample.enable_alpha_to_coverage = (
+            False
+        )
 
         # ------------------------------------------------------
         # Depth
@@ -411,7 +489,9 @@ class GPURectBatch:
         # Alpha blending
         # ------------------------------------------------------
 
-        color_target.blend_state.enable_blend = True
+        color_target.blend_state.enable_blend = (
+            True
+        )
 
         color_target.blend_state.src_color_blendfactor = (
             sdl3.SDL_GPU_BLENDFACTOR_SRC_ALPHA
@@ -437,7 +517,9 @@ class GPURectBatch:
             sdl3.SDL_GPU_BLENDOP_ADD
         )
 
-        color_target.blend_state.enable_color_write_mask = True
+        color_target.blend_state.enable_color_write_mask = (
+            True
+        )
 
         color_target.blend_state.color_write_mask = (
             sdl3.SDL_GPU_COLORCOMPONENT_R
@@ -447,10 +529,13 @@ class GPURectBatch:
         )
 
         color_targets = (
-            sdl3.SDL_GPUColorTargetDescription * 1
+            sdl3.SDL_GPUColorTargetDescription
+            * 1
         )()
 
-        color_targets[0] = color_target
+        color_targets[
+            0
+        ] = color_target
 
         # ------------------------------------------------------
         # Target info
@@ -468,7 +553,9 @@ class GPURectBatch:
 
         target_info.depth_stencil_format = 0
 
-        target_info.has_depth_stencil_target = False
+        target_info.has_depth_stencil_target = (
+            False
+        )
 
         # ------------------------------------------------------
         # Vertex input
@@ -506,26 +593,38 @@ class GPURectBatch:
             self.fragment_shader.shader
         )
 
-        info.vertex_input_state = vertex_input
+        info.vertex_input_state = (
+            vertex_input
+        )
 
         info.primitive_type = (
             sdl3.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST
         )
 
-        info.rasterizer_state = rasterizer
+        info.rasterizer_state = (
+            rasterizer
+        )
 
-        info.multisample_state = multisample
+        info.multisample_state = (
+            multisample
+        )
 
-        info.depth_stencil_state = depth
+        info.depth_stencil_state = (
+            depth
+        )
 
-        info.target_info = target_info
+        info.target_info = (
+            target_info
+        )
 
         info.props = 0
 
         self.pipeline = (
             sdl3.SDL_CreateGPUGraphicsPipeline(
                 self.device,
-                ctypes.byref(info),
+                ctypes.byref(
+                    info
+                ),
             )
         )
 
@@ -538,13 +637,17 @@ class GPURectBatch:
     # BEGIN
     # ==========================================================
 
-    def begin(self):
+    def begin(
+        self,
+    ):
         if self._destroyed:
             raise RuntimeError(
                 "GPURectBatch has been destroyed"
             )
 
         self._rect_count = 0
+
+        self._clip_rects.clear()
 
     # ==========================================================
     # ADD
@@ -557,17 +660,34 @@ class GPURectBatch:
         width: float,
         height: float,
         *,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
         rotation: float = 0.0,
-        origin=(0.5, 0.5),
+        origin=(
+            0.5,
+            0.5,
+        ),
         radius: float = 0.0,
+        clip_rect: tuple[
+            float,
+            float,
+            float,
+            float,
+        ] | None = None,
     ):
         if self._destroyed:
             raise RuntimeError(
                 "GPURectBatch has been destroyed"
             )
 
-        if self._rect_count >= self.max_rects:
+        if (
+            self._rect_count
+            >= self.max_rects
+        ):
             raise RuntimeError(
                 "GPURectBatch capacity exceeded "
                 f"({self.max_rects} rectangles)"
@@ -584,6 +704,42 @@ class GPURectBatch:
             radius,
             color,
         )
+
+        if clip_rect is None:
+            self._clip_rects.append(
+                None
+            )
+
+        else:
+            (
+                clip_x,
+                clip_y,
+                clip_w,
+                clip_h,
+            ) = clip_rect
+
+            self._clip_rects.append(
+                (
+                    float(
+                        clip_x
+                    ),
+                    float(
+                        clip_y
+                    ),
+                    max(
+                        float(
+                            clip_w
+                        ),
+                        0.0,
+                    ),
+                    max(
+                        float(
+                            clip_h
+                        ),
+                        0.0,
+                    ),
+                )
+            )
 
         self._rect_count += 1
 
@@ -615,29 +771,57 @@ class GPURectBatch:
             "<12f",
             self._instance_data,
             offset,
-            float(x),
-            float(y),
-            float(width),
-            float(height),
-            float(rotation),
-            float(ox),
-            float(oy),
-            float(radius),
-            float(r),
-            float(g),
-            float(b),
-            float(a),
+            float(
+                x
+            ),
+            float(
+                y
+            ),
+            float(
+                width
+            ),
+            float(
+                height
+            ),
+            float(
+                rotation
+            ),
+            float(
+                ox
+            ),
+            float(
+                oy
+            ),
+            float(
+                radius
+            ),
+            float(
+                r
+            ),
+            float(
+                g
+            ),
+            float(
+                b
+            ),
+            float(
+                a
+            ),
         )
 
     # ==========================================================
     # CAMERA
     # ==========================================================
 
-    def _update_camera_uniform(self):
+    def _update_camera_uniform(
+        self,
+    ):
         if self.camera is None:
             camera_x = 0.0
             camera_y = 0.0
+
             camera_zoom = 1.0
+
             shake_x = 0.0
             shake_y = 0.0
 
@@ -693,7 +877,10 @@ class GPURectBatch:
     # RENDER INTO ACTIVE FRAME
     # ==========================================================
 
-    def render_into(self, command_buffer):
+    def render_into(
+        self,
+        command_buffer,
+    ):
         if self._destroyed:
             raise RuntimeError(
                 "GPURectBatch has been destroyed"
@@ -715,7 +902,9 @@ class GPURectBatch:
             command_buffer,
             memoryview(
                 self._instance_data
-            )[:instance_size],
+            )[
+                :instance_size
+            ],
         )
 
         # ------------------------------------------------------
@@ -749,7 +938,10 @@ class GPURectBatch:
     # DRAW
     # ==========================================================
 
-    def draw_into(self, render_pass):
+    def draw_into(
+        self,
+        render_pass,
+    ):
         if self._destroyed:
             raise RuntimeError(
                 "GPURectBatch has been destroyed"
@@ -777,21 +969,22 @@ class GPURectBatch:
         )
 
         vertex_bindings = (
-            sdl3.SDL_GPUBufferBinding * 2
+            sdl3.SDL_GPUBufferBinding
+            * 2
         )()
 
-        vertex_bindings[0] = (
-            self.quad_buffer.binding(
-                0,
-                self.quad_buffer.size,
-            )
+        vertex_bindings[
+            0
+        ] = self.quad_buffer.binding(
+            0,
+            self.quad_buffer.size,
         )
 
-        vertex_bindings[1] = (
-            self.instance_buffer.binding(
-                0,
-                instance_size,
-            )
+        vertex_bindings[
+            1
+        ] = self.instance_buffer.binding(
+            0,
+            instance_size,
         )
 
         sdl3.SDL_BindGPUVertexBuffers(
@@ -802,31 +995,273 @@ class GPURectBatch:
         )
 
         # ------------------------------------------------------
-        # Draw
+        # Draw consecutive clip groups
+        # ------------------------------------------------------
+        #
+        # Consecutive rectangles with the same clip rectangle are
+        # emitted in one instanced draw call.
+        #
+        # This keeps ordering intact while allowing Scissor state
+        # to change between groups.
         # ------------------------------------------------------
 
-        sdl3.SDL_DrawGPUPrimitives(
+        drawn = 0
+
+        run_start = 0
+
+        while (
+            run_start
+            < self._rect_count
+        ):
+            clip_rect = (
+                self._clip_rects[
+                    run_start
+                ]
+            )
+
+            run_end = (
+                run_start
+                + 1
+            )
+
+            while (
+                run_end
+                < self._rect_count
+                and self._clip_rects[
+                    run_end
+                ]
+                == clip_rect
+            ):
+                run_end += 1
+
+            scissor = (
+                self._make_scissor_rect(
+                    clip_rect
+                )
+            )
+
+            # Empty intersection:
+            # nothing to draw.
+            if (
+                scissor.w > 0
+                and scissor.h > 0
+            ):
+                sdl3.SDL_SetGPUScissor(
+                    render_pass,
+                    ctypes.byref(
+                        scissor
+                    ),
+                )
+
+                run_count = (
+                    run_end
+                    - run_start
+                )
+
+                sdl3.SDL_DrawGPUPrimitives(
+                    render_pass,
+                    6,
+                    run_count,
+                    0,
+                    run_start,
+                )
+
+                drawn += (
+                    run_count
+                )
+
+            run_start = (
+                run_end
+            )
+
+        # ------------------------------------------------------
+        # Restore effectively unclipped state
+        # ------------------------------------------------------
+
+        full_scissor = (
+            self._make_scissor_rect(
+                None
+            )
+        )
+
+        sdl3.SDL_SetGPUScissor(
             render_pass,
-            6,
-            self._rect_count,
-            0,
+            ctypes.byref(
+                full_scissor
+            ),
+        )
+
+        return drawn
+
+    # ==========================================================
+    # SCISSOR
+    # ==========================================================
+
+    def _make_scissor_rect(
+        self,
+        clip_rect: tuple[
+            float,
+            float,
+            float,
+            float,
+        ] | None,
+    ):
+        """
+        Convert a Nexora screen-space clip rectangle to SDL_Rect.
+
+        Nexora:
+
+            0,0 = viewport center
+
+        SDL scissor:
+
+            0,0 = framebuffer top-left
+        """
+
+        viewport_width = max(
+            int(
+                self.context.swapchain_width
+            ),
             0,
         )
 
-        return self._rect_count
+        viewport_height = max(
+            int(
+                self.context.swapchain_height
+            ),
+            0,
+        )
+
+        if clip_rect is None:
+            left = 0
+            top = 0
+
+            right = (
+                viewport_width
+            )
+
+            bottom = (
+                viewport_height
+            )
+
+        else:
+            (
+                x,
+                y,
+                width,
+                height,
+            ) = clip_rect
+
+            half_width = (
+                viewport_width
+                * 0.5
+            )
+
+            half_height = (
+                viewport_height
+                * 0.5
+            )
+
+            left = math.floor(
+                x
+                + half_width
+            )
+
+            top = math.floor(
+                y
+                + half_height
+            )
+
+            right = math.ceil(
+                x
+                + width
+                + half_width
+            )
+
+            bottom = math.ceil(
+                y
+                + height
+                + half_height
+            )
+
+            # --------------------------------------------------
+            # Clamp to framebuffer
+            # --------------------------------------------------
+
+            left = max(
+                0,
+                min(
+                    left,
+                    viewport_width,
+                ),
+            )
+
+            top = max(
+                0,
+                min(
+                    top,
+                    viewport_height,
+                ),
+            )
+
+            right = max(
+                left,
+                min(
+                    right,
+                    viewport_width,
+                ),
+            )
+
+            bottom = max(
+                top,
+                min(
+                    bottom,
+                    viewport_height,
+                ),
+            )
+
+        result = (
+            sdl3.SDL_Rect()
+        )
+
+        result.x = int(
+            left
+        )
+
+        result.y = int(
+            top
+        )
+
+        result.w = int(
+            right
+            - left
+        )
+
+        result.h = int(
+            bottom
+            - top
+        )
+
+        return result
 
     # ==========================================================
     # CLEAR
     # ==========================================================
 
-    def clear(self):
+    def clear(
+        self,
+    ):
         self._rect_count = 0
+
+        self._clip_rects.clear()
 
     # ==========================================================
     # DESTROY
     # ==========================================================
 
-    def destroy(self):
+    def destroy(
+        self,
+    ):
         if self._destroyed:
             return
 
@@ -834,6 +1269,7 @@ class GPURectBatch:
 
         try:
             self.context.wait_idle()
+
         except Exception:
             pass
 
@@ -847,6 +1283,7 @@ class GPURectBatch:
                     self.device,
                     self.pipeline,
                 )
+
             except Exception:
                 pass
 
@@ -859,6 +1296,7 @@ class GPURectBatch:
         if self.instance_buffer:
             try:
                 self.instance_buffer.destroy()
+
             except Exception:
                 pass
 
@@ -871,6 +1309,7 @@ class GPURectBatch:
         if self.quad_buffer:
             try:
                 self.quad_buffer.destroy()
+
             except Exception:
                 pass
 
@@ -883,6 +1322,7 @@ class GPURectBatch:
         if self.vertex_shader:
             try:
                 self.vertex_shader.destroy()
+
             except Exception:
                 pass
 
@@ -891,18 +1331,25 @@ class GPURectBatch:
         if self.fragment_shader:
             try:
                 self.fragment_shader.destroy()
+
             except Exception:
                 pass
 
             self.fragment_shader = None
 
-        self._instance_data = bytearray()
+        self._instance_data = (
+            bytearray()
+        )
+
+        self._clip_rects.clear()
 
     # ==========================================================
     # CONTEXT MANAGER
     # ==========================================================
 
-    def __enter__(self):
+    def __enter__(
+        self,
+    ):
         return self
 
     def __exit__(
@@ -912,4 +1359,3 @@ class GPURectBatch:
         traceback,
     ):
         self.destroy()
-

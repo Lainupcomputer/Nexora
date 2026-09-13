@@ -211,6 +211,19 @@ class GPURenderer:
 
         self._active_texture = None
 
+        # ======================================================
+        # Clipping
+        # ======================================================
+
+        self._clip_stack: list[
+            tuple[
+                float,
+                float,
+                float,
+                float,
+            ]
+        ] = []
+
         self._destroyed = False
 
     # ==========================================================
@@ -252,6 +265,183 @@ class GPURenderer:
         return self.post_processor
 
     # ==========================================================
+    # CLIPPING
+    # ==========================================================
+
+    @property
+    def clip_rect(
+        self,
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ] | None:
+        """
+        Return the currently active clip rectangle.
+
+        Rectangles are represented as:
+
+            (x, y, width, height)
+
+        where x/y are the top-left corner.
+        """
+
+        if not self._clip_stack:
+            return None
+
+        return self._clip_stack[-1]
+
+    def push_clip_rect(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ]:
+        """
+        Push a clip rectangle.
+
+        If another clip rectangle is active, the new rectangle
+        is intersected with it. This allows nested clipped UI
+        containers to work correctly.
+        """
+
+        x = float(x)
+        y = float(y)
+
+        width = max(
+            float(width),
+            0.0,
+        )
+
+        height = max(
+            float(height),
+            0.0,
+        )
+
+        new_rect = (
+            x,
+            y,
+            width,
+            height,
+        )
+
+        current = self.clip_rect
+
+        if current is not None:
+            new_rect = self._intersect_clip_rects(
+                current,
+                new_rect,
+            )
+
+        self._clip_stack.append(
+            new_rect
+        )
+
+        return new_rect
+
+    def pop_clip_rect(
+        self,
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ] | None:
+        """
+        Pop the most recently pushed clip rectangle.
+        """
+
+        if not self._clip_stack:
+            raise RuntimeError(
+                "Cannot pop clip rectangle: "
+                "clip stack is empty"
+            )
+
+        self._clip_stack.pop()
+
+        return self.clip_rect
+
+    def clear_clip_rects(
+        self,
+    ) -> None:
+        """
+        Clear the complete clip stack.
+        """
+
+        self._clip_stack.clear()
+
+    @staticmethod
+    def _intersect_clip_rects(
+        a: tuple[
+            float,
+            float,
+            float,
+            float,
+        ],
+        b: tuple[
+            float,
+            float,
+            float,
+            float,
+        ],
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ]:
+        """
+        Return the intersection of two clip rectangles.
+        """
+
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+
+        left = max(
+            ax,
+            bx,
+        )
+
+        top = max(
+            ay,
+            by,
+        )
+
+        right = min(
+            ax + aw,
+            bx + bw,
+        )
+
+        bottom = min(
+            ay + ah,
+            by + bh,
+        )
+
+        width = max(
+            right - left,
+            0.0,
+        )
+
+        height = max(
+            bottom - top,
+            0.0,
+        )
+
+        return (
+            left,
+            top,
+            width,
+            height,
+        )
+
+    # ==========================================================
     # FRAME
     # ==========================================================
 
@@ -274,6 +464,8 @@ class GPURenderer:
         self._frame_started = True
 
         self._active_texture = None
+
+        self._clip_stack.clear()
 
         # ------------------------------------------------------
         # Begin batches
@@ -571,6 +763,8 @@ class GPURenderer:
 
         self._active_texture = None
 
+        self._clip_stack.clear()
+
         self._frame_started = False
 
         # ------------------------------------------------------
@@ -642,6 +836,7 @@ class GPURenderer:
             flip_x=flip_x,
             flip_y=flip_y,
             uv=uv,
+            clip_rect=self.clip_rect,
         )
 
     def sprites(
@@ -700,6 +895,7 @@ class GPURenderer:
         return self.sprite_batch.add_many(
             sprites,
             workers=workers,
+            clip_rect=self.clip_rect,
         )
 
     # ==========================================================
@@ -737,6 +933,7 @@ class GPURenderer:
             rotation=rotation,
             origin=origin,
             radius=radius,
+            clip_rect=self.clip_rect,
         )
 
     # ==========================================================
@@ -777,6 +974,7 @@ class GPURenderer:
                 0.5,
                 0.5,
             ),
+            clip_rect=self.clip_rect,
         )
 
     # ==========================================================
@@ -950,8 +1148,8 @@ class GPURenderer:
         """
         Draw text using GPUTextRenderer.
 
-        Arguments are forwarded directly to the existing
-        GPUTextRenderer.draw() implementation.
+        The currently active renderer clip rectangle is
+        automatically attached to the text draw command.
         """
 
         self._require_frame()
@@ -961,6 +1159,11 @@ class GPURenderer:
                 "Text rendering is not initialized. "
                 "Pass a font to GPURenderer(..., font=...)."
             )
+
+        kwargs.setdefault(
+            "clip_rect",
+            self.clip_rect,
+        )
 
         return self.text_renderer.draw(
             *args,
