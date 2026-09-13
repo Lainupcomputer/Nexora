@@ -595,7 +595,7 @@ class ECSSystemScheduler:
         """
         Rendering always happens on the caller/main thread.
 
-        SDL / pygame rendering must not be moved into worker threads.
+        SDL3 / GPU rendering must not be moved into worker threads.
         """
 
         if self._shutdown:

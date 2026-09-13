@@ -1,71 +1,154 @@
 from __future__ import annotations
 
-from nexora.core.engine import Engine
+import math
+
+from nexora import Game
+from nexora.rendering.gpu.texture import GPUTexture
 
 
-class CameraExample:
-    def __init__(self):
-        self.engine = None
-        self.input = None
-        self.window = None
-        self.renderer = None
+class CameraExample(Game):
+    """
+    Nexora camera example.
 
-        # Player world position
-        self.player_x = 2000.0
-        self.player_y = 1500.0
+    Controls
+    --------
+    WASD / Arrow keys
+        Move the player
 
-        self.player_size = 48.0
-        self.player_speed = 400.0
+    Q / E
+        Zoom out / in
 
+    R
+        Reset camera
+
+    SPACE
+        Camera shake
+
+    ESC
+        Exit
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            title="Nexora - Camera Example",
+            width=1280,
+            height=720,
+            target_fps=144,
+            resizable=True,
+        )
+
+        # ------------------------------------------------------
+        # World
+        # ------------------------------------------------------
+
+        self.world_width = 2400.0
+        self.world_height = 1600.0
+
+        # ------------------------------------------------------
+        # Player
+        # ------------------------------------------------------
+
+        self.player_x = self.world_width * 0.5
+        self.player_y = self.world_height * 0.5
+
+        self.player_speed = 350.0
+
+        self.player_rotation = 0.0
+        self.player_scale = 1.0
+
+        # ------------------------------------------------------
         # Camera
+        # ------------------------------------------------------
+
         self.camera_smooth = 0.12
 
-        # World
-        self.world_width = 4000.0
-        self.world_height = 3000.0
+        # ------------------------------------------------------
+        # Texture
+        # ------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Initialize
-    # ------------------------------------------------------------------
+        self.texture: GPUTexture | None = None
 
-    def initialize(self):
-        # Movement
-        self.input.bind("move_up", "W")
-        self.input.bind("move_up", "UP")
+        self.sprite_width = 96.0
+        self.sprite_height = 96.0
 
-        self.input.bind("move_down", "S")
-        self.input.bind("move_down", "DOWN")
+        # ------------------------------------------------------
+        # Demo objects
+        # ------------------------------------------------------
 
-        self.input.bind("move_left", "A")
-        self.input.bind("move_left", "LEFT")
+        self.objects: list[tuple[float, float, float]] = []
 
-        self.input.bind("move_right", "D")
-        self.input.bind("move_right", "RIGHT")
+        self._create_world_objects()
 
-        # Camera
-        self.input.bind("zoom_in", "+")
-        self.input.bind("zoom_out", "-")
-        self.input.bind("camera_reset", "R")
-        self.input.bind("camera_shake", "SPACE")
+    # ==========================================================
+    # INITIALIZE
+    # ==========================================================
 
-        # Quit
-        self.input.bind("quit", "ESCAPE")
+    def initialize(self) -> None:
+        self.input.bind("left", "A")
+        self.input.bind("right", "D")
+        self.input.bind("up", "W")
+        self.input.bind("down", "S")
 
-        self.renderer.clear_color = (
-            20,
-            22,
-            28,
+        self.input.bind("zoom_out", "Q")
+        self.input.bind("zoom_in", "E")
+
+        self.input.bind("reset_camera", "R")
+        self.input.bind("shake", "SPACE")
+        self.input.bind("escape", "ESCAPE")
+
+        print("Loading: assets\\demo_sprite.png")
+
+        image = self.assets.load_texture(
+            "demo_sprite.png"
         )
+
+        print(
+            f"Image loaded: "
+            f"{image.width}x{image.height}"
+        )
+
+        print(
+            f"Pixel data: "
+            f"{image.byte_size} bytes"
+        )
+
+        self.texture = GPUTexture(
+            self.engine.gpu_context.device,
+            image.width,
+            image.height,
+            data=image.pixels,
+            bytes_per_pixel=image.bytes_per_pixel,
+        )
+
+        self.sprite_width = float(image.width)
+        self.sprite_height = float(image.height)
+
+        print(
+            f"GPU texture created: "
+            f"{image.width}x{image.height}"
+        )
+
+        # ------------------------------------------------------
+        # Configure camera
+        # ------------------------------------------------------
 
         camera = self.renderer.camera
 
-        # Start camera at player
-        camera.look_at(
+        camera.set_position(
             self.player_x,
             self.player_y,
         )
 
-        # World boundaries
+        camera.set_zoom(
+            1.0,
+            immediate=True,
+        )
+
+        camera.min_zoom = 0.5
+        camera.max_zoom = 2.0
+        camera.zoom_speed = 8.0
+
+        # World bounds
         camera.set_bounds(
             0.0,
             self.world_width,
@@ -73,386 +156,230 @@ class CameraExample:
             self.world_height,
         )
 
-        # Dead Zone
+        # Dead zone around player
         camera.set_dead_zone(
-            300.0,
-            180.0,
+            240.0,
+            140.0,
         )
 
-        # Zoom configuration
-        camera.min_zoom = 0.25
-        camera.max_zoom = 3.0
-        camera.zoom_speed = 8.0
+        print("Camera initialized.")
 
-    # ------------------------------------------------------------------
-    # Events
-    # ------------------------------------------------------------------
+    # ==========================================================
+    # WORLD
+    # ==========================================================
 
-    def handle_event(self, event):
-        pass
+    def _create_world_objects(self) -> None:
+        """
+        Create a grid of demo sprites.
 
-    # ------------------------------------------------------------------
-    # Fixed Update
-    # ------------------------------------------------------------------
+        Everything is stored in world coordinates.
+        """
 
-    def fixed_update(self, fixed_delta_time):
-        pass
+        spacing = 300.0
 
-    # ------------------------------------------------------------------
-    # Update
-    # ------------------------------------------------------------------
+        columns = int(
+            self.world_width // spacing
+        )
 
-    def update(self, delta_time):
+        rows = int(
+            self.world_height // spacing
+        )
+
+        for y in range(rows + 1):
+            for x in range(columns + 1):
+                world_x = x * spacing
+                world_y = y * spacing
+
+                # Don't place an object exactly on the player.
+                if (
+                    abs(world_x - self.player_x) < 120.0
+                    and abs(world_y - self.player_y) < 120.0
+                ):
+                    continue
+
+                rotation = (
+                    (x + y) * 0.15
+                )
+
+                self.objects.append(
+                    (
+                        world_x,
+                        world_y,
+                        rotation,
+                    )
+                )
+
+    # ==========================================================
+    # UPDATE
+    # ==========================================================
+
+
+    def update(self, dt):
         camera = self.renderer.camera
 
-        # --------------------------------------------------------------
-        # Quit
-        # --------------------------------------------------------------
-
-        if self.input.is_pressed("quit"):
-            self.engine.stop()
+        if self.input.action("escape").pressed:
+            self.stop()
             return
 
-        # --------------------------------------------------------------
-        # Player movement
-        # --------------------------------------------------------------
+        move_x = 0.0
+        move_y = 0.0
 
-        direction_x = 0.0
-        direction_y = 0.0
+        if self.input.action("left").down:
+            move_x -= 1
 
-        if self.input.is_down("move_left"):
-            direction_x -= 1.0
+        if self.input.action("right").down:
+            move_x += 1
 
-        if self.input.is_down("move_right"):
-            direction_x += 1.0
+        if self.input.action("up").down:
+            move_y -= 1
 
-        if self.input.is_down("move_up"):
-            direction_y -= 1.0
+        if self.input.action("down").down:
+            move_y += 1
 
-        if self.input.is_down("move_down"):
-            direction_y += 1.0
+        length = math.hypot(move_x, move_y)
 
-        # Normalize diagonal movement
-        if direction_x != 0.0 or direction_y != 0.0:
-            length = (
-                direction_x * direction_x
-                + direction_y * direction_y
-            ) ** 0.5
+        if length > 0:
+            move_x /= length
+            move_y /= length
 
-            direction_x /= length
-            direction_y /= length
+        self.player_x += move_x * self.player_speed * dt
+        self.player_y += move_y * self.player_speed * dt
 
-        self.player_x += (
-            direction_x
-            * self.player_speed
-            * delta_time
-        )
-
-        self.player_y += (
-            direction_y
-            * self.player_speed
-            * delta_time
-        )
-
-        # Keep player inside world
-        half_size = self.player_size * 0.5
+        half_width = self.sprite_width * 0.5
+        half_height = self.sprite_height * 0.5
 
         self.player_x = max(
-            half_size,
+            half_width,
             min(
-                self.world_width - half_size,
-                self.player_x,
-            ),
+                self.world_width - half_width,
+                self.player_x
+            )
         )
 
         self.player_y = max(
-            half_size,
+            half_height,
             min(
-                self.world_height - half_size,
-                self.player_y,
-            ),
+                self.world_height - half_height,
+                self.player_y
+            )
         )
 
-        # --------------------------------------------------------------
-        # Camera follow
-        # --------------------------------------------------------------
+        if move_x != 0 or move_y != 0:
+            self.player_rotation = math.atan2(
+                move_y,
+                move_x
+            )
+
+        if self.input.action("zoom_out").down:
+            camera.zoom_by(-1.0 * dt)
+
+        if self.input.action("zoom_in").down:
+            camera.zoom_by(1.0 * dt)
+
+        if self.input.action("reset_camera").pressed:
+            camera.set_position(
+                self.player_x,
+                self.player_y
+            )
+
+            camera.set_zoom(
+                1.0,
+                immediate=True
+            )
+
+            camera.stop_shake()
 
         camera.follow(
             self.player_x,
             self.player_y,
             smooth=self.camera_smooth,
-            delta_time=delta_time,
+            delta_time=dt
         )
-
-        # --------------------------------------------------------------
-        # Zoom
-        # --------------------------------------------------------------
-
-        if self.input.is_pressed("zoom_in"):
-            camera.zoom_by(0.25)
-
-        if self.input.is_pressed("zoom_out"):
-            camera.zoom_by(-0.25)
-
-        # --------------------------------------------------------------
-        # Screen shake
-        # --------------------------------------------------------------
-
-        if self.input.is_pressed("camera_shake"):
-            camera.shake(
-                strength=25.0,
-                duration=0.5,
-            )
-
-        # --------------------------------------------------------------
-        # Reset camera
-        # --------------------------------------------------------------
-
-        if self.input.is_pressed("camera_reset"):
-            camera.look_at(
-                self.player_x,
-                self.player_y,
-            )
-
-        # --------------------------------------------------------------
-        # Update camera effects
-        # --------------------------------------------------------------
-
-        camera.update(
-            delta_time
-        )
-
-        # --------------------------------------------------------------
-        # Camera bounds
-        # --------------------------------------------------------------
 
         camera.clamp(
             self.renderer.width,
-            self.renderer.height,
+            self.renderer.height
         )
 
-    # ------------------------------------------------------------------
-    # Render
-    # ------------------------------------------------------------------
+        camera.update_zoom(dt)
 
-    def render(self):
-        camera = self.renderer.camera
-
-        # --------------------------------------------------------------
-        # World
-        # --------------------------------------------------------------
-
-        self.renderer.world_rectangle(
-            0,
-            0,
-            self.world_width,
-            self.world_height,
-            color=(35, 38, 48),
-        )
-
-        # --------------------------------------------------------------
-        # Grid
-        # --------------------------------------------------------------
-
-        grid_size = 100
-
-        for x in range(
-            0,
-            int(self.world_width) + 1,
-            grid_size,
-        ):
-            self.renderer.world_line(
-                (x, 0),
-                (x, self.world_height),
-                color=(50, 54, 66),
-                width=1,
+        if self.input.action("shake").pressed:
+            print("SHAKE AUSGELÖST")
+            camera.shake(
+                strength=20.0,
+                duration=0.35
             )
 
-        for y in range(
-            0,
-            int(self.world_height) + 1,
-            grid_size,
-        ):
-            self.renderer.world_line(
-                (0, y),
-                (self.world_width, y),
-                color=(50, 54, 66),
-                width=1,
+        camera.update_shake(dt)
+        if camera.shake_time > 0.0:
+            print(
+                f"SHAKE: x={camera.shake_x:.2f}, "
+                f"y={camera.shake_y:.2f}"
             )
 
-        # --------------------------------------------------------------
-        # World center
-        # --------------------------------------------------------------
 
-        self.renderer.world_circle(
-            self.world_width / 2,
-            self.world_height / 2,
-            30,
-            color=(80, 120, 255),
-        )
+    # ==========================================================
+    # RENDER
+    # ==========================================================
 
-        # --------------------------------------------------------------
+    def render(self, interpolation: float) -> None:
+        if self.texture is None:
+            return
+
+        # ------------------------------------------------------
         # World objects
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
-        objects = [
-            (300, 300, 80, (220, 80, 80)),
-            (900, 500, 120, (80, 220, 120)),
-            (1500, 800, 70, (220, 180, 60)),
-            (2300, 400, 100, (180, 80, 220)),
-            (3000, 1200, 150, (80, 180, 220)),
-            (3500, 2400, 100, (220, 100, 180)),
-            (700, 2200, 130, (120, 220, 220)),
-            (1800, 2500, 90, (220, 220, 100)),
-        ]
-
-        for x, y, size, color in objects:
-            self.renderer.world_rectangle(
-                x - size / 2,
-                y - size / 2,
-                size,
-                size,
-                color=color,
+        for x, y, rotation in self.objects:
+            self.renderer.sprite(
+                self.texture,
+                x,
+                y,
+                width=self.sprite_width,
+                height=self.sprite_height,
+                rotation=rotation,
             )
 
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
         # Player
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
-        self.renderer.world_rectangle(
-            self.player_x - self.player_size / 2,
-            self.player_y - self.player_size / 2,
-            self.player_size,
-            self.player_size,
-            color=(255, 70, 70),
-            border_radius=8,
-        )
-
-        # Player center
-        self.renderer.world_circle(
+        self.renderer.sprite(
+            self.texture,
             self.player_x,
             self.player_y,
-            5,
-            color=(255, 255, 255),
+            width=self.sprite_width * self.player_scale,
+            height=self.sprite_height * self.player_scale,
+            rotation=self.player_rotation,
         )
 
-        # --------------------------------------------------------------
-        # Dead Zone visualization
-        # --------------------------------------------------------------
+    # ==========================================================
+    # INPUT
+    # ==========================================================
 
-        dead_width = camera.dead_zone_width
-        dead_height = camera.dead_zone_height
-
-        if dead_width > 0.0 and dead_height > 0.0:
-            self.renderer.rectangle(
-                self.renderer.width / 2
-                - dead_width * camera.zoom / 2,
-                self.renderer.height / 2
-                - dead_height * camera.zoom / 2,
-                dead_width * camera.zoom,
-                dead_height * camera.zoom,
-                color=(100, 180, 255),
-                filled=False,
-                thickness=2,
-            )
-
-        # --------------------------------------------------------------
-        # Screen-space UI
-        # --------------------------------------------------------------
-
-        self.renderer.text(
-            "Nexora Camera Example",
-            20,
-            20,
-            size=30,
-            color=(240, 240, 245),
-            bold=True,
-        )
-
-        self.renderer.text(
-            "WASD / Arrow Keys = Move",
-            20,
-            60,
-            size=22,
-            color=(200, 205, 215),
-        )
-
-        self.renderer.text(
-            "+ / - = Zoom",
-            20,
-            88,
-            size=22,
-            color=(200, 205, 215),
-        )
-
-        self.renderer.text(
-            "SPACE = Screen Shake",
-            20,
-            116,
-            size=22,
-            color=(200, 205, 215),
-        )
-
-        self.renderer.text(
-            "R = Reset Camera",
-            20,
-            144,
-            size=22,
-            color=(200, 205, 215),
-        )
-
-        self.renderer.text(
-            "ESC = Quit",
-            20,
-            172,
-            size=22,
-            color=(200, 205, 215),
-        )
-
-        # --------------------------------------------------------------
-        # Camera information
-        # --------------------------------------------------------------
-
-        camera_text = (
-            f"Camera: "
-            f"{camera.x:.1f}, "
-            f"{camera.y:.1f}    "
-            f"Zoom: {camera.zoom:.2f}    "
-            f"Target: {camera.target_zoom:.2f}"
-        )
-
-        self.renderer.text(
-            camera_text,
-            20,
-            self.renderer.height - 35,
-            size=20,
-            color=(170, 175, 185),
-        )
-
-    # ------------------------------------------------------------------
-    # Shutdown
-    # ------------------------------------------------------------------
-
-    def shutdown(self):
+    def handle_event(self, event) -> None:
+        # InputManager already processes keyboard events.
         pass
 
+    # ==========================================================
+    # SHUTDOWN
+    # ==========================================================
 
-def main():
-    game = CameraExample()
+    def shutdown(self) -> None:
+        if self.texture is not None:
+            self.texture.destroy()
+            self.texture = None
 
-    engine = Engine(
-        game,
-        width=1280,
-        height=720,
-        title="Nexora Engine - Camera",
-        target_fps=144,
-        fixed_delta_time=1.0 / 60.0,
-        resizable=True,
-    )
 
-    engine.run()
-
+# ==============================================================
+# MAIN
+# ==============================================================
 
 if __name__ == "__main__":
-    main()
+    game = CameraExample()
+
+    # Physical keyboard -> Nexora actions
+    game_input = game
+
+    game.run()
 

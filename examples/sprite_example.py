@@ -1,376 +1,1484 @@
 from __future__ import annotations
 
+import ctypes
+import os
+import struct
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-import pygame
+from nexora.rendering.gpu.render_snapshot import RenderSnapshot
+import sdl3
 
-from nexora import Engine
+from nexora.rendering.gpu.buffer import GPUBuffer
+from nexora.rendering.gpu.sampler import GPUSampler
+from nexora.rendering.gpu.shader import GPUShader
 
 
-class SpriteGame:
-    def __init__(self) -> None:
-        self.engine = None
-        self.renderer = None
-        self.input = None
-        self.window = None
+class GPUSpriteBatch:
+    """
+    GPU-instanced sprite renderer.
 
-        self.texture = None
+    Supports both:
 
-        self.x = 0.0
-        self.y = 0.0
-        self.rotation = 0.0
-        self.scale = 1.0
+        batch.add(...)
 
-    def initialize(self) -> None:
-        self.texture = self.engine.assets.load_texture(
-            "demo_sprite.png"
+    and high-performance bulk preparation:
+
+        batch.add_many(sprites)
+
+    Bulk preparation uses real worker threads when running on
+    Python's free-threaded build.
+
+    Worker threads only prepare CPU-side instance data.
+
+    SDL / GPU operations remain on the rendering thread.
+    """
+
+    MAX_SPRITES = 50000
+
+    INSTANCE_FLOATS = 14
+    INSTANCE_STRIDE = 56
+
+    CAMERA_UNIFORM_FLOATS = 8
+    CAMERA_UNIFORM_SIZE = 32
+
+    DEFAULT_WORKERS = 4
+
+    PARALLEL_THRESHOLD = 2048
+
+    def __init__(
+        self,
+        context,
+        *,
+        max_sprites: int = 10000,
+        vertex_shader_path,
+        fragment_shader_path,
+        camera=None,
+        workers: int = DEFAULT_WORKERS,
+    ):
+        self.context = context
+        self.device = context.device
+
+        self.max_sprites = int(max_sprites)
+
+        if self.max_sprites <= 0:
+            raise ValueError(
+                "max_sprites must be greater than zero"
+            )
+
+        if self.max_sprites > self.MAX_SPRITES:
+            raise ValueError(
+                f"max_sprites cannot exceed "
+                f"{self.MAX_SPRITES}"
+            )
+
+        self.camera = camera
+
+        self.vertex_shader_path = Path(
+            vertex_shader_path
         )
 
-        self.x = 0.0
-        self.y = 0.0
+        self.fragment_shader_path = Path(
+            fragment_shader_path
+        )
 
-    def handle_event(self, event) -> None:
-        if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE:
-                self.engine.stop()
+        # ------------------------------------------------------
+        # Worker configuration
+        # ------------------------------------------------------
 
-    def fixed_update(self, delta_time: float) -> None:
-        pass
+        cpu_count = os.cpu_count() or 1
 
-    def update(self, delta_time: float) -> None:
-        movement_speed = 300.0
-        rotation_speed = 120.0
-        scale_speed = 1.0
+        self.worker_count = max(
+            1,
+            min(
+                int(workers),
+                cpu_count,
+            ),
+        )
 
-        # --------------------------------------------------------------
-        # Movement
-        # --------------------------------------------------------------
+        self._executor = ThreadPoolExecutor(
+            max_workers=self.worker_count,
+            thread_name_prefix="nexora-sprite",
+        )
 
-        if self.input.is_down("left"):
-            self.x -= movement_speed * delta_time
+        # ------------------------------------------------------
+        # GPU resources
+        # ------------------------------------------------------
 
-        if self.input.is_down("right"):
-            self.x += movement_speed * delta_time
+        self.vertex_shader = None
+        self.fragment_shader = None
 
-        if self.input.is_down("up"):
-            self.y -= movement_speed * delta_time
+        self.quad_buffer = None
+        self.instance_buffer = None
+        self.sampler = None
+        self.pipeline = None
 
-        if self.input.is_down("down"):
-            self.y += movement_speed * delta_time
+        # ------------------------------------------------------
+        # CPU instance storage
+        # ------------------------------------------------------
 
-        # --------------------------------------------------------------
+        self._instance_data = bytearray(
+            self.max_sprites
+            * self.INSTANCE_STRIDE
+        )
+
+        self._sprite_count = 0
+
+        self._texture = None
+
+        self._camera_data = bytearray(
+            self.CAMERA_UNIFORM_SIZE
+        )
+
+        self._destroyed = False
+
+        self._create_resources()
+
+    def submit_snapshot(self, snapshot: RenderSnapshot):
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        count = len(snapshot)
+
+        if count == 0:
+            self._sprite_count = 0
+            return 0
+
+        if count > self.max_sprites:
+            raise RuntimeError(
+                "RenderSnapshot exceeds SpriteBatch capacity "
+                f"({count} > {self.max_sprites})"
+            )
+
+        snapshot_size = count * self.INSTANCE_STRIDE
+
+        self._instance_data[:snapshot_size] = (
+            snapshot.data[:snapshot_size]
+        )
+
+        self._sprite_count = count
+
+        return count
+
+    # ==========================================================
+    # ERROR
+    # ==========================================================
+
+    @staticmethod
+    def _decode_error(error) -> str:
+        if isinstance(error, bytes):
+            return error.decode(
+                "utf-8",
+                errors="replace",
+            )
+
+        if error is None:
+            return "<unknown SDL error>"
+
+        return str(error)
+
+    def _check(self, condition, message):
+        if not condition:
+            error = self._decode_error(
+                sdl3.SDL_GetError()
+            )
+
+            raise RuntimeError(
+                f"{message}: {error}"
+            )
+
+    # ==========================================================
+    # RESOURCE CREATION
+    # ==========================================================
+
+    def _create_resources(self):
+        self._create_shaders()
+        self._create_quad()
+        self._create_instance_buffer()
+        self._create_sampler()
+        self._create_pipeline()
+
+    # ==========================================================
+    # SHADERS
+    # ==========================================================
+
+    def _create_shaders(self):
+        self.vertex_shader = GPUShader(
+            self.device,
+            self.vertex_shader_path,
+            sdl3.SDL_GPU_SHADERSTAGE_VERTEX,
+            sdl3.SDL_GPU_SHADERFORMAT_SPIRV,
+            entrypoint="main",
+            num_uniform_buffers=1,
+        )
+
+        self.fragment_shader = GPUShader(
+            self.device,
+            self.fragment_shader_path,
+            sdl3.SDL_GPU_SHADERSTAGE_FRAGMENT,
+            sdl3.SDL_GPU_SHADERFORMAT_SPIRV,
+            entrypoint="main",
+            num_samplers=1,
+        )
+
+    # ==========================================================
+    # QUAD
+    # ==========================================================
+
+    def _create_quad(self):
+        """
+        Quad vertices:
+
+            position.xy
+            uv.xy
+
+        Six vertices = two triangles.
+        """
+
+        vertices = struct.pack(
+            "<24f",
+
+            # Triangle 1
+            -0.5, -0.5,
+            0.0, 0.0,
+
+             0.5, -0.5,
+            1.0, 0.0,
+
+             0.5,  0.5,
+            1.0, 1.0,
+
+            # Triangle 2
+            -0.5, -0.5,
+            0.0, 0.0,
+
+             0.5,  0.5,
+            1.0, 1.0,
+
+            -0.5,  0.5,
+            0.0, 1.0,
+        )
+
+        self.quad_buffer = GPUBuffer(
+            self.device,
+            len(vertices),
+            sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
+            initial_data=vertices,
+        )
+
+    # ==========================================================
+    # INSTANCE BUFFER
+    # ==========================================================
+
+    def _create_instance_buffer(self):
+        self.instance_buffer = GPUBuffer(
+            self.device,
+            len(self._instance_data),
+            sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
+            dynamic=True,
+            frames_in_flight=3,
+        )
+
+    # ==========================================================
+    # SAMPLER
+    # ==========================================================
+
+    def _create_sampler(self):
+        self.sampler = GPUSampler(
+            self.device,
+            min_filter=sdl3.SDL_GPU_FILTER_NEAREST,
+            mag_filter=sdl3.SDL_GPU_FILTER_NEAREST,
+            mipmap_mode=sdl3.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+            address_mode_u=sdl3.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            address_mode_v=sdl3.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            address_mode_w=sdl3.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+        )
+
+    # ==========================================================
+    # PIPELINE
+    # ==========================================================
+
+    def _create_pipeline(self):
+        vertex_buffer_descriptions = (
+            sdl3.SDL_GPUVertexBufferDescription * 2
+        )()
+
+        # ------------------------------------------------------
+        # Vertex buffer
+        # ------------------------------------------------------
+
+        vertex_buffer_descriptions[0].slot = 0
+        vertex_buffer_descriptions[0].pitch = 16
+        vertex_buffer_descriptions[0].input_rate = (
+            sdl3.SDL_GPU_VERTEXINPUTRATE_VERTEX
+        )
+        vertex_buffer_descriptions[0].instance_step_rate = 0
+
+        # ------------------------------------------------------
+        # Instance buffer
+        # ------------------------------------------------------
+
+        vertex_buffer_descriptions[1].slot = 1
+        vertex_buffer_descriptions[1].pitch = (
+            self.INSTANCE_STRIDE
+        )
+        vertex_buffer_descriptions[1].input_rate = (
+            sdl3.SDL_GPU_VERTEXINPUTRATE_INSTANCE
+        )
+        vertex_buffer_descriptions[1].instance_step_rate = 0
+
+        # ------------------------------------------------------
+        # Attributes
+        # ------------------------------------------------------
+
+        attributes = (
+            sdl3.SDL_GPUVertexAttribute * 11
+        )()
+
+        # Vertex position
+        attributes[0].location = 0
+        attributes[0].buffer_slot = 0
+        attributes[0].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
+        )
+        attributes[0].offset = 0
+
+        # Vertex UV
+        attributes[1].location = 1
+        attributes[1].buffer_slot = 0
+        attributes[1].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
+        )
+        attributes[1].offset = 8
+
+        # Instance position
+        attributes[2].location = 2
+        attributes[2].buffer_slot = 1
+        attributes[2].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
+        )
+        attributes[2].offset = 0
+
+        # Instance size
+        attributes[3].location = 3
+        attributes[3].buffer_slot = 1
+        attributes[3].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
+        )
+        attributes[3].offset = 8
+
         # Rotation
-        # --------------------------------------------------------------
+        attributes[4].location = 4
+        attributes[4].buffer_slot = 1
+        attributes[4].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
+        )
+        attributes[4].offset = 16
 
-        if self.input.is_down("rotate_left"):
-            self.rotation += rotation_speed * delta_time
+        # Origin
+        attributes[5].location = 5
+        attributes[5].buffer_slot = 1
+        attributes[5].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
+        )
+        attributes[5].offset = 20
 
-        if self.input.is_down("rotate_right"):
-            self.rotation -= rotation_speed * delta_time
+        # Alpha
+        attributes[6].location = 6
+        attributes[6].buffer_slot = 1
+        attributes[6].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
+        )
+        attributes[6].offset = 28
 
-        # --------------------------------------------------------------
-        # Scale
-        # --------------------------------------------------------------
+        # Flip X
+        attributes[7].location = 7
+        attributes[7].buffer_slot = 1
+        attributes[7].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
+        )
+        attributes[7].offset = 32
 
-        if self.input.is_down("zoom_in"):
-            self.scale += scale_speed * delta_time
+        # Flip Y
+        attributes[8].location = 8
+        attributes[8].buffer_slot = 1
+        attributes[8].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
+        )
+        attributes[8].offset = 36
 
-        if self.input.is_down("zoom_out"):
-            self.scale -= scale_speed * delta_time
+        # UV position
+        attributes[9].location = 9
+        attributes[9].buffer_slot = 1
+        attributes[9].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
+        )
+        attributes[9].offset = 40
 
-        self.scale = max(
-            0.25,
-            min(4.0, self.scale),
+        # UV size
+        attributes[10].location = 10
+        attributes[10].buffer_slot = 1
+        attributes[10].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
+        )
+        attributes[10].offset = 48
+
+        # ------------------------------------------------------
+        # Rasterizer
+        # ------------------------------------------------------
+
+        rasterizer = (
+            sdl3.SDL_GPURasterizerState()
         )
 
-        # --------------------------------------------------------------
+        rasterizer.fill_mode = (
+            sdl3.SDL_GPU_FILLMODE_FILL
+        )
+
+        rasterizer.cull_mode = (
+            sdl3.SDL_GPU_CULLMODE_NONE
+        )
+
+        rasterizer.front_face = (
+            sdl3.SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE
+        )
+
+        rasterizer.enable_depth_bias = False
+        rasterizer.enable_depth_clip = True
+
+        # ------------------------------------------------------
+        # Multisample
+        # ------------------------------------------------------
+
+        multisample = (
+            sdl3.SDL_GPUMultisampleState()
+        )
+
+        multisample.sample_count = (
+            sdl3.SDL_GPU_SAMPLECOUNT_1
+        )
+
+        multisample.sample_mask = 0
+        multisample.enable_mask = False
+        multisample.enable_alpha_to_coverage = False
+
+        # ------------------------------------------------------
+        # Depth
+        # ------------------------------------------------------
+
+        depth = (
+            sdl3.SDL_GPUDepthStencilState()
+        )
+
+        depth.enable_depth_test = False
+        depth.enable_depth_write = False
+        depth.enable_stencil_test = False
+
+        # ------------------------------------------------------
+        # Color target
+        # ------------------------------------------------------
+
+        color_target = (
+            sdl3.SDL_GPUColorTargetDescription()
+        )
+
+        color_target.format = (
+            self.context.swapchain_format
+        )
+
+        color_target.blend_state.enable_blend = False
+
+        color_target.blend_state.enable_color_write_mask = True
+
+        color_target.blend_state.color_write_mask = (
+            sdl3.SDL_GPU_COLORCOMPONENT_R
+            | sdl3.SDL_GPU_COLORCOMPONENT_G
+            | sdl3.SDL_GPU_COLORCOMPONENT_B
+            | sdl3.SDL_GPU_COLORCOMPONENT_A
+        )
+
+        color_targets = (
+            sdl3.SDL_GPUColorTargetDescription * 1
+        )()
+
+        color_targets[0] = color_target
+
+        # ------------------------------------------------------
+        # Target info
+        # ------------------------------------------------------
+
+        target_info = (
+            sdl3.SDL_GPUGraphicsPipelineTargetInfo()
+        )
+
+        target_info.color_target_descriptions = (
+            color_targets
+        )
+
+        target_info.num_color_targets = 1
+
+        target_info.depth_stencil_format = 0
+        target_info.has_depth_stencil_target = False
+
+        # ------------------------------------------------------
+        # Vertex input
+        # ------------------------------------------------------
+
+        vertex_input = (
+            sdl3.SDL_GPUVertexInputState()
+        )
+
+        vertex_input.vertex_buffer_descriptions = (
+            vertex_buffer_descriptions
+        )
+
+        vertex_input.num_vertex_buffers = 2
+
+        vertex_input.vertex_attributes = (
+            attributes
+        )
+
+        vertex_input.num_vertex_attributes = 11
+
+        # ------------------------------------------------------
+        # Pipeline
+        # ------------------------------------------------------
+
+        info = (
+            sdl3.SDL_GPUGraphicsPipelineCreateInfo()
+        )
+
+        info.vertex_shader = (
+            self.vertex_shader.shader
+        )
+
+        info.fragment_shader = (
+            self.fragment_shader.shader
+        )
+
+        info.vertex_input_state = vertex_input
+
+        info.primitive_type = (
+            sdl3.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST
+        )
+
+        info.rasterizer_state = rasterizer
+        info.multisample_state = multisample
+        info.depth_stencil_state = depth
+        info.target_info = target_info
+        info.props = 0
+
+        self.pipeline = (
+            sdl3.SDL_CreateGPUGraphicsPipeline(
+                self.device,
+                ctypes.byref(info),
+            )
+        )
+
+        self._check(
+            self.pipeline,
+            "SDL_CreateGPUGraphicsPipeline failed",
+        )
+
+    # ==========================================================
+    # BEGIN
+    # ==========================================================
+
+    def begin(self, texture):
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        self._texture = texture
+        self._sprite_count = 0
+
+    # ==========================================================
+    # ADD - SINGLE SPRITE
+    # ==========================================================
+
+    def add(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        *,
+        rotation: float = 0.0,
+        origin=(0.5, 0.5),
+        alpha: float = 1.0,
+        flip_x: bool = False,
+        flip_y: bool = False,
+        uv=(0.0, 0.0, 1.0, 1.0),
+    ):
+        if self._sprite_count >= self.max_sprites:
+            raise RuntimeError(
+                "GPUSpriteBatch capacity exceeded "
+                f"({self.max_sprites} sprites)"
+            )
+
+        self._write_instance(
+            self._sprite_count,
+            x,
+            y,
+            width,
+            height,
+            rotation,
+            origin,
+            alpha,
+            flip_x,
+            flip_y,
+            uv,
+        )
+
+        self._sprite_count += 1
+
+    # ==========================================================
+    # WRITE INSTANCE
+    # ==========================================================
+
+    def _write_instance(
+        self,
+        index: int,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        rotation: float,
+        origin,
+        alpha: float,
+        flip_x: bool,
+        flip_y: bool,
+        uv,
+    ):
+        """
+        Write exactly one instance into the supplied slot.
+
+        This function intentionally performs no allocation and
+        no synchronization.
+        """
+
+        ox, oy = origin
+        uv_x, uv_y, uv_w, uv_h = uv
+
+        offset = (
+            index
+            * self.INSTANCE_STRIDE
+        )
+
+        struct.pack_into(
+            "<14f",
+            self._instance_data,
+            offset,
+
+            float(x),
+            float(y),
+
+            float(width),
+            float(height),
+
+            float(rotation),
+
+            float(ox),
+            float(oy),
+
+            float(alpha),
+
+            1.0 if flip_x else 0.0,
+            1.0 if flip_y else 0.0,
+
+            float(uv_x),
+            float(uv_y),
+
+            float(uv_w),
+            float(uv_h),
+        )
+
+    # ==========================================================
+    # BULK / PARALLEL PREPARATION
+    # ==========================================================
+
+    def add_many(
+        self,
+        sprites,
+        *,
+        workers: int | None = None,
+    ):
+        """
+        Add many sprites at once.
+
+        Expected sprite format:
+
+            (
+                x,
+                y,
+                width,
+                height,
+                rotation,
+                origin_x,
+                origin_y,
+                alpha,
+                flip_x,
+                flip_y,
+                uv_x,
+                uv_y,
+                uv_width,
+                uv_height,
+            )
+
+        The method returns the number of added sprites.
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        if not hasattr(sprites, "__len__"):
+            sprites = list(sprites)
+
+        count = len(sprites)
+
+        if count == 0:
+            return 0
+
+        if (
+            self._sprite_count + count
+            > self.max_sprites
+        ):
+            raise RuntimeError(
+                "GPUSpriteBatch capacity exceeded "
+                f"({self.max_sprites} sprites)"
+            )
+
+        start_index = self._sprite_count
+
+        # ------------------------------------------------------
+        # Small batches
+        # ------------------------------------------------------
+
+        if count < self.PARALLEL_THRESHOLD:
+            self._write_range(
+                sprites,
+                0,
+                count,
+                start_index,
+            )
+
+            self._sprite_count += count
+            return count
+
+        # ------------------------------------------------------
+        # Worker count
+        # ------------------------------------------------------
+
+        worker_count = (
+            self.worker_count
+            if workers is None
+            else max(1, int(workers))
+        )
+
+        worker_count = min(
+            worker_count,
+            count,
+        )
+
+        # ------------------------------------------------------
+        # Chunk calculation
+        # ------------------------------------------------------
+
+        chunk_size = (
+            count + worker_count - 1
+        ) // worker_count
+
+        futures = []
+
+        for worker_index in range(
+            worker_count
+        ):
+            local_start = (
+                worker_index
+                * chunk_size
+            )
+
+            local_end = min(
+                local_start + chunk_size,
+                count,
+            )
+
+            if local_start >= local_end:
+                break
+
+            futures.append(
+                self._executor.submit(
+                    self._write_range,
+                    sprites,
+                    local_start,
+                    local_end,
+                    start_index + local_start,
+                )
+            )
+
+        # ------------------------------------------------------
+        # Wait for all workers
+        # ------------------------------------------------------
+
+        for future in futures:
+            future.result()
+
+        self._sprite_count += count
+
+        return count
+
+    def _write_range(
+        self,
+        sprites,
+        start: int,
+        end: int,
+        destination_start: int,
+    ):
+        """
+        Worker function.
+
+        Each worker receives a completely independent instance
+        range.
+
+        No GPU / SDL operations happen here.
+        """
+
+        for local_index in range(
+            start,
+            end,
+        ):
+            sprite = sprites[local_index]
+
+            (
+                x,
+                y,
+                width,
+                height,
+                rotation,
+                ox,
+                oy,
+                alpha,
+                flip_x,
+                flip_y,
+                uv_x,
+                uv_y,
+                uv_w,
+                uv_h,
+            ) = sprite
+
+            destination_index = (
+                destination_start
+                + (local_index - start)
+            )
+
+            offset = (
+                destination_index
+                * self.INSTANCE_STRIDE
+            )
+
+            struct.pack_into(
+                "<14f",
+                self._instance_data,
+                offset,
+
+                float(x),
+                float(y),
+
+                float(width),
+                float(height),
+
+                float(rotation),
+
+                float(ox),
+                float(oy),
+
+                float(alpha),
+
+                1.0 if flip_x else 0.0,
+                1.0 if flip_y else 0.0,
+
+                float(uv_x),
+                float(uv_y),
+
+                float(uv_w),
+                float(uv_h),
+            )
+
+    # ==========================================================
+    # CAMERA
+    # ==========================================================
+
+    def _update_camera_uniform(self):
+        if self.camera is None:
+            camera_x = 0.0
+            camera_y = 0.0
+            camera_zoom = 1.0
+
+            shake_x = 0.0
+            shake_y = 0.0
+
+        else:
+            camera_x = float(
+                self.camera.x
+            )
+
+            camera_y = float(
+                self.camera.y
+            )
+
+            camera_zoom = float(
+                self.camera.zoom
+            )
+
+            # --------------------------------------------------
+            # Screen shake
+            #
+            # Camera.update_shake() calculates these values.
+            # They must be uploaded to the GPU as part of the
+            # camera uniform.
+            # --------------------------------------------------
+
+            shake_x = float(
+                self.camera.shake_x
+            )
+
+            shake_y = float(
+                self.camera.shake_y
+            )
+
+        viewport_width = float(
+            self.context.swapchain_width
+        )
+
+        viewport_height = float(
+            self.context.swapchain_height
+        )
+
+        struct.pack_into(
+            "<8f",
+            self._camera_data,
+            0,
+
+            camera_x,
+            camera_y,
+
+            viewport_width,
+            viewport_height,
+
+            camera_zoom,
+
+            shake_x,
+            shake_y,
+
+            0.0,
+        )
+
+    # ==========================================================
+    # RENDER INTO ACTIVE FRAME
+    # ==========================================================
+
+    def render_into(self, command_buffer):
+        """
+        Prepare the current batch for rendering inside an
+        already active GPU frame.
+
+        The caller owns the frame lifecycle.
+
+        This method performs:
+            - instance buffer upload
+            - camera uniform upload
+
+        It does NOT:
+            - acquire a frame
+            - create a render pass
+            - submit the command buffer
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        if self._texture is None:
+            raise RuntimeError(
+                "GPUSpriteBatch.begin(texture) "
+                "must be called before rendering"
+            )
+
+        if self._sprite_count == 0:
+            return 0
+
+        # ------------------------------------------------------
+        # Instance upload
+        # ------------------------------------------------------
+
+        instance_size = (
+            self._sprite_count
+            * self.INSTANCE_STRIDE
+        )
+
+        self.instance_buffer.upload_into(
+            command_buffer,
+            memoryview(
+                self._instance_data
+            )[:instance_size],
+        )
+
+        # ------------------------------------------------------
         # Camera
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
-        self.renderer.camera.look_at(
-            self.x,
-            self.y,
+        self._update_camera_uniform()
+
+        camera_buffer = (
+            (
+                ctypes.c_ubyte
+                * self.CAMERA_UNIFORM_SIZE
+            ).from_buffer(
+                self._camera_data
+            )
         )
 
-        self.renderer.camera.update(
-            delta_time
+        sdl3.SDL_PushGPUVertexUniformData(
+            command_buffer,
+            0,
+            ctypes.cast(
+                camera_buffer,
+                ctypes.c_void_p,
+            ),
+            self.CAMERA_UNIFORM_SIZE,
         )
 
-    def render(self) -> None:
-        renderer = self.renderer
+        return self._sprite_count
 
-        # --------------------------------------------------------------
-        # World grid
-        # --------------------------------------------------------------
+    # ==========================================================
+    # DRAW INTO ACTIVE RENDER PASS
+    # ==========================================================
 
-        grid_size = 100
+    def draw_into(self, render_pass):
+        """
+        Draw the current batch into an already active render pass.
 
-        for x in range(-2000, 2001, grid_size):
-            renderer.world_line(
-                (x, -2000),
-                (x, 2000),
-                (50, 50, 60),
+        The caller owns:
+            - GPU frame
+            - command buffer
+            - render pass
+
+        No uploads or frame submission happen here.
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
             )
 
-        for y in range(-2000, 2001, grid_size):
-            renderer.world_line(
-                (-2000, y),
-                (2000, y),
-                (50, 50, 60),
+        if self._texture is None:
+            raise RuntimeError(
+                "GPUSpriteBatch.begin(texture) "
+                "must be called before drawing"
             )
 
-        # --------------------------------------------------------------
-        # Sprite
-        # --------------------------------------------------------------
+        if self._sprite_count == 0:
+            return 0
 
-        renderer.world_sprite(
-            self.texture,
-            self.x,
-            self.y,
-            scale=self.scale,
-            rotation=self.rotation,
+        # ------------------------------------------------------
+        # Pipeline
+        # ------------------------------------------------------
+
+        sdl3.SDL_BindGPUGraphicsPipeline(
+            render_pass,
+            self.pipeline,
         )
 
-        # --------------------------------------------------------------
-        # Debug information
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
+        # Vertex buffers
+        # ------------------------------------------------------
 
-        renderer.text(
-            "WASD / Arrow Keys: Move",
-            20,
-            20,
-            size=22,
+        instance_size = (
+            self._sprite_count
+            * self.INSTANCE_STRIDE
         )
 
-        renderer.text(
-            "Q / E: Rotate",
-            20,
-            50,
-            size=22,
+        vertex_bindings = (
+            sdl3.SDL_GPUBufferBinding * 2
+        )()
+
+        vertex_bindings[0] = (
+            self.quad_buffer.binding(
+                0,
+                self.quad_buffer.size,
+            )
         )
 
-        renderer.text(
-            "Z / X: Scale",
-            20,
-            80,
-            size=22,
+        vertex_bindings[1] = (
+            self.instance_buffer.binding(
+                0,
+                instance_size,
+            )
         )
 
-        renderer.text(
-            "ESC: Quit",
-            20,
-            110,
-            size=22,
+        sdl3.SDL_BindGPUVertexBuffers(
+            render_pass,
+            0,
+            vertex_bindings,
+            2,
         )
 
-        renderer.text(
-            f"Position: {self.x:.1f}, {self.y:.1f}",
-            20,
-            150,
-            size=20,
+        # ------------------------------------------------------
+        # Texture
+        # ------------------------------------------------------
+
+        texture_binding = (
+            sdl3.SDL_GPUTextureSamplerBinding()
         )
 
-        renderer.text(
-            f"Rotation: {self.rotation:.1f}°",
-            20,
-            180,
-            size=20,
+        texture_binding.texture = (
+            self._texture.texture
         )
 
-        renderer.text(
-            f"Scale: {self.scale:.2f}",
-            20,
-            210,
-            size=20,
+        texture_binding.sampler = (
+            self.sampler.sampler
         )
 
-    def shutdown(self) -> None:
-        pass
+        sdl3.SDL_BindGPUFragmentSamplers(
+            render_pass,
+            0,
+            ctypes.byref(
+                texture_binding
+            ),
+            1,
+        )
 
+        # ------------------------------------------------------
+        # Instanced draw
+        # ------------------------------------------------------
 
-def create_demo_texture() -> None:
-    """
-    Create a small demo texture automatically.
+        sdl3.SDL_DrawGPUPrimitives(
+            render_pass,
+            6,
+            self._sprite_count,
+            0,
+            0,
+        )
 
-    This keeps the example self-contained and means no external
-    image asset is required.
-    """
+        return self._sprite_count
 
-    assets_path = Path("assets")
+    # ==========================================================
+    # END
+    # ==========================================================
 
-    assets_path.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    def end(self):
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
 
-    texture_path = assets_path / "demo_sprite.png"
+        if self._texture is None:
+            raise RuntimeError(
+                "GPUSpriteBatch.begin(texture) "
+                "must be called before end()"
+            )
 
-    if texture_path.exists():
-        return
+        if self._sprite_count == 0:
+            self._texture = None
+            return
 
-    surface = pygame.Surface(
-        (96, 96),
-        pygame.SRCALPHA,
-    )
+        # ------------------------------------------------------
+        # Acquire ONE command buffer.
+        # ------------------------------------------------------
 
-    # --------------------------------------------------------------
-    # Body
-    # --------------------------------------------------------------
+        if not self.context.begin_frame():
+            self._texture = None
+            return
 
-    pygame.draw.circle(
-        surface,
-        (240, 180, 40),
-        (48, 48),
-        42,
-    )
+        try:
+            command_buffer = (
+                self.context.command_buffer
+            )
 
-    # --------------------------------------------------------------
-    # Eyes
-    # --------------------------------------------------------------
+            # --------------------------------------------------
+            # Upload instance data into SAME command buffer.
+            # --------------------------------------------------
 
-    pygame.draw.circle(
-        surface,
-        (30, 30, 35),
-        (32, 38),
-        8,
-    )
+            instance_size = (
+                self._sprite_count
+                * self.INSTANCE_STRIDE
+            )
 
-    pygame.draw.circle(
-        surface,
-        (30, 30, 35),
-        (64, 38),
-        8,
-    )
+            self.instance_buffer.upload_into(
+                command_buffer,
+                memoryview(
+                    self._instance_data
+                )[:instance_size],
+            )
 
-    # --------------------------------------------------------------
-    # Mouth
-    # --------------------------------------------------------------
+            # --------------------------------------------------
+            # Camera
+            # --------------------------------------------------
 
-    pygame.draw.arc(
-        surface,
-        (30, 30, 35),
-        (28, 48, 40, 28),
-        0,
-        3.14,
-        4,
-    )
+            self._update_camera_uniform()
 
-    # --------------------------------------------------------------
-    # Nose
-    # --------------------------------------------------------------
+            # --------------------------------------------------
+            # Render pass
+            # --------------------------------------------------
 
-    pygame.draw.polygon(
-        surface,
-        (220, 70, 70),
-        [
-            (48, 48),
-            (35, 62),
-            (61, 62),
-        ],
-    )
+            render_pass = (
+                self.context.begin_render_pass(
+                    (
+                        0.05,
+                        0.05,
+                        0.08,
+                        1.0,
+                    )
+                )
+            )
 
-    pygame.image.save(
-        surface,
-        texture_path,
-    )
+            try:
+                # ----------------------------------------------
+                # Camera uniform
+                # ----------------------------------------------
 
+                camera_buffer = (
+                    (
+                        ctypes.c_ubyte
+                        * self.CAMERA_UNIFORM_SIZE
+                    ).from_buffer(
+                        self._camera_data
+                    )
+                )
 
-def main() -> None:
-    pygame.init()
+                sdl3.SDL_PushGPUVertexUniformData(
+                    command_buffer,
+                    0,
+                    ctypes.cast(
+                        camera_buffer,
+                        ctypes.c_void_p,
+                    ),
+                    self.CAMERA_UNIFORM_SIZE,
+                )
 
-    # Create the demo texture before the AssetManager
-    # attempts to load it.
-    create_demo_texture()
+                # ----------------------------------------------
+                # Pipeline
+                # ----------------------------------------------
 
-    game = SpriteGame()
+                sdl3.SDL_BindGPUGraphicsPipeline(
+                    render_pass,
+                    self.pipeline,
+                )
 
-    engine = Engine(
-        game,
-        width=1280,
-        height=720,
-        title="Nexora - Sprite Example",
-        target_fps=144,
-    )
+                # ----------------------------------------------
+                # Vertex buffers
+                # ----------------------------------------------
 
-    # --------------------------------------------------------------
-    # Movement
-    # --------------------------------------------------------------
+                vertex_bindings = (
+                    sdl3.SDL_GPUBufferBinding * 2
+                )()
 
-    engine.input.bind(
-        "left",
-        "A",
-    )
+                vertex_bindings[0] = (
+                    self.quad_buffer.binding(
+                        0,
+                        self.quad_buffer.size,
+                    )
+                )
 
-    engine.input.bind(
-        "right",
-        "D",
-    )
+                vertex_bindings[1] = (
+                    self.instance_buffer.binding(
+                        0,
+                        instance_size,
+                    )
+                )
 
-    engine.input.bind(
-        "up",
-        "W",
-    )
+                sdl3.SDL_BindGPUVertexBuffers(
+                    render_pass,
+                    0,
+                    vertex_bindings,
+                    2,
+                )
 
-    engine.input.bind(
-        "down",
-        "S",
-    )
+                # ----------------------------------------------
+                # Texture
+                # ----------------------------------------------
 
-    engine.input.bind(
-        "left",
-        "LEFT",
-    )
+                texture_binding = (
+                    sdl3.SDL_GPUTextureSamplerBinding()
+                )
 
-    engine.input.bind(
-        "right",
-        "RIGHT",
-    )
+                texture_binding.texture = (
+                    self._texture.texture
+                )
 
-    engine.input.bind(
-        "up",
-        "UP",
-    )
+                texture_binding.sampler = (
+                    self.sampler.sampler
+                )
 
-    engine.input.bind(
-        "down",
-        "DOWN",
-    )
+                sdl3.SDL_BindGPUFragmentSamplers(
+                    render_pass,
+                    0,
+                    ctypes.byref(
+                        texture_binding
+                    ),
+                    1,
+                )
 
-    # --------------------------------------------------------------
-    # Rotation
-    # --------------------------------------------------------------
+                # ----------------------------------------------
+                # One instanced draw
+                # ----------------------------------------------
 
-    engine.input.bind(
-        "rotate_left",
-        "Q",
-    )
+                sdl3.SDL_DrawGPUPrimitives(
+                    render_pass,
+                    6,
+                    self._sprite_count,
+                    0,
+                    0,
+                )
 
-    engine.input.bind(
-        "rotate_right",
-        "E",
-    )
+            finally:
+                self.context.end_render_pass(
+                    render_pass
+                )
 
-    # --------------------------------------------------------------
-    # Scale
-    # --------------------------------------------------------------
+            # --------------------------------------------------
+            # ONE submit
+            # --------------------------------------------------
 
-    engine.input.bind(
-        "zoom_in",
-        "Z",
-    )
+            self.context.end_frame()
 
-    engine.input.bind(
-        "zoom_out",
-        "X",
-    )
+        except Exception:
+            if self.context.frame_active:
+                try:
+                    self.context.end_frame()
+                except Exception:
+                    pass
 
-    # --------------------------------------------------------------
-    # Start
-    # --------------------------------------------------------------
+            raise
 
-    engine.run()
+        finally:
+            self._texture = None
 
+    # ==========================================================
+    # DESTROY
+    # ==========================================================
 
-if __name__ == "__main__":
-    main()
+    def destroy(self):
+        if self._destroyed:
+            return
+
+        self._destroyed = True
+
+        # ------------------------------------------------------
+        # Stop worker threads first.
+        # ------------------------------------------------------
+
+        if self._executor:
+            try:
+                self._executor.shutdown(
+                    wait=True
+                )
+            except Exception:
+                pass
+
+            self._executor = None
+
+        # ------------------------------------------------------
+        # Wait for GPU.
+        # ------------------------------------------------------
+
+        try:
+            self.context.wait_idle()
+        except Exception:
+            pass
+
+        # ------------------------------------------------------
+        # Pipeline
+        # ------------------------------------------------------
+
+        if self.pipeline:
+            try:
+                sdl3.SDL_ReleaseGPUGraphicsPipeline(
+                    self.device,
+                    self.pipeline,
+                )
+            except Exception:
+                pass
+
+            self.pipeline = None
+
+        # ------------------------------------------------------
+        # Sampler
+        # ------------------------------------------------------
+
+        if self.sampler:
+            try:
+                self.sampler.destroy()
+            except Exception:
+                pass
+
+            self.sampler = None
+
+        # ------------------------------------------------------
+        # Instance buffer
+        # ------------------------------------------------------
+
+        if self.instance_buffer:
+            try:
+                self.instance_buffer.destroy()
+            except Exception:
+                pass
+
+            self.instance_buffer = None
+
+        # ------------------------------------------------------
+        # Quad buffer
+        # ------------------------------------------------------
+
+        if self.quad_buffer:
+            try:
+                self.quad_buffer.destroy()
+            except Exception:
+                pass
+
+            self.quad_buffer = None
+
+        # ------------------------------------------------------
+        # Shaders
+        # ------------------------------------------------------
+
+        if self.vertex_shader:
+            try:
+                self.vertex_shader.destroy()
+            except Exception:
+                pass
+
+            self.vertex_shader = None
+
+        if self.fragment_shader:
+            try:
+                self.fragment_shader.destroy()
+            except Exception:
+                pass
+
+            self.fragment_shader = None
+
+        self._texture = None
+        self._instance_data = bytearray()
+
+    # ==========================================================
+    # CONTEXT MANAGER
+    # ==========================================================
+
+    def __enter__(self):
+        return self
+
+    def __exit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback,
+    ):
+        self.destroy()
 

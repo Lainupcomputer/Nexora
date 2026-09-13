@@ -1,107 +1,323 @@
 from __future__ import annotations
 
-import pygame
+import time
+
+import sdl3
 
 from nexora.core.time import Time
-from nexora.input import InputManager
 
 
 class GameLoop:
+    """
+    Main Nexora engine loop.
+
+    SDL3 handles:
+        - window events
+        - keyboard
+        - mouse
+        - GPU window events
+
+    InputManager receives the same SDL3 event stream.
+
+    All frame timing is handled by the central Time instance.
+    """
+
     def __init__(
         self,
         engine,
-        target_fps: int = 144,
+        *,
+        target_fps: int = 60,
         fixed_delta_time: float = 1.0 / 60.0,
     ):
         self.engine = engine
         self.game = engine.game
 
-        self.target_fps = target_fps
+        self.target_fps = int(target_fps)
 
-        self.clock = pygame.time.Clock()
+        if fixed_delta_time <= 0.0:
+            raise ValueError(
+                "fixed_delta_time must be greater than zero"
+            )
+
+        # ------------------------------------------------------
+        # Central timing system
+        # ------------------------------------------------------
+
         self.time = Time(
-            fixed_delta_time=fixed_delta_time
+            fixed_delta_time=float(fixed_delta_time),
+            max_delta_time=0.25,
         )
 
-        self.input: InputManager = engine.input
+        # ------------------------------------------------------
+        # Engine services
+        # ------------------------------------------------------
+
+        self.input = engine.input
         self.renderer = engine.renderer
+        self.gpu_context = engine.gpu_context
+        self.audio = engine.audio
 
         self.running = False
 
-        self.delta_time = 0.0
-        self.total_time = 0.0
-        self.frame = 0
+        # ------------------------------------------------------
+        # FPS limiting
+        # ------------------------------------------------------
+
+        self._frame_duration = (
+            1.0 / self.target_fps
+            if self.target_fps > 0
+            else 0.0
+        )
+
+    # ==========================================================
+    # TIMING PROPERTIES
+    # ==========================================================
+
+    @property
+    def delta_time(self) -> float:
+        return self.time.delta_time
+
+    @property
+    def unscaled_delta_time(self) -> float:
+        return self.time.unscaled_delta_time
+
+    @property
+    def fixed_delta_time(self) -> float:
+        return self.time.fixed_delta_time
+
+    @property
+    def total_time(self) -> float:
+        return self.time.total_time
+
+    @property
+    def frame(self) -> int:
+        return self.time.frame
+
+    @property
+    def interpolation(self) -> float:
+        return self.time.interpolation
+
+    # ==========================================================
+    # MAIN LOOP
+    # ==========================================================
 
     def run(self) -> None:
+        if self.running:
+            return
+
         self.running = True
 
-        self.input.initialize()
+        # Reset timing here so time spent between creating the
+        # engine and actually starting the loop is ignored.
+        self.time.reset()
 
-        while self.running:
-            self.clock.tick(self.target_fps)
+        try:
+            while self.running:
+                frame_start = time.perf_counter()
 
-            self.time.begin_frame()
+                # --------------------------------------------------
+                # Timing
+                # --------------------------------------------------
 
-            self.delta_time = self.time.delta_time
-            self.total_time = self.time.total_time
-            self.frame = self.time.frame
+                self.time.begin_frame()
 
-            # ----------------------------------------------------------
-            # Events + Input
-            # ----------------------------------------------------------
+                # --------------------------------------------------
+                # SDL3 events
+                # --------------------------------------------------
 
-            events = pygame.event.get()
-
-            self.input.begin_frame(events)
-
-            for event in events:
-                if event.type == pygame.QUIT:
-                    self.running = False
-
-                self.game.handle_event(event)
-
-            # ----------------------------------------------------------
-            # Fixed Update
-            # ----------------------------------------------------------
-
-            max_fixed_updates = 8
-            fixed_updates = 0
-
-            while (
-                self.time.should_fixed_update()
-                and fixed_updates < max_fixed_updates
-            ):
-                self.game.fixed_update(
-                    self.time.fixed_delta_time
+                events = list(
+                    self.gpu_context.poll_events()
                 )
 
-                self.time.consume_fixed_update()
-                fixed_updates += 1
+                # InputManager receives the full SDL event stream
+                # before game logic is updated.
+                self.input.begin_frame(events)
 
-            # ----------------------------------------------------------
-            # Update
-            # ----------------------------------------------------------
+                # --------------------------------------------------
+                # Engine + game event handling
+                # --------------------------------------------------
 
-            self.game.update(
-                self.time.delta_time
+                for event in events:
+                    if self._handle_engine_event(event):
+                        break
+
+                    if not self.running:
+                        break
+
+                    self.game.handle_event(event)
+
+                # Do not execute another update/render after a quit
+                # or close event.
+                if not self.running:
+                    self.input.end_frame()
+                    break
+
+                # --------------------------------------------------
+                # Variable update
+                # --------------------------------------------------
+
+                self.game.update(
+                    self.time.delta_time
+                )
+
+                # --------------------------------------------------
+                # Fixed update
+                # --------------------------------------------------
+
+                while self.time.should_fixed_update():
+                    self.game.fixed_update(
+                        self.time.fixed_delta_time
+                    )
+
+                    self.time.consume_fixed_update()
+
+                    if not self.running:
+                        break
+
+                if not self.running:
+                    self.input.end_frame()
+                    break
+
+                # --------------------------------------------------
+                # Audio
+                # --------------------------------------------------
+
+                self.audio.player.update()
+
+                # --------------------------------------------------
+                # Render
+                # --------------------------------------------------
+
+                if self.renderer.begin_frame():
+                    try:
+                        self.game.render(
+                            self.time.interpolation
+                        )
+
+                    finally:
+                        self.renderer.end_frame()
+
+                # --------------------------------------------------
+                # End input frame
+                # --------------------------------------------------
+
+                self.input.end_frame()
+
+                # --------------------------------------------------
+                # FPS limiter
+                # --------------------------------------------------
+
+                if self._frame_duration > 0.0:
+                    elapsed = (
+                        time.perf_counter()
+                        - frame_start
+                    )
+
+                    remaining = (
+                        self._frame_duration
+                        - elapsed
+                    )
+
+                    if remaining > 0.0:
+                        time.sleep(remaining)
+
+        finally:
+            self.running = False
+
+    # ==========================================================
+    # ENGINE EVENT HANDLING
+    # ==========================================================
+
+    def _handle_engine_event(self, event) -> bool:
+        """
+        Handle engine-level SDL events.
+
+        Returns True when the event was consumed by the engine.
+        """
+
+        event_type = getattr(
+            event,
+            "type",
+            None,
+        )
+
+        # ------------------------------------------------------
+        # Global SDL quit
+        # ------------------------------------------------------
+
+        if event_type == sdl3.SDL_EVENT_QUIT:
+            self.stop()
+            return True
+
+        # ------------------------------------------------------
+        # Window close request
+        # ------------------------------------------------------
+
+        if (
+            event_type
+            == sdl3.SDL_EVENT_WINDOW_CLOSE_REQUESTED
+        ):
+            self.stop()
+            return True
+
+        # ------------------------------------------------------
+        # Window pixel size changed
+        # ------------------------------------------------------
+
+        if (
+            event_type
+            == sdl3.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
+        ):
+            self._handle_resize_event(event)
+            return False
+
+        # ------------------------------------------------------
+        # Window resized
+        # ------------------------------------------------------
+
+        if (
+            event_type
+            == sdl3.SDL_EVENT_WINDOW_RESIZED
+        ):
+            self._handle_resize_event(event)
+            return False
+
+        return False
+
+    # ==========================================================
+    # WINDOW RESIZE
+    # ==========================================================
+
+    def _handle_resize_event(
+        self,
+        event,
+    ) -> None:
+        try:
+            width = int(
+                event.window.data1
+            )
+            height = int(
+                event.window.data2
             )
 
-            # ----------------------------------------------------------
-            # Render
-            # ----------------------------------------------------------
+            if width <= 0 or height <= 0:
+                return
 
-            self.renderer.begin_frame()
+            self.renderer.resize(
+                width,
+                height,
+            )
 
-            self.game.render()
+        except (
+            AttributeError,
+            TypeError,
+            ValueError,
+        ):
+            pass
 
-            self.renderer.end_frame()
-
-            # ----------------------------------------------------------
-            # End Input Frame
-            # ----------------------------------------------------------
-
-            self.input.end_frame()
+    # ==========================================================
+    # STOP
+    # ==========================================================
 
     def stop(self) -> None:
         self.running = False
-

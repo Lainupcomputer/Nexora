@@ -1,21 +1,22 @@
 from __future__ import annotations
 
-import pygame
 
 from nexora.core.game_loop import GameLoop
 from nexora.debug.logger import Logger
 from nexora.input import InputManager
 from nexora.threading.context import ThreadContext
-from nexora.window.window import Window
 from nexora.rendering import Renderer
+from nexora.rendering.gpu import GPUContext, WindowMode
 from nexora.assets import AssetManager
-
+from nexora.audio import AudioSystem
 
 class Engine:
     """
     Central Nexora Engine.
 
     Owns the main engine services and controls the game loop.
+
+    Rendering is GPU-first and uses SDL_GPU directly.
     """
 
     def __init__(
@@ -29,49 +30,94 @@ class Engine:
         fixed_delta_time: float = 1.0 / 60.0,
         resizable: bool = True,
         fullscreen: bool = False,
+        window_mode: WindowMode | str | None = None,
         vsync: bool = False,
     ) -> None:
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
         # Main thread
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
         ThreadContext.initialize()
 
-        # --------------------------------------------------------------
-        # Pygame
-        # --------------------------------------------------------------
-
-        pygame.init()
-
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
         # Core services
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
         self.logger = Logger()
         self.assets = AssetManager()
 
-        self.window = Window(
+        # ------------------------------------------------------
+        # Window mode
+        # ------------------------------------------------------
+
+        if window_mode is None:
+            window_mode = (
+                WindowMode.FULLSCREEN
+                if fullscreen
+                else WindowMode.WINDOWED
+            )
+        else:
+            window_mode = WindowMode(window_mode)
+
+        # ------------------------------------------------------
+        # GPU
+        # ------------------------------------------------------
+
+        self.gpu_context = GPUContext(
             width=width,
             height=height,
             title=title,
-            resizable=resizable,
-            fullscreen=fullscreen,
             vsync=vsync,
+            resizable=resizable,
+            window_mode=window_mode,
         )
+
+        self.default_font = (
+            self.assets.load_font(
+                "fonts/Roboto-Regular.ttf",
+                24.0,
+            )
+        )
+
+
         self.renderer = Renderer(
-            self.window
+            self.gpu_context,
+            font=self.default_font,
         )
+
+        # ------------------------------------------------------
+        # Window
+        #
+        # GPUContext owns the actual SDL window.
+        # The public window reference exposes the same object.
+        # ------------------------------------------------------
+
+        self.window = self.gpu_context
+
+        # ------------------------------------------------------
+        # Input
+        # ------------------------------------------------------
 
         self.input = InputManager(
             logger=self.logger,
         )
 
-        self.game = game
-        self.game.renderer = self.renderer
+        self.audio = AudioSystem()
 
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
+        # Game
+        # ------------------------------------------------------
+
+        self.game = game
+
+        self.game.engine = self
+        self.game.renderer = self.renderer
+        self.game.input = self.input
+        self.game.window = self.window
+
+        # ------------------------------------------------------
         # Game loop
-        # --------------------------------------------------------------
+        # ------------------------------------------------------
 
         self.loop = GameLoop(
             self,
@@ -79,20 +125,12 @@ class Engine:
             fixed_delta_time=fixed_delta_time,
         )
 
-        # --------------------------------------------------------------
-        # Game references
-        # --------------------------------------------------------------
-
-        self.game.engine = self
-        self.game.input = self.input
-        self.game.window = self.window
-
         self._initialized = False
         self._shutdown = False
 
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
+    # ==========================================================
+    # PROPERTIES
+    # ==========================================================
 
     @property
     def time(self):
@@ -100,23 +138,31 @@ class Engine:
 
     @property
     def delta_time(self) -> float:
-        return self.loop.delta_time
+        return self.time.delta_time
+
+    @property
+    def unscaled_delta_time(self) -> float:
+        return self.time.unscaled_delta_time
 
     @property
     def total_time(self) -> float:
-        return self.loop.total_time
+        return self.time.total_time
+
+    @property
+    def fixed_time(self) -> float:
+        return self.time.fixed_time
 
     @property
     def frame(self) -> int:
-        return self.loop.frame
+        return self.time.frame
 
     @property
-    def surface(self):
-        return self.window.surface
+    def fixed_frame(self) -> int:
+        return self.time.fixed_frame
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+    # ==========================================================
+    # INITIALIZATION
+    # ==========================================================
 
     def initialize(self) -> None:
         if self._initialized:
@@ -126,7 +172,10 @@ class Engine:
             "Engine.initialize"
         )
 
-        self.input.initialize()
+        self.input.initialize(
+            self.gpu_context.window,
+        )
+        self.audio.initialize()
 
         initialize = getattr(
             self.game,
@@ -143,10 +192,15 @@ class Engine:
             "Nexora Engine initialized."
         )
 
+    # ==========================================================
+    # RUN
+    # ==========================================================
+
     def run(self) -> None:
         if self._shutdown:
             raise RuntimeError(
-                "Cannot run an engine that has already been shut down."
+                "Cannot run an engine that has already "
+                "been shut down."
             )
 
         if not self._initialized:
@@ -162,12 +216,21 @@ class Engine:
 
         self.loop.run()
 
+    # ==========================================================
+    # STOP
+    # ==========================================================
+
     def stop(self) -> None:
         self.loop.stop()
+
+    # ==========================================================
+    # SHUTDOWN
+    # ==========================================================
 
     def shutdown(self) -> None:
         if self._shutdown:
             return
+        self.audio.shutdown()
 
         ThreadContext.assert_main_thread(
             "Engine.shutdown"
@@ -182,7 +245,19 @@ class Engine:
         if shutdown is not None:
             shutdown()
 
-        self.window.destroy()
+        # ------------------------------------------------------
+        # Destroy renderer first.
+        #
+        # GPU resources depend on the GPU device.
+        # ------------------------------------------------------
+
+        self.renderer.destroy()
+        self.assets.shutdown()
+        # ------------------------------------------------------
+        # Destroy GPU context after all GPU resources.
+        # ------------------------------------------------------
+
+        self.gpu_context.destroy()
 
         self._shutdown = True
 
