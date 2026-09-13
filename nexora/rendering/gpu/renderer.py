@@ -10,12 +10,15 @@ from nexora.rendering.gpu.line_batch import GPULineBatch
 from nexora.rendering.gpu.shape_batch import GPUShapeBatch
 from nexora.rendering.gpu.text_renderer import GPUTextRenderer
 
+from nexora.rendering.postprocessing.post_process import (
+    PostProcess,
+)
+
 
 class GPURenderer:
     """
     High-level GPU renderer for Nexora.
 
-    ```
     GPUContext owns:
         - SDL window
         - GPU device
@@ -28,6 +31,7 @@ class GPURenderer:
         - line batches
         - shape batches
         - text renderer
+        - post processor
         - render API
         - frame rendering
         - camera reference
@@ -43,6 +47,16 @@ class GPURenderer:
         - triangle()
         - polygon()
         - text()
+
+    Render flow with post-processing enabled:
+
+        Scene
+          ↓
+        Offscreen Render Target
+          ↓
+        PostProcess
+          ↓
+        Swapchain
     """
 
     def __init__(
@@ -58,19 +72,29 @@ class GPURenderer:
     ) -> None:
         self.context = context
 
-        # The GPURenderer keeps the exact same Camera object
-        # that is exposed by the public Renderer.
+        # ======================================================
+        # Camera
+        # ======================================================
+
         self.camera = (
             camera
             if camera is not None
             else Camera()
         )
 
+        # ======================================================
+        # Limits
+        # ======================================================
+
         if max_shapes is None:
             max_shapes = max_sprites
 
         if max_lines is None:
             max_lines = max_sprites
+
+        # ======================================================
+        # Shader directory
+        # ======================================================
 
         shader_dir = (
             Path(__file__).resolve().parent.parent
@@ -86,10 +110,12 @@ class GPURenderer:
             context,
             max_sprites=max_sprites,
             vertex_shader_path=(
-                shader_dir / "sprite.vert.spv"
+                shader_dir
+                / "sprite.vert.spv"
             ),
             fragment_shader_path=(
-                shader_dir / "sprite.frag.spv"
+                shader_dir
+                / "sprite.frag.spv"
             ),
             camera=self.camera,
             workers=workers,
@@ -103,10 +129,12 @@ class GPURenderer:
             context,
             max_rects=max_sprites,
             vertex_shader_path=(
-                shader_dir / "rect.vert.spv"
+                shader_dir
+                / "rect.vert.spv"
             ),
             fragment_shader_path=(
-                shader_dir / "rect.frag.spv"
+                shader_dir
+                / "rect.frag.spv"
             ),
             camera=self.camera,
         )
@@ -119,10 +147,12 @@ class GPURenderer:
             context,
             max_lines=max_lines,
             vertex_shader_path=(
-                shader_dir / "line.vert.spv"
+                shader_dir
+                / "line.vert.spv"
             ),
             fragment_shader_path=(
-                shader_dir / "line.frag.spv"
+                shader_dir
+                / "line.frag.spv"
             ),
             camera=self.camera,
         )
@@ -135,16 +165,20 @@ class GPURenderer:
             context,
             max_shapes=max_shapes,
             vertex_shader_path=(
-                shader_dir / "shape.vert.spv"
+                shader_dir
+                / "shape.vert.spv"
             ),
             fragment_shader_path=(
-                shader_dir / "shape.frag.spv"
+                shader_dir
+                / "shape.frag.spv"
             ),
             geometry_vertex_shader_path=(
-                shader_dir / "geometry.vert.spv"
+                shader_dir
+                / "geometry.vert.spv"
             ),
             geometry_fragment_shader_path=(
-                shader_dir / "geometry.frag.spv"
+                shader_dir
+                / "geometry.frag.spv"
             ),
             camera=self.camera,
         )
@@ -161,8 +195,22 @@ class GPURenderer:
                 font,
             )
 
+        # ======================================================
+        # POST PROCESSING
+        # ======================================================
+
+        self.post_processor = PostProcess(
+            context
+        )
+
+        # ======================================================
+        # Frame state
+        # ======================================================
+
         self._frame_started = False
+
         self._active_texture = None
+
         self._destroyed = False
 
     # ==========================================================
@@ -170,28 +218,46 @@ class GPURenderer:
     # ==========================================================
 
     @property
-    def width(self) -> int:
+    def width(
+        self,
+    ) -> int:
         return (
             self.context.swapchain_width
             or self.context.width
         )
 
     @property
-    def height(self) -> int:
+    def height(
+        self,
+    ) -> int:
         return (
             self.context.swapchain_height
             or self.context.height
         )
 
     @property
-    def driver(self) -> str:
+    def driver(
+        self,
+    ) -> str:
         return self.context.driver
+
+    @property
+    def post_processing(
+        self,
+    ) -> PostProcess:
+        """
+        Public access to the post-processing system.
+        """
+
+        return self.post_processor
 
     # ==========================================================
     # FRAME
     # ==========================================================
 
-    def begin_frame(self) -> bool:
+    def begin_frame(
+        self,
+    ) -> bool:
         if self._destroyed:
             raise RuntimeError(
                 "GPURenderer has been destroyed"
@@ -206,10 +272,17 @@ class GPURenderer:
             return False
 
         self._frame_started = True
+
         self._active_texture = None
 
+        # ------------------------------------------------------
+        # Begin batches
+        # ------------------------------------------------------
+
         self.rect_batch.begin()
+
         self.line_batch.begin()
+
         self.shape_batch.begin()
 
         if self.text_renderer is not None:
@@ -217,7 +290,13 @@ class GPURenderer:
 
         return True
 
-    def end_frame(self) -> bool:
+    # ==========================================================
+    # END FRAME
+    # ==========================================================
+
+    def end_frame(
+        self,
+    ) -> bool:
         if self._destroyed:
             raise RuntimeError(
                 "GPURenderer has been destroyed"
@@ -229,11 +308,13 @@ class GPURenderer:
             )
 
         try:
-            command_buffer = self.context.command_buffer
+            command_buffer = (
+                self.context.command_buffer
+            )
 
-            # --------------------------------------------------
+            # ==================================================
             # Prepare GPU data
-            # --------------------------------------------------
+            # ==================================================
 
             if self._active_texture is not None:
                 self.sprite_batch.render_into(
@@ -257,50 +338,25 @@ class GPURenderer:
                     command_buffer
                 )
 
-            # --------------------------------------------------
-            # Render pass
-            # --------------------------------------------------
+            # ==================================================
+            # Post-processing enabled
+            # ==================================================
 
-            render_pass = self.context.begin_render_pass(
-                (0.05, 0.05, 0.08, 1.0)
-            )
-
-            try:
-                # Sprites
-                if self._active_texture is not None:
-                    self.sprite_batch.draw_into(
-                        render_pass
-                    )
-
-                # Rectangles
-                self.rect_batch.draw_into(
-                    render_pass
+            if self.post_processor.enabled:
+                self._render_with_post_processing(
+                    command_buffer
                 )
 
-                # Lines
-                self.line_batch.draw_into(
-                    render_pass
-                )
+            # ==================================================
+            # Post-processing disabled
+            # ==================================================
 
-                # Shapes
-                self.shape_batch.draw_into(
-                    render_pass
-                )
+            else:
+                self._render_direct()
 
-                # Text
-                if self.text_renderer is not None:
-                    self.text_renderer.draw_into(
-                        render_pass
-                    )
-
-            finally:
-                self.context.end_render_pass(
-                    render_pass
-                )
-
-            # --------------------------------------------------
-            # Submit
-            # --------------------------------------------------
+            # ==================================================
+            # Submit frame
+            # ==================================================
 
             self.context.end_frame()
 
@@ -310,24 +366,237 @@ class GPURenderer:
             if self.context.frame_active:
                 try:
                     self.context.cancel_frame()
+
                 except Exception:
                     pass
 
             raise
 
         finally:
-            self._active_texture = None
-            self._frame_started = False
+            self._cleanup_frame()
 
-            self.sprite_batch._texture = None
-            self.sprite_batch._sprite_count = 0
+    # ==========================================================
+    # DIRECT RENDERING
+    # ==========================================================
 
-            self.rect_batch.clear()
-            self.line_batch.clear()
-            self.shape_batch.clear()
+    def _render_direct(
+        self,
+    ) -> None:
+        """
+        Render directly into the swapchain.
 
-            if self.text_renderer is not None:
-                self.text_renderer.clear()
+        Used when post-processing is disabled.
+        """
+
+        render_pass = (
+            self.context.begin_render_pass(
+                (
+                    0.05,
+                    0.05,
+                    0.08,
+                    1.0,
+                )
+            )
+        )
+
+        try:
+            self._draw_scene(
+                render_pass
+            )
+
+        finally:
+            self.context.end_render_pass(
+                render_pass
+            )
+
+    # ==========================================================
+    # POST PROCESSING RENDERING
+    # ==========================================================
+
+    def _render_with_post_processing(
+        self,
+        command_buffer,
+    ) -> None:
+        """
+        Render the scene into an offscreen render target and
+        then process it into the swapchain.
+        """
+
+        # ------------------------------------------------------
+        # Ensure render target matches viewport
+        # ------------------------------------------------------
+
+        self.post_processor.ensure_target(
+            self.width,
+            self.height,
+        )
+
+        scene_target = (
+            self.post_processor.render_target
+        )
+
+        if scene_target is None:
+            raise RuntimeError(
+                "Post-processing render target "
+                "could not be created"
+            )
+
+        # ======================================================
+        # PASS 1
+        #
+        # Scene -> offscreen texture
+        # ======================================================
+
+        scene_pass = (
+            self.context.begin_render_pass(
+                (
+                    0.05,
+                    0.05,
+                    0.08,
+                    1.0,
+                ),
+                target_texture=(
+                    scene_target.texture
+                ),
+            )
+        )
+
+        try:
+            self._draw_scene(
+                scene_pass
+            )
+
+        finally:
+            self.context.end_render_pass(
+                scene_pass
+            )
+
+        # ======================================================
+        # PASS 2
+        #
+        # Offscreen texture -> PostProcess -> Swapchain
+        # ======================================================
+
+        post_pass = (
+            self.context.begin_render_pass(
+                (
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                )
+            )
+        )
+
+        try:
+            self.post_processor.draw(
+                post_pass,
+                command_buffer,
+            )
+
+        finally:
+            self.context.end_render_pass(
+                post_pass
+            )
+
+    # ==========================================================
+    # DRAW SCENE
+    # ==========================================================
+
+    def _draw_scene(
+        self,
+        render_pass,
+    ) -> None:
+        """
+        Draw all currently submitted render batches into a
+        render pass.
+
+        Keeping this in one method ensures direct rendering
+        and post-processing rendering use exactly the same
+        scene drawing order.
+        """
+
+        # ------------------------------------------------------
+        # Sprites
+        # ------------------------------------------------------
+
+        if self._active_texture is not None:
+            self.sprite_batch.draw_into(
+                render_pass
+            )
+
+        # ------------------------------------------------------
+        # Rectangles
+        # ------------------------------------------------------
+
+        self.rect_batch.draw_into(
+            render_pass
+        )
+
+        # ------------------------------------------------------
+        # Lines
+        # ------------------------------------------------------
+
+        self.line_batch.draw_into(
+            render_pass
+        )
+
+        # ------------------------------------------------------
+        # Shapes
+        # ------------------------------------------------------
+
+        self.shape_batch.draw_into(
+            render_pass
+        )
+
+        # ------------------------------------------------------
+        # Text
+        # ------------------------------------------------------
+
+        if self.text_renderer is not None:
+            self.text_renderer.draw_into(
+                render_pass
+            )
+
+    # ==========================================================
+    # FRAME CLEANUP
+    # ==========================================================
+
+    def _cleanup_frame(
+        self,
+    ) -> None:
+        """
+        Reset transient frame state after rendering.
+        """
+
+        self._active_texture = None
+
+        self._frame_started = False
+
+        # ------------------------------------------------------
+        # Sprite batch
+        # ------------------------------------------------------
+
+        self.sprite_batch._texture = None
+
+        self.sprite_batch._sprite_count = 0
+
+        # ------------------------------------------------------
+        # Other batches
+        # ------------------------------------------------------
+
+        self.rect_batch.clear()
+
+        self.line_batch.clear()
+
+        self.shape_batch.clear()
+
+        # ------------------------------------------------------
+        # Text
+        # ------------------------------------------------------
+
+        if self.text_renderer is not None:
+            self.text_renderer.clear()
 
     # ==========================================================
     # SPRITES
@@ -342,15 +611,25 @@ class GPURenderer:
         width: float,
         height: float,
         rotation: float = 0.0,
-        origin=(0.5, 0.5),
+        origin=(
+            0.5,
+            0.5,
+        ),
         alpha: float = 1.0,
         flip_x: bool = False,
         flip_y: bool = False,
-        uv=(0.0, 0.0, 1.0, 1.0),
+        uv=(
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+        ),
     ) -> None:
         self._require_frame()
 
-        self._set_texture(texture)
+        self._set_texture(
+            texture
+        )
 
         self.sprite_batch.add(
             x,
@@ -364,7 +643,6 @@ class GPURenderer:
             flip_y=flip_y,
             uv=uv,
         )
-
 
     def sprites(
         self,
@@ -423,6 +701,7 @@ class GPURenderer:
             sprites,
             workers=workers,
         )
+
     # ==========================================================
     # RECTANGLES
     # ==========================================================
@@ -434,9 +713,17 @@ class GPURenderer:
         width: float,
         height: float,
         *,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
         rotation: float = 0.0,
-        origin=(0.5, 0.5),
+        origin=(
+            0.5,
+            0.5,
+        ),
         radius: float = 0.0,
     ) -> None:
         self._require_frame()
@@ -461,7 +748,12 @@ class GPURenderer:
         x: float,
         y: float,
         *,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
         size: float = 1.0,
     ) -> None:
         """
@@ -481,7 +773,10 @@ class GPURenderer:
             size,
             color=color,
             rotation=0.0,
-            origin=(0.5, 0.5),
+            origin=(
+                0.5,
+                0.5,
+            ),
         )
 
     # ==========================================================
@@ -496,7 +791,12 @@ class GPURenderer:
         y2: float,
         *,
         width: float = 1.0,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
     ) -> None:
         """
         Draw a line from (x1, y1) to (x2, y2).
@@ -526,9 +826,17 @@ class GPURenderer:
         y: float,
         diameter: float,
         *,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
         rotation: float = 0.0,
-        origin=(0.5, 0.5),
+        origin=(
+            0.5,
+            0.5,
+        ),
     ) -> None:
         self._require_frame()
 
@@ -552,9 +860,17 @@ class GPURenderer:
         width: float,
         height: float,
         *,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
         rotation: float = 0.0,
-        origin=(0.5, 0.5),
+        origin=(
+            0.5,
+            0.5,
+        ),
     ) -> None:
         self._require_frame()
 
@@ -581,7 +897,12 @@ class GPURenderer:
         x3: float,
         y3: float,
         *,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
     ) -> None:
         self._require_frame()
 
@@ -603,7 +924,12 @@ class GPURenderer:
         self,
         points,
         *,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
     ) -> None:
         self._require_frame()
 
@@ -641,13 +967,15 @@ class GPURenderer:
             **kwargs,
         )
 
-
     def text_measure(
         self,
         text: str,
         *,
         scale: float = 1.0,
-    ) -> tuple[float, float]:
+    ) -> tuple[
+        float,
+        float,
+    ]:
         if self.text_renderer is None:
             raise RuntimeError(
                 "Text rendering is not initialized. "
@@ -675,7 +1003,10 @@ class GPURenderer:
                 "scale must be greater than zero."
             )
 
-        return self.text_renderer.font.ascent * scale
+        return (
+            self.text_renderer.font.ascent
+            * scale
+        )
 
     # ==========================================================
     # ECS / SNAPSHOT
@@ -688,18 +1019,28 @@ class GPURenderer:
     ) -> int:
         self._require_frame()
 
-        self._set_texture(texture)
+        self._set_texture(
+            texture
+        )
 
-        return self.sprite_batch.submit_snapshot(
-            snapshot
+        return (
+            self.sprite_batch.submit_snapshot(
+                snapshot
+            )
         )
 
     # ==========================================================
     # TEXTURE
     # ==========================================================
 
-    def _set_texture(self, texture) -> None:
-        if self._active_texture is texture:
+    def _set_texture(
+        self,
+        texture,
+    ) -> None:
+        if (
+            self._active_texture
+            is texture
+        ):
             return
 
         if self._active_texture is not None:
@@ -719,7 +1060,9 @@ class GPURenderer:
     # VALIDATION
     # ==========================================================
 
-    def _require_frame(self) -> None:
+    def _require_frame(
+        self,
+    ) -> None:
         if not self._frame_started:
             raise RuntimeError(
                 "Call renderer.begin_frame() before drawing"
@@ -743,35 +1086,83 @@ class GPURenderer:
     # SHUTDOWN
     # ==========================================================
 
-    def destroy(self) -> None:
+    def destroy(
+        self,
+    ) -> None:
         if self._destroyed:
             return
 
         self._destroyed = True
 
+        # ------------------------------------------------------
+        # Wait before releasing GPU resources
+        # ------------------------------------------------------
+
+        try:
+            self.context.wait_idle()
+
+        except Exception:
+            pass
+
+        # ------------------------------------------------------
+        # Post processor
+        # ------------------------------------------------------
+
+        if self.post_processor is not None:
+            try:
+                self.post_processor.destroy()
+
+            finally:
+                self.post_processor = None
+
+        # ------------------------------------------------------
+        # Sprite batch
+        # ------------------------------------------------------
+
         try:
             self.sprite_batch.destroy()
+
         finally:
             self._active_texture = None
+
+        # ------------------------------------------------------
+        # Rectangle batch
+        # ------------------------------------------------------
 
         try:
             self.rect_batch.destroy()
+
         finally:
             self._active_texture = None
+
+        # ------------------------------------------------------
+        # Line batch
+        # ------------------------------------------------------
 
         try:
             self.line_batch.destroy()
+
         finally:
             self._active_texture = None
 
+        # ------------------------------------------------------
+        # Shape batch
+        # ------------------------------------------------------
+
         try:
             self.shape_batch.destroy()
+
         finally:
             self._active_texture = None
+
+        # ------------------------------------------------------
+        # Text renderer
+        # ------------------------------------------------------
 
         if self.text_renderer is not None:
             try:
                 self.text_renderer.destroy()
+
             finally:
                 self.text_renderer = None
 
@@ -779,7 +1170,9 @@ class GPURenderer:
     # CONTEXT MANAGER
     # ==========================================================
 
-    def __enter__(self):
+    def __enter__(
+        self,
+    ):
         return self
 
     def __exit__(
@@ -789,4 +1182,3 @@ class GPURenderer:
         traceback,
     ):
         self.destroy()
-

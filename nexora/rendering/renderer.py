@@ -1,45 +1,224 @@
 from __future__ import annotations
 
 from nexora.rendering.camera import Camera
-from nexora.rendering.gpu import (
-    GPURenderer,
-    RenderSnapshot,
-)
+from nexora.rendering.gpu.renderer import GPURenderer
 
 
 class Renderer:
     """
-    Public Nexora renderer.
+    Public Nexora renderer interface.
 
-    Nexora is GPU-first.
+    Renderer wraps GPURenderer and exposes the high-level
+    rendering API used by games, scenes and nodes.
 
-    The renderer owns the public 2D camera. The same Camera
-    instance is passed down into the GPU renderer and finally
-    used by the GPU sprite batch.
+    The underlying GPURenderer handles:
+
+        - sprites
+        - rectangles
+        - lines
+        - shapes
+        - text
+        - camera
+        - post-processing
+        - GPU frame submission
     """
 
     def __init__(
         self,
-        gpu_context,
+        context,
         *,
         max_sprites: int = 10000,
+        max_shapes: int | None = None,
+        max_lines: int | None = None,
         workers: int = 4,
         camera: Camera | None = None,
         font=None,
     ) -> None:
-        self.camera = (
-            camera
-            if camera is not None
-            else Camera()
-        )
+        self.context = context
 
         self.gpu = GPURenderer(
-            gpu_context,
+            context,
             max_sprites=max_sprites,
+            max_shapes=max_shapes,
+            max_lines=max_lines,
             workers=workers,
-            camera=self.camera,
+            camera=camera,
             font=font,
         )
+
+    # ==========================================================
+    # Properties
+    # ==========================================================
+
+    @property
+    def width(
+        self,
+    ) -> int:
+        return self.gpu.width
+
+    @property
+    def height(
+        self,
+    ) -> int:
+        return self.gpu.height
+
+    @property
+    def size(
+        self,
+    ) -> tuple[int, int]:
+        return (
+            self.width,
+            self.height,
+        )
+
+    @property
+    def driver(
+        self,
+    ) -> str:
+        return self.gpu.driver
+
+    # ==========================================================
+    # Camera
+    # ==========================================================
+
+    @property
+    def camera(
+        self,
+    ) -> Camera:
+        return self.gpu.camera
+
+    @camera.setter
+    def camera(
+        self,
+        value: Camera,
+    ) -> None:
+        self.gpu.camera = value
+
+        # ------------------------------------------------------
+        # Keep GPU systems synchronized with the new camera.
+        # ------------------------------------------------------
+
+        self.gpu.sprite_batch.camera = value
+
+        self.gpu.rect_batch.camera = value
+
+        self.gpu.line_batch.camera = value
+
+        self.gpu.shape_batch.camera = value
+
+        if self.gpu.text_renderer is not None:
+            if hasattr(
+                self.gpu.text_renderer,
+                "camera",
+            ):
+                self.gpu.text_renderer.camera = value
+
+    # ==========================================================
+    # Post processing
+    # ==========================================================
+
+    @property
+    def post_processing(
+        self,
+    ):
+        """
+        Access the renderer post-processing system.
+
+        Example:
+
+            post = renderer.post_processing
+
+            post.vignette = 0.5
+            post.grayscale = 1.0
+
+            post.brightness = 0.9
+            post.contrast = 1.1
+            post.saturation = 0.8
+        """
+
+        return self.gpu.post_processing
+
+    @property
+    def post_processor(
+        self,
+    ):
+        """
+        Alias for post_processing.
+        """
+
+        return self.gpu.post_processing
+
+    # ==========================================================
+    # Frame lifecycle
+    # ==========================================================
+
+    def begin_frame(
+        self,
+    ) -> bool:
+        return self.gpu.begin_frame()
+
+    def end_frame(
+        self,
+    ) -> bool:
+        return self.gpu.end_frame()
+
+    # ==========================================================
+    # Sprites
+    # ==========================================================
+
+    def sprite(
+        self,
+        texture,
+        x: float,
+        y: float,
+        *,
+        width: float,
+        height: float,
+        rotation: float = 0.0,
+        origin=(
+            0.5,
+            0.5,
+        ),
+        alpha: float = 1.0,
+        flip_x: bool = False,
+        flip_y: bool = False,
+        uv=(
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+        ),
+    ) -> None:
+        self.gpu.sprite(
+            texture,
+            x,
+            y,
+            width=width,
+            height=height,
+            rotation=rotation,
+            origin=origin,
+            alpha=alpha,
+            flip_x=flip_x,
+            flip_y=flip_y,
+            uv=uv,
+        )
+
+    def sprites(
+        self,
+        texture,
+        sprites,
+        *,
+        workers: int | None = None,
+    ) -> int:
+        return self.gpu.sprites(
+            texture,
+            sprites,
+            workers=workers,
+        )
+
+    # ==========================================================
+    # Rectangles
+    # ==========================================================
 
     def rect(
         self,
@@ -48,9 +227,17 @@ class Renderer:
         width: float,
         height: float,
         *,
-        color=(1.0, 1.0, 1.0, 1.0),
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
         rotation: float = 0.0,
-        origin=(0.5, 0.5),
+        origin=(
+            0.5,
+            0.5,
+        ),
         radius: float = 0.0,
     ) -> None:
         self.gpu.rect(
@@ -63,6 +250,176 @@ class Renderer:
             origin=origin,
             radius=radius,
         )
+
+    # ==========================================================
+    # Pixel
+    # ==========================================================
+
+    def pixel(
+        self,
+        x: float,
+        y: float,
+        *,
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
+        size: float = 1.0,
+    ) -> None:
+        self.gpu.pixel(
+            x,
+            y,
+            color=color,
+            size=size,
+        )
+
+    # ==========================================================
+    # Lines
+    # ==========================================================
+
+    def line(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        *,
+        width: float = 1.0,
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
+    ) -> None:
+        self.gpu.line(
+            x1,
+            y1,
+            x2,
+            y2,
+            width=width,
+            color=color,
+        )
+
+    # ==========================================================
+    # Circle
+    # ==========================================================
+
+    def circle(
+        self,
+        x: float,
+        y: float,
+        diameter: float,
+        *,
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
+        rotation: float = 0.0,
+        origin=(
+            0.5,
+            0.5,
+        ),
+    ) -> None:
+        self.gpu.circle(
+            x,
+            y,
+            diameter,
+            color=color,
+            rotation=rotation,
+            origin=origin,
+        )
+
+    # ==========================================================
+    # Ellipse
+    # ==========================================================
+
+    def ellipse(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        *,
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
+        rotation: float = 0.0,
+        origin=(
+            0.5,
+            0.5,
+        ),
+    ) -> None:
+        self.gpu.ellipse(
+            x,
+            y,
+            width,
+            height,
+            color=color,
+            rotation=rotation,
+            origin=origin,
+        )
+
+    # ==========================================================
+    # Triangle
+    # ==========================================================
+
+    def triangle(
+        self,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        x3: float,
+        y3: float,
+        *,
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
+    ) -> None:
+        self.gpu.triangle(
+            x1,
+            y1,
+            x2,
+            y2,
+            x3,
+            y3,
+            color=color,
+        )
+
+    # ==========================================================
+    # Polygon
+    # ==========================================================
+
+    def polygon(
+        self,
+        points,
+        *,
+        color=(
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ),
+    ) -> None:
+        self.gpu.polygon(
+            points,
+            color=color,
+        )
+
+    # ==========================================================
+    # Text
+    # ==========================================================
 
     def text(
         self,
@@ -79,7 +436,10 @@ class Renderer:
         text: str,
         *,
         scale: float = 1.0,
-    ) -> tuple[float, float]:
+    ) -> tuple[
+        float,
+        float,
+    ]:
         return self.gpu.text_measure(
             text,
             scale=scale,
@@ -94,103 +454,23 @@ class Renderer:
             scale=scale,
         )
 
-    @property
-    def width(self) -> int:
-        return self.gpu.width
+    # ==========================================================
+    # Render snapshot
+    # ==========================================================
 
-    @property
-    def height(self) -> int:
-        return self.gpu.height
-
-    @property
-    def driver(self) -> str:
-        return self.gpu.driver
-
-    def begin_frame(self) -> bool:
-        return self.gpu.begin_frame()
-
-    def end_frame(self) -> bool:
-        return self.gpu.end_frame()
-
-    def sprite(
-        self,
-        texture,
-        x: float,
-        y: float,
-        *,
-        width: float,
-        height: float,
-        rotation: float = 0.0,
-        origin=(0.5, 0.5),
-        alpha: float = 1.0,
-        flip_x: bool = False,
-        flip_y: bool = False,
-        uv=(0.0, 0.0, 1.0, 1.0),
-    ) -> None:
-        self.gpu.sprite(
-            texture,
-            x,
-            y,
-            width=width,
-            height=height,
-            rotation=rotation,
-            origin=origin,
-            alpha=alpha,
-            flip_x=flip_x,
-            flip_y=flip_y,
-            uv=uv,
-        )
-
-
-
-
-    def sprites(
-        self,
-        texture,
-        sprites,
-        *,
-        workers: int | None = None,
-    ) -> int:
-        """
-        Render many sprites using the GPU sprite batch.
-
-        Expected sprite format:
-
-            (
-                x,
-                y,
-                width,
-                height,
-                rotation,
-                origin_x,
-                origin_y,
-                alpha,
-                flip_x,
-                flip_y,
-                uv_x,
-                uv_y,
-                uv_width,
-                uv_height,
-            )
-
-        Returns the number of submitted sprites.
-        """
-
-        return self.gpu.sprites(
-            texture,
-            sprites,
-            workers=workers,
-        )
-    
     def submit(
         self,
-        snapshot: RenderSnapshot,
+        snapshot,
         texture,
     ) -> int:
         return self.gpu.submit(
             snapshot,
             texture,
         )
+
+    # ==========================================================
+    # Resize
+    # ==========================================================
 
     def resize(
         self,
@@ -202,5 +482,28 @@ class Renderer:
             height,
         )
 
-    def destroy(self) -> None:
+    # ==========================================================
+    # Shutdown
+    # ==========================================================
+
+    def destroy(
+        self,
+    ) -> None:
         self.gpu.destroy()
+
+    # ==========================================================
+    # Context manager
+    # ==========================================================
+
+    def __enter__(
+        self,
+    ):
+        return self
+
+    def __exit__(
+        self,
+        exc_type,
+        exc_value,
+        traceback,
+    ):
+        self.destroy()

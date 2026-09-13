@@ -92,8 +92,13 @@ class GPUContext:
     # ==============================================================
 
     @staticmethod
-    def _decode_error(error) -> str:
-        if isinstance(error, bytes):
+    def _decode_error(
+        error,
+    ) -> str:
+        if isinstance(
+            error,
+            bytes,
+        ):
             return error.decode(
                 "utf-8",
                 errors="replace",
@@ -102,27 +107,33 @@ class GPUContext:
         if error is None:
             return "<unknown SDL error>"
 
-        return str(error)
+        return str(
+            error
+        )
 
     def _check(
         self,
         condition,
         message,
     ):
-        if not condition:
-            error = self._decode_error(
-                sdl3.SDL_GetError()
-            )
+        if condition:
+            return
 
-            raise RuntimeError(
-                f"{message}: {error}"
-            )
+        error = self._decode_error(
+            sdl3.SDL_GetError()
+        )
+
+        raise RuntimeError(
+            f"{message}: {error}"
+        )
 
     # ==============================================================
     # Initialization
     # ==============================================================
 
-    def _initialize(self):
+    def _initialize(
+        self,
+    ):
         self._check(
             sdl3.SDL_Init(
                 sdl3.SDL_INIT_VIDEO
@@ -151,23 +162,41 @@ class GPUContext:
             self.destroy()
             raise
 
-    def _create_window(self):
+    def _create_window(
+        self,
+    ):
         flags = 0
 
         if self.resizable:
-            flags |= sdl3.SDL_WINDOW_RESIZABLE
+            flags |= (
+                sdl3.SDL_WINDOW_RESIZABLE
+            )
 
-        if self.window_mode == WindowMode.BORDERLESS:
-            flags |= sdl3.SDL_WINDOW_BORDERLESS
+        if (
+            self.window_mode
+            == WindowMode.BORDERLESS
+        ):
+            flags |= (
+                sdl3.SDL_WINDOW_BORDERLESS
+            )
 
-        elif self.window_mode == WindowMode.FULLSCREEN:
-            flags |= sdl3.SDL_WINDOW_FULLSCREEN
+        elif (
+            self.window_mode
+            == WindowMode.FULLSCREEN
+        ):
+            flags |= (
+                sdl3.SDL_WINDOW_FULLSCREEN
+            )
 
-        self.window = sdl3.SDL_CreateWindow(
-            self.title.encode("utf-8"),
-            self.width,
-            self.height,
-            flags,
+        self.window = (
+            sdl3.SDL_CreateWindow(
+                self.title.encode(
+                    "utf-8"
+                ),
+                self.width,
+                self.height,
+                flags,
+            )
         )
 
         self._check(
@@ -175,17 +204,21 @@ class GPUContext:
             "SDL_CreateWindow failed",
         )
 
-    def _create_device(self):
+    def _create_device(
+        self,
+    ):
         shader_formats = (
             sdl3.SDL_GPU_SHADERFORMAT_SPIRV
             | sdl3.SDL_GPU_SHADERFORMAT_DXIL
             | sdl3.SDL_GPU_SHADERFORMAT_MSL
         )
 
-        self.device = sdl3.SDL_CreateGPUDevice(
-            shader_formats,
-            self.debug,
-            None,
+        self.device = (
+            sdl3.SDL_CreateGPUDevice(
+                shader_formats,
+                self.debug,
+                None,
+            )
         )
 
         self._check(
@@ -193,7 +226,9 @@ class GPUContext:
             "SDL_CreateGPUDevice failed",
         )
 
-    def _claim_window(self):
+    def _claim_window(
+        self,
+    ):
         self._check(
             sdl3.SDL_ClaimWindowForGPUDevice(
                 self.device,
@@ -202,7 +237,9 @@ class GPUContext:
             "SDL_ClaimWindowForGPUDevice failed",
         )
 
-    def _configure_swapchain(self):
+    def _configure_swapchain(
+        self,
+    ):
         if self.vsync:
             present_mode = (
                 sdl3.SDL_GPU_PRESENTMODE_VSYNC
@@ -248,58 +285,82 @@ class GPUContext:
     # ==============================================================
 
     @property
-    def driver(self) -> str:
+    def driver(
+        self,
+    ) -> str:
         if not self.device:
             return "<unknown>"
 
-        driver = sdl3.SDL_GetGPUDeviceDriver(
-            self.device
+        driver = (
+            sdl3.SDL_GetGPUDeviceDriver(
+                self.device
+            )
         )
 
         if not driver:
             return "<unknown>"
 
-        if isinstance(driver, bytes):
+        if isinstance(
+            driver,
+            bytes,
+        ):
             return driver.decode(
                 "utf-8",
                 errors="replace",
             )
 
-        return str(driver)
-
-    @property
-    def swapchain_format(self):
-        if not self.device or not self.window:
-            return 0
-
-        return sdl3.SDL_GetGPUSwapchainTextureFormat(
-            self.device,
-            self.window,
+        return str(
+            driver
         )
 
     @property
-    def size(self):
+    def swapchain_format(
+        self,
+    ):
+        if (
+            not self.device
+            or not self.window
+        ):
+            return 0
+
+        return (
+            sdl3.SDL_GetGPUSwapchainTextureFormat(
+                self.device,
+                self.window,
+            )
+        )
+
+    @property
+    def size(
+        self,
+    ):
         return (
             self.swapchain_width,
             self.swapchain_height,
         )
 
     @property
-    def is_fullscreen(self) -> bool:
+    def is_fullscreen(
+        self,
+    ) -> bool:
         return (
             self.window_mode
             == WindowMode.FULLSCREEN
         )
 
     @property
-    def is_borderless(self) -> bool:
+    def is_borderless(
+        self,
+    ) -> bool:
         return (
             self.window_mode
             == WindowMode.BORDERLESS
         )
 
     @property
-    def is_windowed(self) -> bool:
+    def is_windowed(
+        self,
+    ) -> bool:
         return (
             self.window_mode
             == WindowMode.WINDOWED
@@ -309,7 +370,9 @@ class GPUContext:
     # Frame handling
     # ==============================================================
 
-    def begin_frame(self) -> bool:
+    def begin_frame(
+        self,
+    ) -> bool:
         if not self.initialized:
             raise RuntimeError(
                 "GPUContext is not initialized"
@@ -329,7 +392,9 @@ class GPUContext:
         if not self.command_buffer:
             return False
 
-        texture = sdl3.LP_SDL_GPUTexture()
+        texture = (
+            sdl3.LP_SDL_GPUTexture()
+        )
 
         width = ctypes.c_uint32()
         height = ctypes.c_uint32()
@@ -338,9 +403,15 @@ class GPUContext:
             sdl3.SDL_WaitAndAcquireGPUSwapchainTexture(
                 self.command_buffer,
                 self.window,
-                ctypes.byref(texture),
-                ctypes.byref(width),
-                ctypes.byref(height),
+                ctypes.byref(
+                    texture
+                ),
+                ctypes.byref(
+                    width
+                ),
+                ctypes.byref(
+                    height
+                ),
             )
         )
 
@@ -353,10 +424,17 @@ class GPUContext:
 
             return False
 
-        self.swapchain_texture = texture
+        self.swapchain_texture = (
+            texture
+        )
 
-        self.swapchain_width = width.value
-        self.swapchain_height = height.value
+        self.swapchain_width = (
+            width.value
+        )
+
+        self.swapchain_height = (
+            height.value
+        )
 
         # SDL can return no texture when the window is
         # minimized or temporarily unavailable.
@@ -377,23 +455,78 @@ class GPUContext:
     def begin_render_pass(
         self,
         clear_color,
+        *,
+        target_texture=None,
     ):
+        """
+        Begin a GPU render pass.
+
+        If target_texture is None, the current swapchain
+        texture is used.
+
+        Otherwise target_texture must be a valid SDL_GPUTexture
+        created with SDL_GPU_TEXTUREUSAGE_COLOR_TARGET.
+
+        This allows rendering into offscreen textures for
+        post-processing before drawing the final result into
+        the swapchain.
+        """
+
         if not self.frame_active:
             raise RuntimeError(
                 "No active GPU frame"
             )
 
-        target = sdl3.SDL_GPUColorTargetInfo()
+        # ------------------------------------------------------
+        # Resolve render target
+        # ------------------------------------------------------
 
-        target.texture = self.swapchain_texture
+        if target_texture is None:
+            render_target = (
+                self.swapchain_texture
+            )
+
+        else:
+            render_target = (
+                target_texture
+            )
+
+        if not render_target:
+            raise RuntimeError(
+                "Render target texture is not available"
+            )
+
+        # ------------------------------------------------------
+        # Color target
+        # ------------------------------------------------------
+
+        target = (
+            sdl3.SDL_GPUColorTargetInfo()
+        )
+
+        target.texture = (
+            render_target
+        )
+
         target.mip_level = 0
+
         target.layer_or_depth_plane = 0
 
-        target.clear_color = sdl3.SDL_FColor(
-            float(clear_color[0]),
-            float(clear_color[1]),
-            float(clear_color[2]),
-            float(clear_color[3]),
+        target.clear_color = (
+            sdl3.SDL_FColor(
+                float(
+                    clear_color[0]
+                ),
+                float(
+                    clear_color[1]
+                ),
+                float(
+                    clear_color[2]
+                ),
+                float(
+                    clear_color[3]
+                ),
+            )
         )
 
         target.load_op = (
@@ -405,16 +538,27 @@ class GPUContext:
         )
 
         target.resolve_texture = None
+
         target.resolve_mip_level = 0
+
         target.resolve_layer = 0
 
         target.cycle = False
-        target.cycle_resolve_texture = False
+
+        target.cycle_resolve_texture = (
+            False
+        )
+
+        # ------------------------------------------------------
+        # Begin render pass
+        # ------------------------------------------------------
 
         render_pass = (
             sdl3.SDL_BeginGPURenderPass(
                 self.command_buffer,
-                ctypes.byref(target),
+                ctypes.byref(
+                    target
+                ),
                 1,
                 None,
             )
@@ -436,21 +580,29 @@ class GPUContext:
                 render_pass
             )
 
-    def end_frame(self):
+    def end_frame(
+        self,
+    ):
         if not self.frame_active:
             return
 
-        command_buffer = self.command_buffer
+        command_buffer = (
+            self.command_buffer
+        )
 
         self.command_buffer = None
+
         self.swapchain_texture = None
+
         self.frame_active = False
 
         if not sdl3.SDL_SubmitGPUCommandBuffer(
             command_buffer
         ):
-            error = self._decode_error(
-                sdl3.SDL_GetError()
+            error = (
+                self._decode_error(
+                    sdl3.SDL_GetError()
+                )
             )
 
             raise RuntimeError(
@@ -458,17 +610,23 @@ class GPUContext:
                 + error
             )
 
-    def cancel_frame(self):
+    def cancel_frame(
+        self,
+    ):
         if self.command_buffer:
             sdl3.SDL_CancelGPUCommandBuffer(
                 self.command_buffer
             )
 
         self.command_buffer = None
+
         self.swapchain_texture = None
+
         self.frame_active = False
 
-    def wait_idle(self):
+    def wait_idle(
+        self,
+    ):
         if self.device:
             self._check(
                 sdl3.SDL_WaitForGPUIdle(
@@ -481,7 +639,9 @@ class GPUContext:
     # SDL3 Events
     # ==============================================================
 
-    def poll_events(self):
+    def poll_events(
+        self,
+    ):
         """
         Poll all pending SDL3 events.
 
@@ -491,10 +651,14 @@ class GPUContext:
         """
 
         while True:
-            event = sdl3.SDL_Event()
+            event = (
+                sdl3.SDL_Event()
+            )
 
             if not sdl3.SDL_PollEvent(
-                ctypes.byref(event)
+                ctypes.byref(
+                    event
+                )
             ):
                 break
 
@@ -535,8 +699,12 @@ class GPUContext:
         self._check(
             sdl3.SDL_SetWindowSize(
                 self.window,
-                int(width),
-                int(height),
+                int(
+                    width
+                ),
+                int(
+                    height
+                ),
             ),
             "SDL_SetWindowSize failed",
         )
@@ -545,7 +713,9 @@ class GPUContext:
     # Window Modes
     # ==============================================================
 
-    def set_windowed(self):
+    def set_windowed(
+        self,
+    ):
         """
         Switch to normal decorated window mode.
         """
@@ -575,7 +745,9 @@ class GPUContext:
             WindowMode.WINDOWED
         )
 
-    def set_borderless(self):
+    def set_borderless(
+        self,
+    ):
         """
         Switch to a borderless window.
 
@@ -608,7 +780,9 @@ class GPUContext:
             WindowMode.BORDERLESS
         )
 
-    def set_fullscreen(self):
+    def set_fullscreen(
+        self,
+    ):
         """
         Switch to SDL3 fullscreen.
 
@@ -641,24 +815,41 @@ class GPUContext:
         Set the current window mode.
         """
 
-        mode = WindowMode(mode)
+        mode = WindowMode(
+            mode
+        )
 
-        if mode == WindowMode.WINDOWED:
+        if (
+            mode
+            == WindowMode.WINDOWED
+        ):
             self.set_windowed()
 
-        elif mode == WindowMode.BORDERLESS:
+        elif (
+            mode
+            == WindowMode.BORDERLESS
+        ):
             self.set_borderless()
 
-        elif mode == WindowMode.FULLSCREEN:
+        elif (
+            mode
+            == WindowMode.FULLSCREEN
+        ):
             self.set_fullscreen()
 
-    def toggle_fullscreen(self):
+    def toggle_fullscreen(
+        self,
+    ):
         """
         Toggle between fullscreen and windowed mode.
         """
 
-        if self.window_mode == WindowMode.FULLSCREEN:
+        if (
+            self.window_mode
+            == WindowMode.FULLSCREEN
+        ):
             self.set_windowed()
+
         else:
             self.set_fullscreen()
 
@@ -682,7 +873,9 @@ class GPUContext:
                 "GPUContext is not initialized"
             )
 
-        enabled = bool(enabled)
+        enabled = bool(
+            enabled
+        )
 
         if enabled:
             present_mode = (
@@ -728,10 +921,13 @@ class GPUContext:
     # Shutdown
     # ==============================================================
 
-    def destroy(self):
+    def destroy(
+        self,
+    ):
         if self.frame_active:
             try:
                 self.cancel_frame()
+
             except Exception:
                 pass
 
@@ -740,15 +936,20 @@ class GPUContext:
                 sdl3.SDL_WaitForGPUIdle(
                     self.device
                 )
+
             except Exception:
                 pass
 
-        if self.device and self.window:
+        if (
+            self.device
+            and self.window
+        ):
             try:
                 sdl3.SDL_ReleaseWindowFromGPUDevice(
                     self.device,
                     self.window,
                 )
+
             except Exception:
                 pass
 
@@ -757,6 +958,7 @@ class GPUContext:
                 sdl3.SDL_DestroyGPUDevice(
                     self.device
                 )
+
             except Exception:
                 pass
 
@@ -765,6 +967,7 @@ class GPUContext:
                 sdl3.SDL_DestroyWindow(
                     self.window
                 )
+
             except Exception:
                 pass
 
@@ -782,6 +985,7 @@ class GPUContext:
 
         try:
             sdl3.SDL_Quit()
+
         except Exception:
             pass
 
@@ -789,7 +993,9 @@ class GPUContext:
     # Context Manager
     # ==============================================================
 
-    def __enter__(self):
+    def __enter__(
+        self,
+    ):
         return self
 
     def __exit__(
