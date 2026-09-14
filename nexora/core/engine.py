@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-
+from nexora.debug.overlay import DebugOverlay
 from nexora.core.game_loop import GameLoop
 from nexora.debug.logger import Logger
 from nexora.input import InputManager
@@ -128,6 +128,14 @@ class Engine:
         self._initialized = False
         self._shutdown = False
 
+        # ------------------------------------------------------
+        # Debug overlay
+        # ------------------------------------------------------
+
+        self.debug_overlay = DebugOverlay(
+            self
+        )
+
     # ==========================================================
     # PROPERTIES
     # ==========================================================
@@ -251,6 +259,7 @@ class Engine:
         # GPU resources depend on the GPU device.
         # ------------------------------------------------------
 
+        self.debug_overlay.shutdown()
         self.renderer.destroy()
         self.assets.shutdown()
         # ------------------------------------------------------

@@ -1,4 +1,11 @@
 from __future__ import annotations
+import os
+
+os.environ.setdefault(
+    "SDL_GPU_DRIVER",
+    "vulkan",
+)
+
 
 from pathlib import Path
 

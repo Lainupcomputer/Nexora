@@ -32,7 +32,9 @@ class GameLoop:
         self.engine = engine
         self.game = engine.game
 
-        self.target_fps = int(target_fps)
+        self.target_fps = int(
+            target_fps
+        )
 
         if fixed_delta_time <= 0.0:
             raise ValueError(
@@ -44,7 +46,9 @@ class GameLoop:
         # ------------------------------------------------------
 
         self.time = Time(
-            fixed_delta_time=float(fixed_delta_time),
+            fixed_delta_time=float(
+                fixed_delta_time
+            ),
             max_delta_time=0.25,
         )
 
@@ -74,34 +78,48 @@ class GameLoop:
     # ==========================================================
 
     @property
-    def delta_time(self) -> float:
+    def delta_time(
+        self,
+    ) -> float:
         return self.time.delta_time
 
     @property
-    def unscaled_delta_time(self) -> float:
+    def unscaled_delta_time(
+        self,
+    ) -> float:
         return self.time.unscaled_delta_time
 
     @property
-    def fixed_delta_time(self) -> float:
+    def fixed_delta_time(
+        self,
+    ) -> float:
         return self.time.fixed_delta_time
 
     @property
-    def total_time(self) -> float:
+    def total_time(
+        self,
+    ) -> float:
         return self.time.total_time
 
     @property
-    def frame(self) -> int:
+    def frame(
+        self,
+    ) -> int:
         return self.time.frame
 
     @property
-    def interpolation(self) -> float:
+    def interpolation(
+        self,
+    ) -> float:
         return self.time.interpolation
 
     # ==========================================================
     # MAIN LOOP
     # ==========================================================
 
-    def run(self) -> None:
+    def run(
+        self,
+    ) -> None:
         if self.running:
             return
 
@@ -113,7 +131,9 @@ class GameLoop:
 
         try:
             while self.running:
-                frame_start = time.perf_counter()
+                frame_start = (
+                    time.perf_counter()
+                )
 
                 # --------------------------------------------------
                 # Timing
@@ -131,23 +151,59 @@ class GameLoop:
 
                 # InputManager receives the full SDL event stream
                 # before game logic is updated.
-                self.input.begin_frame(events)
+                self.input.begin_frame(
+                    events
+                )
+
+                # --------------------------------------------------
+                # Global engine input
+                # --------------------------------------------------
+                #
+                # This runs ONCE per frame.
+                #
+                # Do not place this inside the SDL event loop,
+                # otherwise F3 may toggle multiple times in one
+                # frame when multiple events are received.
+                # --------------------------------------------------
+
+                if self.input.key_pressed(
+                    "f3"
+                ):
+                    self.engine.debug_overlay.toggle()
+
+                # --------------------------------------------------
+                # Debug metrics
+                # --------------------------------------------------
+                #
+                # Use unscaled time so debug metrics continue to
+                # update correctly even when time_scale is 0.
+                # --------------------------------------------------
+
+                self.engine.debug_overlay.update(
+                    self.time.unscaled_delta_time
+                )
 
                 # --------------------------------------------------
                 # Engine + game event handling
                 # --------------------------------------------------
 
                 for event in events:
-                    if self._handle_engine_event(event):
+                    if self._handle_engine_event(
+                        event
+                    ):
                         break
 
                     if not self.running:
                         break
 
-                    self.game.handle_event(event)
+                    self.game.handle_event(
+                        event
+                    )
 
-                # Do not execute another update/render after a quit
-                # or close event.
+                # --------------------------------------------------
+                # Quit handling
+                # --------------------------------------------------
+
                 if not self.running:
                     self.input.end_frame()
                     break
@@ -190,8 +246,24 @@ class GameLoop:
 
                 if self.renderer.begin_frame():
                     try:
+                        # ------------------------------------------
+                        # Game / Scene
+                        # ------------------------------------------
+
                         self.game.render(
                             self.time.interpolation
+                        )
+
+                        # ------------------------------------------
+                        # Global debug overlay
+                        # ------------------------------------------
+                        #
+                        # Render last so the debug information is
+                        # always above Scene and UI content.
+                        # ------------------------------------------
+
+                        self.engine.debug_overlay.render(
+                            self.renderer
                         )
 
                     finally:
@@ -219,7 +291,9 @@ class GameLoop:
                     )
 
                     if remaining > 0.0:
-                        time.sleep(remaining)
+                        time.sleep(
+                            remaining
+                        )
 
         finally:
             self.running = False
@@ -228,7 +302,10 @@ class GameLoop:
     # ENGINE EVENT HANDLING
     # ==========================================================
 
-    def _handle_engine_event(self, event) -> bool:
+    def _handle_engine_event(
+        self,
+        event,
+    ) -> bool:
         """
         Handle engine-level SDL events.
 
@@ -245,7 +322,10 @@ class GameLoop:
         # Global SDL quit
         # ------------------------------------------------------
 
-        if event_type == sdl3.SDL_EVENT_QUIT:
+        if (
+            event_type
+            == sdl3.SDL_EVENT_QUIT
+        ):
             self.stop()
             return True
 
@@ -268,7 +348,10 @@ class GameLoop:
             event_type
             == sdl3.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
         ):
-            self._handle_resize_event(event)
+            self._handle_resize_event(
+                event
+            )
+
             return False
 
         # ------------------------------------------------------
@@ -279,7 +362,10 @@ class GameLoop:
             event_type
             == sdl3.SDL_EVENT_WINDOW_RESIZED
         ):
-            self._handle_resize_event(event)
+            self._handle_resize_event(
+                event
+            )
+
             return False
 
         return False
@@ -296,11 +382,15 @@ class GameLoop:
             width = int(
                 event.window.data1
             )
+
             height = int(
                 event.window.data2
             )
 
-            if width <= 0 or height <= 0:
+            if (
+                width <= 0
+                or height <= 0
+            ):
                 return
 
             self.renderer.resize(
@@ -319,5 +409,7 @@ class GameLoop:
     # STOP
     # ==========================================================
 
-    def stop(self) -> None:
+    def stop(
+        self,
+    ) -> None:
         self.running = False

@@ -163,6 +163,84 @@ class Renderer:
         return self.gpu.end_frame()
 
     # ==========================================================
+    # Clipping
+    # ==========================================================
+
+    @property
+    def clip_rect(
+        self,
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ] | None:
+        """
+        Return the currently active clip rectangle.
+
+        The rectangle is represented as:
+
+            (x, y, width, height)
+
+        where x/y are the top-left corner.
+
+        Returns None if no clip rectangle is active.
+        """
+
+        return self.gpu.clip_rect
+
+    def push_clip_rect(
+        self,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ]:
+        """
+        Push a clip rectangle onto the renderer clip stack.
+
+        Nested rectangles are intersected automatically with
+        the currently active clip rectangle.
+        """
+
+        return self.gpu.push_clip_rect(
+            x,
+            y,
+            width,
+            height,
+        )
+
+    def pop_clip_rect(
+        self,
+    ) -> tuple[
+        float,
+        float,
+        float,
+        float,
+    ] | None:
+        """
+        Pop the most recently pushed clip rectangle.
+
+        Returns the newly active clip rectangle or None.
+        """
+
+        return self.gpu.pop_clip_rect()
+
+    def clear_clip_rects(
+        self,
+    ) -> None:
+        """
+        Clear all active clip rectangles.
+        """
+
+        self.gpu.clear_clip_rects()
+
+    # ==========================================================
     # Sprites
     # ==========================================================
 

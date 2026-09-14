@@ -7,11 +7,10 @@ import struct
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from nexora.rendering.gpu.render_snapshot import RenderSnapshot
-
 import sdl3
 
 from nexora.rendering.gpu.buffer import GPUBuffer
+from nexora.rendering.gpu.render_snapshot import RenderSnapshot
 from nexora.rendering.gpu.sampler import GPUSampler
 from nexora.rendering.gpu.shader import GPUShader
 
@@ -105,11 +104,9 @@ class GPUSpriteBatch:
             ),
         )
 
-        self._executor = (
-            ThreadPoolExecutor(
-                max_workers=self.worker_count,
-                thread_name_prefix="nexora-sprite",
-            )
+        self._executor = ThreadPoolExecutor(
+            max_workers=self.worker_count,
+            thread_name_prefix="nexora-sprite",
         )
 
         # ======================================================
@@ -237,10 +234,8 @@ class GPUSpriteBatch:
         message,
     ):
         if not condition:
-            error = (
-                self._decode_error(
-                    sdl3.SDL_GetError()
-                )
+            error = self._decode_error(
+                sdl3.SDL_GetError()
             )
 
             raise RuntimeError(
@@ -404,6 +399,10 @@ class GPUSpriteBatch:
             * 2
         )()
 
+        # ------------------------------------------------------
+        # Quad vertex buffer
+        # ------------------------------------------------------
+
         vertex_buffer_descriptions[
             0
         ].slot = 0
@@ -421,6 +420,10 @@ class GPUSpriteBatch:
         vertex_buffer_descriptions[
             0
         ].instance_step_rate = 0
+
+        # ------------------------------------------------------
+        # Instance buffer
+        # ------------------------------------------------------
 
         vertex_buffer_descriptions[
             1
@@ -445,99 +448,197 @@ class GPUSpriteBatch:
         # ======================================================
         # Attributes
         # ======================================================
+        #
+        # Instance layout:
+        #
+        # offset  0 : position.xy
+        # offset  8 : size.xy
+        # offset 16 : rotation
+        # offset 20 : origin.xy
+        # offset 28 : alpha
+        # offset 32 : flip_x
+        # offset 36 : flip_y
+        # offset 40 : uv.xy
+        # offset 48 : uv_size.xy
+        #
+        # 14 floats = 56 bytes
+        #
+        # IMPORTANT:
+        #
+        # flip_x and flip_y are separate shader attributes.
+        # Do NOT combine them into FLOAT2 unless the sprite shader
+        # input layout is changed as well.
+        # ======================================================
 
         attributes = (
             sdl3.SDL_GPUVertexAttribute
             * 11
         )()
 
+        # ------------------------------------------------------
         # Vertex position
+        # location 0
+        # float2
+        # ------------------------------------------------------
+
         attributes[0].location = 0
         attributes[0].buffer_slot = 0
+
         attributes[0].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[0].offset = 0
 
+        # ------------------------------------------------------
         # Vertex UV
+        # location 1
+        # float2
+        # ------------------------------------------------------
+
         attributes[1].location = 1
         attributes[1].buffer_slot = 0
+
         attributes[1].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[1].offset = 8
 
+        # ------------------------------------------------------
         # Instance position
+        # location 2
+        # float2
+        # ------------------------------------------------------
+
         attributes[2].location = 2
         attributes[2].buffer_slot = 1
+
         attributes[2].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[2].offset = 0
 
+        # ------------------------------------------------------
         # Instance size
+        # location 3
+        # float2
+        # ------------------------------------------------------
+
         attributes[3].location = 3
         attributes[3].buffer_slot = 1
+
         attributes[3].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[3].offset = 8
 
+        # ------------------------------------------------------
         # Rotation
+        # location 4
+        # float
+        # ------------------------------------------------------
+
         attributes[4].location = 4
         attributes[4].buffer_slot = 1
+
         attributes[4].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
+
         attributes[4].offset = 16
 
+        # ------------------------------------------------------
         # Origin
+        # location 5
+        # float2
+        # ------------------------------------------------------
+
         attributes[5].location = 5
         attributes[5].buffer_slot = 1
+
         attributes[5].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
+
         attributes[5].offset = 20
 
+        # ------------------------------------------------------
         # Alpha
+        # location 6
+        # float
+        # ------------------------------------------------------
+
         attributes[6].location = 6
         attributes[6].buffer_slot = 1
+
         attributes[6].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
+
         attributes[6].offset = 28
 
-        # Flip
+        # ------------------------------------------------------
+        # Flip X
+        # location 7
+        # float
+        # ------------------------------------------------------
+
         attributes[7].location = 7
         attributes[7].buffer_slot = 1
+
         attributes[7].format = (
-            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
+
         attributes[7].offset = 32
 
-        # UV origin
+        # ------------------------------------------------------
+        # Flip Y
+        # location 8
+        # float
+        # ------------------------------------------------------
+
         attributes[8].location = 8
         attributes[8].buffer_slot = 1
-        attributes[8].format = (
-            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
-        )
-        attributes[8].offset = 40
 
-        # UV size
+        attributes[8].format = (
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
+        )
+
+        attributes[8].offset = 36
+
+        # ------------------------------------------------------
+        # UV origin
+        # location 9
+        # float2
+        # ------------------------------------------------------
+
         attributes[9].location = 9
         attributes[9].buffer_slot = 1
+
         attributes[9].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-        attributes[9].offset = 48
 
-        # Padding / reserved
+        attributes[9].offset = 40
+
+        # ------------------------------------------------------
+        # UV size
+        # location 10
+        # float2
+        # ------------------------------------------------------
+
         attributes[10].location = 10
         attributes[10].buffer_slot = 1
+
         attributes[10].format = (
-            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
+            sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-        attributes[10].offset = 52
+
+        attributes[10].offset = 48
 
         # ======================================================
         # Rasterizer
@@ -1541,20 +1642,16 @@ class GPUSpriteBatch:
 
         vertex_bindings[
             0
-        ] = (
-            self.quad_buffer.binding(
-                0,
-                self.quad_buffer.size,
-            )
+        ] = self.quad_buffer.binding(
+            0,
+            self.quad_buffer.size,
         )
 
         vertex_bindings[
             1
-        ] = (
-            self.instance_buffer.binding(
-                0,
-                instance_size,
-            )
+        ] = self.instance_buffer.binding(
+            0,
+            instance_size,
         )
 
         sdl3.SDL_BindGPUVertexBuffers(
