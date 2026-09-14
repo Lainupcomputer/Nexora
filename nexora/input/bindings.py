@@ -236,3 +236,35 @@ def resolve_mouse_button(button: str | int) -> int:
         return aliases[name]
     except KeyError:
         raise ValueError(f"Unknown mouse button: {button!r}") from None
+
+def keyboard_key_name(scancode: int) -> str:
+    """Return the canonical Nexora name for an SDL scancode."""
+
+    scancode = int(scancode)
+
+    for name, code in _KEY_SCANCODES.items():
+        if int(code) == scancode:
+            return name
+
+    raise ValueError(
+        f"Unknown SDL keyboard scancode: {scancode}"
+    )
+
+
+def mouse_button_name(button: int) -> str:
+    """Return the canonical Nexora name for an SDL mouse button."""
+
+    names = {
+        1: "left",
+        2: "middle",
+        3: "right",
+        4: "x1",
+        5: "x2",
+    }
+
+    try:
+        return names[int(button)]
+    except KeyError:
+        raise ValueError(
+            f"Unknown mouse button: {button}"
+        ) from None

@@ -166,13 +166,13 @@ class GameLoop:
                 # frame when multiple events are received.
                 # --------------------------------------------------
 
-                if self.input.key_pressed(
-                    "f3"
+                if (
+                    self.input.action_pressed.debug_overlay
                 ):
                     self.engine.debug_overlay.toggle()
 
-                if self.input.key_pressed(
-                    "f4"
+                if (
+                    self.input.action_pressed.physics_debug
                 ):
                     self.engine.debug_overlay.physics.toggle()
                 # --------------------------------------------------

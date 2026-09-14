@@ -41,6 +41,17 @@ class Engine:
         vsync: bool = False,
 
         # ======================================================
+        # Input settings
+        # ======================================================
+
+        input_settings_path: str | Path | None = "settings",
+        input_defaults_path: str | Path = (
+            "core/defaults/keybinds.toml"
+        ),
+        input_project_bindings_path: str | Path | None = None,
+        input_mod_binding_paths: tuple[str | Path, ...] = (),
+
+        # ======================================================
         # Save system
         # ======================================================
 
@@ -161,6 +172,14 @@ class Engine:
 
         self.input = InputManager(
             logger=self.logger,
+            settings_path=input_settings_path,
+            defaults_path=input_defaults_path,
+            project_bindings_path=(
+                input_project_bindings_path
+            ),
+            mod_binding_paths=(
+                input_mod_binding_paths
+            ),
         )
 
         # ======================================================

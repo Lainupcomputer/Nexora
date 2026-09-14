@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Iterable
 
 import sdl3
 
 from nexora.debug.logger import Logger
-from nexora.input.action import ActionState
+from nexora.input.action import (
+    ActionState,
+    ActionStateProxy,
+)
+from nexora.input.binding_store import BindingStore
 from nexora.input.bindings import (
     Binding,
     BindingType,
@@ -25,7 +30,15 @@ class InputManager:
     synchronized input state maintained here.
     """
 
-    def __init__(self, logger: Logger | None = None):
+    def __init__(
+        self,
+        logger: Logger | None = None,
+        *,
+        settings_path: str | Path | None = "settings",
+        defaults_path: str | Path = "core/defaults/keybinds.toml",
+        project_bindings_path: str | Path | None = None,
+        mod_binding_paths: Iterable[str | Path] = (),
+    ):
         self.logger = logger
         self._window = None
 
@@ -59,8 +72,32 @@ class InputManager:
         self._actions: dict[str, ActionState] = {}
         self._bindings: dict[str, list[Binding]] = {}
 
+        # Layered TOML binding storage.
+        self.binding_store = BindingStore(
+            defaults_path=defaults_path,
+            project_path=project_bindings_path,
+            mod_paths=mod_binding_paths,
+            settings_path=settings_path,
+        )
+
+        # Dynamic attribute based action API.
+        self.action_down = ActionStateProxy(
+            self,
+            "down",
+        )
+        self.action_pressed = ActionStateProxy(
+            self,
+            "pressed",
+        )
+        self.action_released = ActionStateProxy(
+            self,
+            "released",
+        )
+
         self._initialized = False
         self._focused = True
+
+        self.load_bindings()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -190,6 +227,44 @@ class InputManager:
     def clear_bindings(self) -> None:
         self._bindings.clear()
         self._actions.clear()
+
+    def load_bindings(self) -> None:
+        loaded = self.binding_store.load()
+
+        previous = self._actions
+
+        self._bindings = {
+            action: list(bindings)
+            for action, bindings in loaded.items()
+        }
+
+        self._actions = {
+            action: previous.get(
+                action,
+                ActionState(),
+            )
+            for action in self._bindings
+        }
+
+    def reload_bindings(self) -> None:
+        self.load_bindings()
+
+    def save_bindings(self) -> None:
+        self.binding_store.save(
+            self._bindings
+        )
+
+    def reset_bindings(self) -> None:
+        self.binding_store.reset_user()
+        self.load_bindings()
+
+    @property
+    def settings_path(self) -> Path | None:
+        return self.binding_store.settings_path
+
+    @property
+    def keybinds_path(self) -> Path | None:
+        return self.binding_store.user_path
 
     # ------------------------------------------------------------------
     # Frame processing
@@ -532,13 +607,13 @@ class InputManager:
     def actions(self) -> dict[str, ActionState]:
         return self._actions
 
-    def action_down(self, action: str) -> bool:
+    def is_action_down(self, action: str) -> bool:
         return self.action_state(action).down
 
-    def action_pressed(self, action: str) -> bool:
+    def is_action_pressed(self, action: str) -> bool:
         return self.action_state(action).pressed
 
-    def action_released(self, action: str) -> bool:
+    def is_action_released(self, action: str) -> bool:
         return self.action_state(action).released
 
     # ------------------------------------------------------------------

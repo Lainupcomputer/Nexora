@@ -1,0 +1,38 @@
+# ============================================================
+# Nexora Engine - Default Key Bindings
+# ============================================================
+#
+# Base input actions shipped by Nexora.
+# Project settings, mods and user settings can override these
+# actions in later configuration layers.
+# ============================================================
+
+[move_up]
+keyboard = ["w", "up"]
+
+[move_down]
+keyboard = ["s", "down"]
+
+[move_left]
+keyboard = ["a", "left"]
+
+[move_right]
+keyboard = ["d", "right"]
+
+[jump]
+keyboard = ["space"]
+
+[interact]
+keyboard = ["e"]
+
+[attack]
+mouse = ["left"]
+
+[pause]
+keyboard = ["escape"]
+
+[debug_overlay]
+keyboard = ["f3"]
+
+[physics_debug]
+keyboard = ["f4"]
