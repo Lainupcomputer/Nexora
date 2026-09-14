@@ -374,6 +374,80 @@ class Node:
         return None
 
     # ==============================================================
+    # Tree traversal
+    # ==============================================================
+
+    @property
+    def tree_root(
+        self,
+    ) -> Node:
+        """
+        Return the root node of the current node tree.
+        """
+
+        node = self
+
+        while node.parent is not None:
+            node = node.parent
+
+        return node
+
+
+    def iter_tree(
+        self,
+        *,
+        include_self: bool = True,
+    ):
+        """
+        Iterate over this node and all descendants.
+
+        Traversal order is depth-first.
+        """
+
+        if include_self:
+            yield self
+
+        for child in tuple(
+            self.children
+        ):
+            yield from child.iter_tree(
+                include_self=True
+            )
+
+
+    def iter_ancestors(
+        self,
+    ):
+        """
+        Iterate from the direct parent up to the tree root.
+        """
+
+        node = self.parent
+
+        while node is not None:
+            yield node
+            node = node.parent
+
+
+    def is_descendant_of(
+        self,
+        node: Node,
+    ) -> bool:
+        """
+        Return True when this node is below `node`.
+        """
+
+        current = self.parent
+
+        while current is not None:
+            if current is node:
+                return True
+
+            current = current.parent
+
+        return False
+
+    # ==============================================================
     # Destroy
     # ==============================================================
 

@@ -6,12 +6,23 @@ import pytest
 
 from nexora import Game
 from nexora.save import SaveManager
+from nexora.save.errors import (
+    SaveNotFoundError,
+)
 
 
 TEST_KEY = (
     b"nexora-engine-integration-test-key-"
     b"0123456789abcdef"
 )
+@pytest.fixture
+def manager(
+    tmp_path,
+) -> SaveManager:
+    return SaveManager(
+        tmp_path,
+        signing_key=TEST_KEY,
+    )
 
 
 class SaveIntegrationGame(Game):

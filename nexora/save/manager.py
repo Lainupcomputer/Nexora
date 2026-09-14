@@ -1020,22 +1020,29 @@ class SaveManager:
     ) -> None:
         """
         Shift existing autosaves from newest to oldest.
+
+        The save file cannot simply be renamed because metadata.slot
+        must always match the filename / target slot.
         """
 
         # ------------------------------------------------------
         # Remove oldest
         # ------------------------------------------------------
 
-        oldest = (
-            self.slot_path(
-                self._autosave_slot_name(
-                    self._autosave_slots
-                )
+        oldest_slot = (
+            self._autosave_slot_name(
+                self._autosave_slots
             )
         )
 
-        if oldest.exists():
-            oldest.unlink()
+        oldest_path = (
+            self.slot_path(
+                oldest_slot
+            )
+        )
+
+        if oldest_path.exists():
+            oldest_path.unlink()
 
         # ------------------------------------------------------
         # Shift backwards
@@ -1046,29 +1053,207 @@ class SaveManager:
             0,
             -1,
         ):
-            source = (
-                self.slot_path(
-                    self._autosave_slot_name(
-                        index
-                    )
+            source_slot = (
+                self._autosave_slot_name(
+                    index
                 )
             )
 
-            destination = (
-                self.slot_path(
-                    self._autosave_slot_name(
-                        index + 1
-                    )
+            destination_slot = (
+                self._autosave_slot_name(
+                    index + 1
                 )
             )
 
-            if not source.exists():
+            source_path = (
+                self.slot_path(
+                    source_slot
+                )
+            )
+
+            if not source_path.exists():
                 continue
 
-            os.replace(
-                source,
-                destination,
+            self._relocate_save(
+                source_slot,
+                destination_slot,
             )
+
+
+    def _relocate_save(
+        self,
+        source_slot: str,
+        destination_slot: str,
+    ) -> None:
+        """
+        Move a save to another slot while updating its embedded
+        metadata.slot value.
+
+        This is required for autosave rotation because the slot identity
+        is part of the signed save payload.
+        """
+
+        source_slot = self.validate_slot(
+            source_slot
+        )
+
+        destination_slot = self.validate_slot(
+            destination_slot
+        )
+
+        source_path = (
+            self.slot_path(
+                source_slot
+            )
+        )
+
+        destination_path = (
+            self.slot_path(
+                destination_slot
+            )
+        )
+
+        # ------------------------------------------------------
+        # Read source
+        # ------------------------------------------------------
+
+        try:
+            raw = source_path.read_bytes()
+
+        except OSError as exc:
+            raise InvalidSaveError(
+                f"Could not read save slot '{source_slot}'."
+            ) from exc
+
+        # ------------------------------------------------------
+        # Decode and verify
+        # ------------------------------------------------------
+
+        envelope = decode_save(
+            raw,
+            signing_key=(
+                self._signing_key
+            ),
+            max_payload_size=(
+                self.max_file_size
+            ),
+        )
+
+        if not isinstance(
+            envelope,
+            dict,
+        ):
+            raise InvalidSaveError(
+                "Save root must be a dictionary."
+            )
+
+        required = {
+            "save_version",
+            "metadata",
+            "data",
+        }
+
+        if not required.issubset(
+            envelope
+        ):
+            raise InvalidSaveError(
+                "Save envelope is incomplete."
+            )
+
+        metadata_raw = (
+            envelope[
+                "metadata"
+            ]
+        )
+
+        if not isinstance(
+            metadata_raw,
+            dict,
+        ):
+            raise InvalidSaveError(
+                "Save metadata is invalid."
+            )
+
+        # ------------------------------------------------------
+        # Verify original slot identity
+        # ------------------------------------------------------
+
+        metadata = (
+            SaveMetadata.from_dict(
+                metadata_raw
+            )
+        )
+
+        if (
+            metadata.slot
+            != source_slot
+        ):
+            raise InvalidSaveError(
+                "Save slot metadata does not match source filename."
+            )
+
+        # ------------------------------------------------------
+        # Update slot identity
+        # ------------------------------------------------------
+
+        new_metadata = dict(
+            metadata_raw
+        )
+
+        new_metadata[
+            "slot"
+        ] = destination_slot
+
+        new_envelope = dict(
+            envelope
+        )
+
+        new_envelope[
+            "metadata"
+        ] = new_metadata
+
+        # ------------------------------------------------------
+        # Encode again
+        # ------------------------------------------------------
+
+        encoded = encode_save(
+            new_envelope,
+            signing_key=(
+                self._signing_key
+            ),
+        )
+
+        if (
+            len(
+                encoded
+            )
+            > self.max_file_size
+        ):
+            raise InvalidSaveError(
+                "Rotated save exceeds configured maximum size."
+            )
+
+        # ------------------------------------------------------
+        # Write destination atomically
+        # ------------------------------------------------------
+
+        self._atomic_write(
+            destination_path,
+            encoded,
+        )
+
+        # ------------------------------------------------------
+        # Remove source
+        # ------------------------------------------------------
+
+        try:
+            source_path.unlink()
+
+        except OSError as exc:
+            raise InvalidSaveError(
+                f"Could not remove rotated source slot "
+                f"'{source_slot}'."
+            ) from exc
 
     # ==========================================================
     # LIST AUTOSAVES

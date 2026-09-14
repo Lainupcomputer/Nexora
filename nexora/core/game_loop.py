@@ -171,6 +171,10 @@ class GameLoop:
                 ):
                     self.engine.debug_overlay.toggle()
 
+                if self.input.key_pressed(
+                    "f4"
+                ):
+                    self.engine.debug_overlay.physics.toggle()
                 # --------------------------------------------------
                 # Debug metrics
                 # --------------------------------------------------

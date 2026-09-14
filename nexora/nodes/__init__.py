@@ -9,8 +9,12 @@ from .camera import (
 )
 
 from .entity import (
+    Body2D,
+    CollisionShape2D,
     CharacterBody2D,
     Vector2,
+    StaticBody2D,
+    Area2D,
 )
 
 from .texture import (
@@ -61,8 +65,12 @@ __all__ = [
     "FixedCamera2D",
 
     # Entity
+    "Body2D",
+    "CollisionShape2D",
     "CharacterBody2D",
     "Vector2",
+    "StaticBody2D",
+    "Area2D",
 
     # Texture
     "AnimatedSprite",
@@ -99,3 +107,23 @@ __all__ = [
     "NotificationType",
     "Tooltip",
 ]
+
+from .entity import (
+    Body2D,
+    CollisionShape2D,
+    BodyMoveResult,
+    CharacterBody2D,
+    Vector2,
+    StaticBody2D,
+    Area2D,
+)
+from .entity import (
+    Body2D,
+    CollisionShape2D,
+    BodyMoveResult,
+    CharacterBody2D,
+    Vector2,
+    StaticBody2D,
+    Area2D,
+    RayCast2D,
+)

@@ -3185,33 +3185,47 @@ def test_music_player_previous_uses_music_bus():
 # Audio Cache / AudioSystem Loading
 # ============================================================
 
-
-def test_audio_system_load_uses_cache(monkeypatch, tmp_path):
+def test_audio_system_load_uses_cache(
+    monkeypatch,
+    tmp_path,
+):
     audio = AudioSystem()
 
     path = tmp_path / "test.wav"
-    sound = object()
+    buffer = object()
 
     calls = 0
 
-    def fake_load(self, load_path):
+    def fake_load(
+        self,
+        load_path,
+    ):
         nonlocal calls
 
         calls += 1
 
         assert load_path == path.resolve()
 
-        return sound
+        return buffer
 
     monkeypatch.setattr(
         "nexora.audio.cache.WavLoader.load",
         fake_load,
     )
 
-    assert audio.load(path) is sound
-    assert audio.load(path) is sound
-    assert calls == 1
+    first = audio.load(
+        path
+    )
 
+    second = audio.load(
+        path
+    )
+
+    assert first is second
+    assert first.buffer is buffer
+    assert first.path == path.resolve()
+
+    assert calls == 1
 
 def test_audio_system_unload_removes_cached_sound(
     monkeypatch,
@@ -3220,21 +3234,30 @@ def test_audio_system_unload_removes_cached_sound(
     audio = AudioSystem()
 
     path = tmp_path / "test.wav"
-    sound = object()
+    buffer = object()
 
     monkeypatch.setattr(
         "nexora.audio.cache.WavLoader.load",
-        lambda self, load_path: sound,
+        lambda self, load_path: buffer,
     )
 
-    audio.load(path)
+    sound = audio.load(
+        path
+    )
 
-    assert audio.cache.get(path) is sound
+    assert audio.cache.get(
+        path
+    ) is sound
 
-    audio.unload(path)
+    assert sound.buffer is buffer
 
-    assert audio.cache.get(path) is None
+    audio.unload(
+        path
+    )
 
+    assert audio.cache.get(
+        path
+    ) is None
 
 def test_audio_system_clear_cache(
     monkeypatch,

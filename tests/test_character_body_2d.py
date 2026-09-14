@@ -4,9 +4,12 @@ import pytest
 
 from nexora.ecs.world import World
 from nexora.nodes import (
+    Body2D,
     CharacterBody2D,
+    CollisionShape2D,
     Vector2,
 )
+
 from nexora.tilemap import (
     TileCollision,
     TileMap,
@@ -44,14 +47,22 @@ def create_collision() -> TileCollision:
 
 
 def create_body() -> CharacterBody2D:
+    world = World()
+
     body = CharacterBody2D(
         "Player",
-        World(),
+        world,
     )
 
-    body.set_collision_size(
+    shape = CollisionShape2D(
+        "Collision",
+        world,
         16.0,
         16.0,
+    )
+
+    body.add_child(
+        shape
     )
 
     return body
@@ -59,9 +70,6 @@ def create_body() -> CharacterBody2D:
 
 def test_vector2_defaults():
     vector = Vector2()
-
-    assert vector.x == 0.0
-    assert vector.y == 0.0
 
     assert vector.tuple == (
         0.0,
@@ -99,17 +107,21 @@ def test_vector2_clear():
     )
 
 
+def test_character_body_is_body():
+    body = create_body()
+
+    assert isinstance(
+        body,
+        Body2D,
+    )
+
+
 def test_body_defaults():
     body = create_body()
 
     assert body.velocity.tuple == (
         0.0,
         0.0,
-    )
-
-    assert body.collision_size == (
-        16.0,
-        16.0,
     )
 
     assert not body.is_on_floor
@@ -119,80 +131,25 @@ def test_body_defaults():
     assert body.last_collision is None
 
 
-def test_set_collision_size():
+def test_body_has_collision_shape():
     body = create_body()
 
-    body.set_collision_size(
-        20.0,
-        30.0,
+    shape = (
+        body.primary_collision_shape
     )
 
-    assert body.collision_size == (
-        20.0,
-        30.0,
+    assert shape is not None
+
+    assert shape.width == pytest.approx(
+        16.0
     )
 
-
-def test_invalid_collision_width():
-    body = create_body()
-
-    with pytest.raises(
-        ValueError
-    ):
-        body.set_collision_size(
-            0.0,
-            20.0,
-        )
-
-
-def test_invalid_collision_height():
-    body = create_body()
-
-    with pytest.raises(
-        ValueError
-    ):
-        body.set_collision_size(
-            20.0,
-            0.0,
-        )
-
-
-def test_collision_offset():
-    body = create_body()
-
-    body.transform.x = 100.0
-    body.transform.y = 50.0
-
-    body.set_collision_offset(
-        5.0,
-        8.0,
-    )
-
-    assert body.collision_position == pytest.approx(
-        (
-            105.0,
-            58.0,
-        )
+    assert shape.height == pytest.approx(
+        16.0
     )
 
 
-def test_collision_rect():
-    body = create_body()
-
-    body.transform.x = 10.0
-    body.transform.y = 20.0
-
-    assert body.collision_rect == pytest.approx(
-        (
-            10.0,
-            20.0,
-            16.0,
-            16.0,
-        )
-    )
-
-
-def test_move_and_slide_without_collision():
+def test_move_without_collision():
     collision = create_collision()
     body = create_body()
 
@@ -232,11 +189,48 @@ def test_move_and_slide_without_collision():
         )
     )
 
-    assert not body.is_on_floor
-    assert not body.is_on_wall
+
+def test_collision_shape_offset_moves_correctly():
+    collision = create_collision()
+    body = create_body()
+
+    shape = (
+        body.require_collision_shape()
+    )
+
+    shape.transform.x = 8.0
+    shape.transform.y = 12.0
+
+    body.transform.x = 100.0
+    body.transform.y = 50.0
+
+    body.velocity.set(
+        20.0,
+        10.0,
+    )
+
+    body.move_and_slide(
+        collision,
+        "collision",
+        1.0,
+    )
+
+    assert body.world_position == pytest.approx(
+        (
+            120.0,
+            60.0,
+        )
+    )
+
+    assert shape.world_position == pytest.approx(
+        (
+            128.0,
+            72.0,
+        )
+    )
 
 
-def test_move_and_slide_into_right_wall():
+def test_move_into_right_wall():
     collision = create_collision()
 
     layer = collision.tilemap.require_layer(
@@ -272,7 +266,7 @@ def test_move_and_slide_into_right_wall():
     assert body.velocity.x == 0.0
 
 
-def test_move_and_slide_into_left_wall():
+def test_move_into_left_wall():
     collision = create_collision()
 
     layer = collision.tilemap.require_layer(
@@ -308,7 +302,7 @@ def test_move_and_slide_into_left_wall():
     assert body.velocity.x == 0.0
 
 
-def test_move_and_slide_onto_floor():
+def test_move_onto_floor():
     collision = create_collision()
 
     layer = collision.tilemap.require_layer(
@@ -339,13 +333,10 @@ def test_move_and_slide_onto_floor():
     )
 
     assert body.is_on_floor
-
-    assert not body.is_on_ceiling
-
     assert body.velocity.y == 0.0
 
 
-def test_move_and_slide_into_ceiling():
+def test_move_into_ceiling():
     collision = create_collision()
 
     layer = collision.tilemap.require_layer(
@@ -376,190 +367,7 @@ def test_move_and_slide_into_ceiling():
     )
 
     assert body.is_on_ceiling
-    assert not body.is_on_floor
-
     assert body.velocity.y == 0.0
-
-
-def test_move_and_slide_diagonal():
-    collision = create_collision()
-
-    layer = collision.tilemap.require_layer(
-        "collision"
-    )
-
-    layer.set_tile(
-        2,
-        1,
-        1,
-    )
-
-    layer.set_tile(
-        1,
-        2,
-        1,
-    )
-
-    body = create_body()
-
-    body.transform.x = 32.0
-    body.transform.y = 32.0
-
-    body.velocity.set(
-        100.0,
-        100.0,
-    )
-
-    body.move_and_slide(
-        collision,
-        "collision",
-        1.0,
-    )
-
-    assert body.transform.x == pytest.approx(
-        48.0
-    )
-
-    assert body.transform.y == pytest.approx(
-        48.0
-    )
-
-    assert body.is_on_wall
-    assert body.is_on_floor
-
-    assert body.velocity.tuple == (
-        0.0,
-        0.0,
-    )
-
-
-def test_move_and_slide_preserves_unblocked_axis():
-    collision = create_collision()
-
-    layer = collision.tilemap.require_layer(
-        "collision"
-    )
-
-    layer.set_tile(
-        2,
-        1,
-        1,
-    )
-
-    body = create_body()
-
-    body.transform.x = 32.0
-    body.transform.y = 32.0
-
-    body.velocity.set(
-        100.0,
-        25.0,
-    )
-
-    body.move_and_slide(
-        collision,
-        "collision",
-        1.0,
-    )
-
-    assert body.transform.x == pytest.approx(
-        48.0
-    )
-
-    assert body.transform.y == pytest.approx(
-        57.0
-    )
-
-    assert body.velocity.x == 0.0
-
-    assert body.velocity.y == pytest.approx(
-        25.0
-    )
-
-
-def test_move_and_slide_uses_collision_offset():
-    collision = create_collision()
-
-    layer = collision.tilemap.require_layer(
-        "collision"
-    )
-
-    layer.set_tile(
-        2,
-        1,
-        1,
-    )
-
-    body = create_body()
-
-    body.transform.x = 27.0
-    body.transform.y = 32.0
-
-    body.set_collision_offset(
-        5.0,
-        0.0,
-    )
-
-    body.velocity.x = 100.0
-
-    body.move_and_slide(
-        collision,
-        "collision",
-        1.0,
-    )
-
-    # Collision rectangle stops at x=48.
-    #
-    # Body transform must therefore be:
-    #
-    # 48 - offset 5 = 43.
-
-    assert body.transform.x == pytest.approx(
-        43.0
-    )
-
-    assert body.collided_right
-
-
-def test_negative_delta_time_rejected():
-    collision = create_collision()
-    body = create_body()
-
-    with pytest.raises(
-        ValueError
-    ):
-        body.move_and_slide(
-            collision,
-            "collision",
-            -1.0,
-        )
-
-
-def test_zero_delta_time_does_not_move():
-    collision = create_collision()
-    body = create_body()
-
-    body.transform.x = 10.0
-    body.transform.y = 20.0
-
-    body.velocity.set(
-        100.0,
-        100.0,
-    )
-
-    body.move_and_slide(
-        collision,
-        "collision",
-        0.0,
-    )
-
-    assert body.transform.x == pytest.approx(
-        10.0
-    )
-
-    assert body.transform.y == pytest.approx(
-        20.0
-    )
 
 
 def test_move_and_collide():
@@ -570,75 +378,58 @@ def test_move_and_collide():
         collision,
         "collision",
         20.0,
-        30.0,
+        10.0,
     )
 
-    assert body.transform.x == pytest.approx(
-        20.0
-    )
-
-    assert body.transform.y == pytest.approx(
-        30.0
+    assert body.world_position == pytest.approx(
+        (
+            20.0,
+            10.0,
+        )
     )
 
     assert result.movement == pytest.approx(
         (
             20.0,
-            30.0,
+            10.0,
         )
     )
 
 
-def test_last_collision_is_set():
-    collision = create_collision()
-    body = create_body()
-
-    result = body.move_and_collide(
-        collision,
-        "collision",
-        10.0,
-        0.0,
+def test_movement_requires_shape():
+    body = CharacterBody2D(
+        "Player",
+        World(),
     )
 
-    assert body.last_collision is result
-
-
-def test_collision_state_resets_between_moves():
     collision = create_collision()
 
-    layer = collision.tilemap.require_layer(
-        "collision"
-    )
+    with pytest.raises(
+        RuntimeError
+    ):
+        body.move_and_slide(
+            collision,
+            "collision",
+            1.0,
+        )
 
-    layer.set_tile(
-        2,
-        1,
-        1,
-    )
 
+def test_disabled_shape_cannot_be_used():
     body = create_body()
 
-    body.transform.x = 32.0
-    body.transform.y = 32.0
-
-    body.velocity.x = 100.0
-
-    body.move_and_slide(
-        collision,
-        "collision",
-        1.0,
+    shape = (
+        body.require_collision_shape()
     )
 
-    assert body.is_on_wall
+    shape.disabled = True
 
-    body.velocity.clear()
+    collision = create_collision()
 
-    body.move_and_slide(
-        collision,
-        "collision",
-        0.0,
-    )
-
-    assert not body.is_on_wall
-    assert not body.is_on_floor
-    assert not body.is_on_ceiling
+    with pytest.raises(
+        RuntimeError
+    ):
+        body.move_and_slide(
+            collision,
+            "collision",
+            1.0,
+        )

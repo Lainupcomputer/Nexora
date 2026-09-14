@@ -7,6 +7,9 @@ from nexora.nodes.node import Node
 from nexora.nodes.ui.controls.text_input import TextInput
 from nexora.nodes.ui.ui_root import UIRoot
 from nexora.ui import UIInput
+from nexora.physics import (
+    get_physics_world,
+)
 
 
 class SceneState(str, Enum):
@@ -554,9 +557,10 @@ class Scene:
         fixed_delta_time: float,
     ) -> None:
         """
-        Fixed timestep update.
+        Execute one fixed physics/update step.
 
-        Only active scenes are updated.
+        PhysicsWorld2D rebuilds its broadphase once before the Node
+        physics update.
         """
 
         if (
@@ -565,14 +569,33 @@ class Scene:
         ):
             return
 
+        # ==========================================================
+        # Physics broadphase
+        # ==========================================================
+
+        physics_world = (
+            get_physics_world(
+                self.world
+            )
+        )
+
+        physics_world.rebuild()
+
+        # ==========================================================
+        # Node tree
+        # ==========================================================
+
         self.root.fixed_update_tree(
             fixed_delta_time
         )
 
+        # ==========================================================
+        # ECS
+        # ==========================================================
+
         self.world.fixed_update(
             fixed_delta_time
         )
-
     # ==========================================================
     # RENDER
     # ==========================================================

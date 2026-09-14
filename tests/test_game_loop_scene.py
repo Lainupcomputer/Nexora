@@ -79,8 +79,53 @@ def test_scene_render_through_game():
 # GameLoop integration
 # ==============================================================
 
+class FakePhysicsDebug:
+    def __init__(
+        self,
+    ):
+        self.visible = False
+
+    def toggle(
+        self,
+    ):
+        self.visible = not self.visible
+
+
+class FakeDebugOverlay:
+    def __init__(
+        self,
+    ):
+        self.visible = False
+
+        self.physics = (
+            FakePhysicsDebug()
+        )
+
+    def toggle(
+        self,
+    ):
+        self.visible = not self.visible
+
+    def update(
+        self,
+        delta_time,
+    ):
+        pass
+
+    def render(
+        self,
+        renderer,
+    ):
+        pass
+
 
 class FakeInput:
+    def key_pressed(
+        self,
+        key: str,
+    ) -> bool:
+        return False
+
     def initialize(self):
         pass
 
@@ -159,6 +204,9 @@ class FakeEngine:
         self.renderer = FakeRenderer()
         self.gpu_context = FakeGPUContext()
         self.audio = FakeAudio()
+        self.debug_overlay = (
+            FakeDebugOverlay()
+        )
 
 
 def test_game_loop_runs_scene_fixed_update():

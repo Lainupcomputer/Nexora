@@ -5,6 +5,9 @@ import sys
 import sysconfig
 
 from nexora.debug.metrics import DebugMetrics
+from nexora.debug.physics import (
+    PhysicsDebugRenderer,
+)
 
 
 class DebugOverlay:
@@ -27,6 +30,14 @@ class DebugOverlay:
 
         self.metrics = (
             DebugMetrics()
+        )
+
+        # ======================================================
+        # Physics debug
+        # ======================================================
+
+        self.physics = (
+            PhysicsDebugRenderer()
         )
 
         # ======================================================
@@ -87,6 +98,27 @@ class DebugOverlay:
         self,
         renderer,
     ) -> None:
+        # ======================================================
+        # Physics debug
+        # ======================================================
+
+        if self.physics.visible:
+            scene = getattr(
+                self.engine.game,
+                "scene",
+                None,
+            )
+
+            if scene is not None:
+                self.physics.render(
+                    renderer,
+                    scene.root,
+                )
+
+        # ======================================================
+        # Debug information overlay
+        # ======================================================
+
         if not self.visible:
             return
 
