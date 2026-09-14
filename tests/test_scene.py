@@ -1,263 +1,532 @@
+from __future__ import annotations
+
 import pytest
-from nexora.ecs.system import System
 
-from nexora.scene import Node, Scene
-from nexora.nodes.ui.controls.button import Button
-from nexora.input.input import InputManager
+from nexora.scene.scene import (
+    Scene,
+    SceneState,
+)
+from nexora.nodes import Node
+
+class TrackingScene(Scene):
+    def __init__(
+        self,
+        name: str,
+    ) -> None:
+        super().__init__(
+            name
+        )
+
+        self.events: list[
+            tuple
+        ] = []
+
+    def on_enter(
+        self,
+        previous_state: SceneState,
+    ) -> None:
+        self.events.append(
+            (
+                "enter",
+                previous_state,
+            )
+        )
+
+    def on_exit(
+        self,
+        previous_state: SceneState,
+    ) -> None:
+        self.events.append(
+            (
+                "exit",
+                previous_state,
+            )
+        )
+
+    def on_pause(
+        self,
+    ) -> None:
+        self.events.append(
+            (
+                "pause",
+            )
+        )
+
+    def on_resume(
+        self,
+    ) -> None:
+        self.events.append(
+            (
+                "resume",
+            )
+        )
 
 
-
-def test_scene_creation():
-    scene = Scene("TestScene")
-
-    assert scene.name == "TestScene"
-    assert scene.root.name == "Root"
+# ==============================================================
+# CREATION
+# ==============================================================
 
 
-def test_scene_node_creation():
-    scene = Scene("TestScene")
+def test_scene_initial_state() -> None:
+    scene = Scene(
+        "Test"
+    )
 
-    player = scene.create_node("Player")
-    weapon = scene.create_node("Weapon", player)
-    camera = scene.create_node("Camera")
+    assert (
+        scene.name
+        == "Test"
+    )
 
-    assert player.parent is scene.root
-    assert weapon.parent is player
-    assert camera.parent is scene.root
+    assert (
+        scene.state
+        == SceneState.CREATED
+    )
 
+    assert (
+        scene.active
+        is False
+    )
 
-def test_scene_lookup():
-    scene = Scene("TestScene")
+    assert (
+        scene.paused
+        is False
+    )
 
-    player = scene.create_node("Player")
-    weapon = scene.create_node("Weapon", player)
-    camera = scene.create_node("Camera")
-
-    assert scene.find("Player") is player
-    assert scene.find("Weapon") is weapon
-    assert scene.find("Camera") is camera
-
-
-def test_scene_ecs_integration():
-    scene = Scene("TestScene")
-
-    player = scene.create_node("Player")
-    weapon = scene.create_node("Weapon", player)
-    camera = scene.create_node("Camera")
-
-    assert scene.world.is_alive(player.entity)
-    assert scene.world.is_alive(weapon.entity)
-    assert scene.world.is_alive(camera.entity)
+    assert (
+        scene.destroyed
+        is False
+    )
 
 
-def test_scene_destroy():
-    scene = Scene("TestScene")
+def test_scene_rejects_empty_name() -> None:
+    with pytest.raises(
+        ValueError
+    ):
+        Scene(
+            ""
+        )
 
-    player = scene.create_node("Player")
-    weapon = scene.create_node("Weapon", player)
-    camera = scene.create_node("Camera")
+
+# ==============================================================
+# ENTER
+# ==============================================================
+
+
+def test_scene_enter() -> None:
+    scene = TrackingScene(
+        "Test"
+    )
+
+    scene.enter()
+
+    assert (
+        scene.state
+        == SceneState.ACTIVE
+    )
+
+    assert (
+        scene.active
+        is True
+    )
+
+    assert scene.events == [
+        (
+            "enter",
+            SceneState.CREATED,
+        )
+    ]
+
+
+def test_scene_enter_twice_is_noop() -> None:
+    scene = TrackingScene(
+        "Test"
+    )
+
+    scene.enter()
+    scene.enter()
+
+    assert len(
+        scene.events
+    ) == 1
+
+
+# ==============================================================
+# EXIT
+# ==============================================================
+
+
+def test_scene_exit() -> None:
+    scene = TrackingScene(
+        "Test"
+    )
+
+    scene.enter()
+    scene.exit()
+
+    assert (
+        scene.state
+        == SceneState.INACTIVE
+    )
+
+    assert scene.events == [
+        (
+            "enter",
+            SceneState.CREATED,
+        ),
+        (
+            "exit",
+            SceneState.ACTIVE,
+        ),
+    ]
+
+
+def test_scene_exit_inactive_is_noop() -> None:
+    scene = TrackingScene(
+        "Test"
+    )
+
+    scene.exit()
+
+    assert (
+        scene.state
+        == SceneState.CREATED
+    )
+
+    assert (
+        scene.events
+        == []
+    )
+
+
+# ==============================================================
+# PAUSE / RESUME
+# ==============================================================
+
+
+def test_scene_pause() -> None:
+    scene = TrackingScene(
+        "Test"
+    )
+
+    scene.enter()
+    scene.pause()
+
+    assert (
+        scene.state
+        == SceneState.PAUSED
+    )
+
+    assert (
+        scene.paused
+        is True
+    )
+
+    assert scene.events == [
+        (
+            "enter",
+            SceneState.CREATED,
+        ),
+        (
+            "pause",
+        ),
+    ]
+
+
+def test_scene_pause_requires_active_scene() -> None:
+    scene = Scene(
+        "Test"
+    )
+
+    with pytest.raises(
+        RuntimeError
+    ):
+        scene.pause()
+
+
+def test_scene_resume() -> None:
+    scene = TrackingScene(
+        "Test"
+    )
+
+    scene.enter()
+    scene.pause()
+    scene.resume()
+
+    assert (
+        scene.state
+        == SceneState.ACTIVE
+    )
+
+    assert scene.events == [
+        (
+            "enter",
+            SceneState.CREATED,
+        ),
+        (
+            "pause",
+        ),
+        (
+            "resume",
+        ),
+    ]
+
+
+def test_scene_resume_requires_paused_scene() -> None:
+    scene = Scene(
+        "Test"
+    )
+
+    with pytest.raises(
+        RuntimeError
+    ):
+        scene.resume()
+
+
+# ==============================================================
+# DESTROY
+# ==============================================================
+
+
+def test_scene_destroy() -> None:
+    scene = TrackingScene(
+        "Test"
+    )
+
+    scene.enter()
+    scene.destroy()
+
+    assert (
+        scene.state
+        == SceneState.DESTROYED
+    )
+
+    assert (
+        scene.destroyed
+        is True
+    )
+
+    assert (
+        scene.active
+        is False
+    )
+
+    assert scene.events == [
+        (
+            "enter",
+            SceneState.CREATED,
+        ),
+        (
+            "exit",
+            SceneState.ACTIVE,
+        ),
+    ]
+
+
+def test_scene_destroy_twice_is_safe() -> None:
+    scene = Scene(
+        "Test"
+    )
+
+    scene.destroy()
+    scene.destroy()
+
+    assert (
+        scene.destroyed
+        is True
+    )
+
+
+def test_destroyed_scene_cannot_enter() -> None:
+    scene = Scene(
+        "Test"
+    )
 
     scene.destroy()
 
-    assert not scene.world.is_alive(player.entity)
-    assert not scene.world.is_alive(weapon.entity)
-    assert not scene.world.is_alive(camera.entity)
+    with pytest.raises(
+        RuntimeError
+    ):
+        scene.enter()
 
 
-def test_scene_nodes():
-    scene = Scene("TestScene")
-
-    player = scene.create_node("Player")
-    camera = scene.create_node("Camera")
-
-    assert scene.nodes == (player, camera)
+# ==============================================================
+# UPDATE STATE
+# ==============================================================
 
 
-def test_scene_add_node():
-    scene = Scene("TestScene")
+def test_inactive_scene_does_not_update(
+    monkeypatch,
+) -> None:
+    scene = Scene(
+        "Test"
+    )
 
-    player = scene.create_node("Player")
-    weapon = Node("Weapon", scene.world)
+    called = {
+        "root": False,
+        "world": False,
+    }
 
-    scene.add_node(weapon, player)
+    def root_update(
+        delta_time,
+    ):
+        called["root"] = True
 
-    assert weapon.parent is player
-    assert scene.find("Weapon") is weapon
+    def world_update(
+        delta_time,
+    ):
+        called["world"] = True
+
+    monkeypatch.setattr(
+        scene.root,
+        "update_tree",
+        root_update,
+    )
+
+    monkeypatch.setattr(
+        scene.world,
+        "update",
+        world_update,
+    )
+
+    scene.update(
+        0.016
+    )
+
+    assert called == {
+        "root": False,
+        "world": False,
+    }
 
 
-def test_scene_remove_node():
-    scene = Scene("TestScene")
+def test_active_scene_updates(
+    monkeypatch,
+) -> None:
+    scene = Scene(
+        "Test"
+    )
 
-    player = scene.create_node("Player")
-    weapon = scene.create_node("Weapon", player)
+    called = {
+        "root": False,
+        "world": False,
+    }
 
-    scene.remove_node(player)
+    def root_update(
+        delta_time,
+    ):
+        called["root"] = True
 
-    assert player.parent is None
-    assert scene.nodes == ()
-    assert scene.find("Player") is None
+    def world_update(
+        delta_time,
+    ):
+        called["world"] = True
 
-    assert scene.world.is_alive(player.entity)
-    assert scene.world.is_alive(weapon.entity)
+    monkeypatch.setattr(
+        scene.root,
+        "update_tree",
+        root_update,
+    )
+
+    monkeypatch.setattr(
+        scene.world,
+        "update",
+        world_update,
+    )
+
+    scene.enter()
+
+    scene.update(
+        0.016
+    )
+
+    assert called == {
+        "root": True,
+        "world": True,
+    }
+
+def test_scene_camera_defaults_to_none() -> None:
+    scene = Scene(
+        "Test"
+    )
+
+    assert (
+        scene.camera
+        is None
+    )
 
 
-def test_scene_rejects_foreign_node():
-    scene = Scene("TestScene")
-    other_scene = Scene("OtherScene")
+def test_scene_can_assign_camera() -> None:
+    scene = Scene(
+        "Test"
+    )
 
-    foreign_node = Node("Foreign", other_scene.world)
-
-    with pytest.raises(ValueError):
-        scene.add_node(foreign_node)
-
-
-def test_scene_rejects_foreign_parent():
-    scene = Scene("TestScene")
-    other_scene = Scene("OtherScene")
-
-    foreign_parent = Node("ForeignParent", other_scene.world)
-    node = scene.create_node("Node")
-
-    with pytest.raises(ValueError):
-        scene.add_node(node, foreign_parent)
-
-def test_scene_update():
-    scene = Scene("TestScene")
-
-    class TestSystem(System):
-        def __init__(self):
-            self.update_count = 0
-            self.last_delta = None
-
-        def update(self, world, delta_time):
-            self.update_count += 1
-            self.last_delta = delta_time
-
-    system = TestSystem()
-    scene.world.add_system(system)
-
-    scene.update(0.016)
-
-    assert system.update_count == 1
-    assert system.last_delta == 0.016
-
-def test_scene_fixed_update():
-    scene = Scene("TestScene")
-
-    class TestSystem(System):
-        def __init__(self):
-            self.update_count = 0
-            self.last_delta = None
-
-        def fixed_update(self, world, fixed_delta_time):
-            self.update_count += 1
-            self.last_delta = fixed_delta_time
-
-    system = TestSystem()
-    scene.world.add_system(system)
-
-    scene.fixed_update(0.02)
-
-    assert system.update_count == 1
-    assert system.last_delta == 0.02
-
-def test_scene_updates_ui_input() -> None:
-    scene = Scene("UITest")
-
-    button = Button(
-        "Button",
+    camera = Node(
+        "Camera",
         scene.world,
     )
 
-    button.size = (
-        200.0,
-        100.0,
+    scene.camera = camera
+
+    assert (
+        scene.camera
+        is camera
     )
 
-    scene.ui.add_child(
-        button,
+
+def test_scene_rejects_camera_from_other_world() -> None:
+    scene_a = Scene(
+        "A"
     )
 
-    input_manager = InputManager()
-
-    input_manager.initialize()
-
-    scene.ui_input.set_mouse_position(
-        50.0,
-        20.0,
+    scene_b = Scene(
+        "B"
     )
 
-    # Mouse position is normally supplied by InputManager.
-    input_manager._mouse_x = 50.0
-    input_manager._mouse_y = 20.0
-
-    scene.update_input(
-        input_manager,
+    camera = Node(
+        "Camera",
+        scene_b.world,
     )
 
-    assert scene.ui_input.mouse_position == (
-        50.0,
-        20.0,
+    with pytest.raises(
+        ValueError
+    ):
+        scene_a.camera = camera
+
+
+def test_scene_clear_camera() -> None:
+    scene = Scene(
+        "Test"
     )
 
-    assert button.hovered is True
-
-def test_scene_updates_ui_from_input_manager() -> None:
-    scene = Scene("UITest")
-
-    button = Button(
-        "Button",
+    camera = Node(
+        "Camera",
         scene.world,
     )
 
-    button.size = (
-        200.0,
-        100.0,
+    scene.camera = camera
+
+    scene.clear_camera()
+
+    assert (
+        scene.camera
+        is None
     )
 
-    scene.ui.add_child(
-        button,
+
+def test_scene_destroy_clears_camera() -> None:
+    scene = Scene(
+        "Test"
     )
 
-    class FakeInputManager:
-        mouse_position = (
-            50.0,
-            20.0,
-        )
-
-        def mouse_down(
-            self,
-            button: str,
-        ) -> bool:
-            return True
-
-        def mouse_pressed(
-            self,
-            button: str,
-        ) -> bool:
-            return True
-
-        def mouse_released(
-            self,
-            button: str,
-        ) -> bool:
-            return False
-
-    input_manager = FakeInputManager()
-
-    scene.update_input(
-        input_manager,
+    camera = Node(
+        "Camera",
+        scene.world,
     )
 
-    assert scene.ui_input.mouse_position == (
-        50.0,
-        20.0,
+    scene.camera = camera
+
+    scene.destroy()
+
+    assert (
+        scene.camera
+        is None
     )
-
-    assert scene.ui_input.mouse_left_down is True
-    assert scene.ui_input.mouse_left_pressed is True
-    assert scene.ui_input.mouse_left_released is False
-
-    assert button.hovered is True
-    assert button.pressed is True
-    

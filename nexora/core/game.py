@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from nexora.core.engine import Engine
-from nexora.rendering.gpu import WindowMode
-from nexora.scene import Scene, SceneManager
 from pathlib import Path
 
+from nexora.core.engine import Engine
+from nexora.rendering.gpu import WindowMode
+from nexora.scene import (
+    Scene,
+    SceneManager,
+)
 from nexora.settings import SettingsStore
 
 
@@ -12,8 +15,25 @@ class Game:
     """
     Public high-level Nexora game API.
 
-    A Game owns the engine and provides the simple entry point
-    used by game projects.
+    SceneManager is the single source of truth for scene state.
+
+    There is intentionally no separate Game._scene reference.
+
+    Scene flow:
+
+        Game
+            -> SceneManager
+                -> active_scene
+
+    Scene stack rendering:
+
+        Game
+          PAUSED
+        Pause
+          ACTIVE
+
+    Both scenes are rendered, but only the active scene receives
+    input and regular updates.
     """
 
     def __init__(
@@ -31,26 +51,73 @@ class Game:
         settings_path: str | Path = "settings.json",
         settings_defaults: dict | None = None,
     ) -> None:
+        # ======================================================
+        # Engine services
+        # ======================================================
+
         self.engine: Engine | None = None
 
         self.renderer = None
         self.input = None
         self.window = None
 
-        self._title = title
-        self._width = width
-        self._height = height
-        self._target_fps = target_fps
-        self._fixed_delta_time = fixed_delta_time
-        self._resizable = resizable
-        self._fullscreen = fullscreen
-        self._window_mode = window_mode
-        self._vsync = vsync
+        # ======================================================
+        # Configuration
+        # ======================================================
+
+        self._title = str(
+            title
+        )
+
+        self._width = int(
+            width
+        )
+
+        self._height = int(
+            height
+        )
+
+        self._target_fps = int(
+            target_fps
+        )
+
+        self._fixed_delta_time = float(
+            fixed_delta_time
+        )
+
+        self._resizable = bool(
+            resizable
+        )
+
+        self._fullscreen = bool(
+            fullscreen
+        )
+
+        self._window_mode = (
+            window_mode
+        )
+
+        self._vsync = bool(
+            vsync
+        )
+
+        # ======================================================
+        # Runtime state
+        # ======================================================
 
         self._running = False
         self._shutdown = False
-        self._scene: Scene | None = None
+
+        # ======================================================
+        # Scenes
+        # ======================================================
+
         self._scenes = SceneManager()
+
+        # ======================================================
+        # Settings
+        # ======================================================
+
         self._settings = SettingsStore(
             settings_path,
             defaults=settings_defaults,
@@ -60,31 +127,43 @@ class Game:
     # LIFECYCLE
     # ==========================================================
 
-    def initialize(self) -> None:
+    def initialize(
+        self,
+    ) -> None:
         """
         Called automatically by Engine.initialize().
+
+        Override in a game subclass.
         """
+
         pass
 
-    def shutdown(self) -> None:
+    def shutdown(
+        self,
+    ) -> None:
         """
         Called automatically before the engine is shut down.
+
+        All loaded scenes are destroyed here.
         """
+
         self._scenes.clear()
-        self._scene = None
 
     # ==========================================================
     # RUN
     # ==========================================================
 
-    def run(self) -> None:
+    def run(
+        self,
+    ) -> None:
         """
         Start the game.
         """
 
         if self._shutdown:
             raise RuntimeError(
-                "Cannot run a game that has already been shut down."
+                "Cannot run a game that has already "
+                "been shut down."
             )
 
         self.engine = Engine(
@@ -93,7 +172,9 @@ class Game:
             height=self._height,
             title=self._title,
             target_fps=self._target_fps,
-            fixed_delta_time=self._fixed_delta_time,
+            fixed_delta_time=(
+                self._fixed_delta_time
+            ),
             resizable=self._resizable,
             fullscreen=self._fullscreen,
             window_mode=self._window_mode,
@@ -104,6 +185,7 @@ class Game:
 
         try:
             self.engine.run()
+
         finally:
             self._running = False
 
@@ -116,110 +198,263 @@ class Game:
     # CONTROL
     # ==========================================================
 
-    def stop(self) -> None:
-        """Stop the running game loop."""
+    def stop(
+        self,
+    ) -> None:
+        """
+        Stop the running game loop.
+        """
 
         if self.engine is not None:
             self.engine.stop()
 
-    def handle_event(self, event) -> None:
-        """Handle an SDL3 event."""
+    # ==========================================================
+    # EVENTS
+    # ==========================================================
+
+    def handle_event(
+        self,
+        event,
+    ) -> None:
+        """
+        Handle an SDL3 event.
+
+        Override in a game subclass when raw SDL events are
+        required.
+        """
+
         pass
+
+    # ==========================================================
+    # UPDATE
+    # ==========================================================
 
     def update(
         self,
         delta_time: float,
     ) -> None:
         """
-        Update input and game logic.
+        Update the currently active scene.
+
+        Only SceneManager.active_scene receives:
+
+            UI input
+            node update
+            ECS update
+
+        Paused scenes in the scene stack remain loaded but do
+        not update.
         """
 
-        if self._scene is None:
+        scene = (
+            self._scenes.active_scene
+        )
+
+        if scene is None:
             return
 
-        # ----------------------------------------------------------
-        # Keep UI viewport synchronized before input processing.
-        # ----------------------------------------------------------
+        # ------------------------------------------------------
+        # Keep UI viewport synchronized before input handling.
+        # ------------------------------------------------------
 
         if self.renderer is not None:
-            self._scene.ui.set_viewport_size(
+            scene.ui.set_viewport_size(
                 self.renderer.width,
                 self.renderer.height,
             )
 
-        # ----------------------------------------------------------
+        # ------------------------------------------------------
         # UI input
-        # ----------------------------------------------------------
+        # ------------------------------------------------------
 
         if self.input is not None:
-            self._scene.update_input(
-                self.input,
+            scene.update_input(
+                self.input
             )
 
-        # ----------------------------------------------------------
+        # ------------------------------------------------------
         # Scene update
-        # ----------------------------------------------------------
+        # ------------------------------------------------------
 
-        self._scene.update(
+        scene.update(
             delta_time
         )
-    
-    def fixed_update(self, fixed_delta_time: float) -> None:
-        """Update fixed-timestep game logic."""
 
-        if self._scene is not None:
-            self._scene.fixed_update(fixed_delta_time)
+    # ==========================================================
+    # FIXED UPDATE
+    # ==========================================================
+
+    def fixed_update(
+        self,
+        fixed_delta_time: float,
+    ) -> None:
+        """
+        Run fixed-timestep logic for the active scene only.
+        """
+
+        scene = (
+            self._scenes.active_scene
+        )
+
+        if scene is None:
+            return
+
+        scene.fixed_update(
+            fixed_delta_time
+        )
+
+    # ==========================================================
+    # RENDER
+    # ==========================================================
 
     def render(
         self,
         interpolation: float,
     ) -> None:
-        if self._scene is None:
+        """
+        Render the complete active scene stack.
+
+        Example:
+
+            Game       PAUSED
+            Pause      ACTIVE
+
+        Rendering order:
+
+            Game
+              ↓
+            Pause
+
+        This allows pause menus, inventories and other overlay
+        scenes to be rendered on top of the game while the game
+        itself remains paused.
+        """
+
+        if self.renderer is None:
             return
 
-        # ----------------------------------------------------------
-        # ECS rendering
-        # ----------------------------------------------------------
-
-        self._scene.render(
-            interpolation
+        render_scenes = (
+            self._get_render_scenes()
         )
 
-        # ----------------------------------------------------------
-        # Scene node rendering
-        # ----------------------------------------------------------
+        if not render_scenes:
+            return
 
-        self._scene.render_nodes(
-            self.renderer,
-            interpolation,
+        for scene in render_scenes:
+            self._render_scene(
+                scene,
+                interpolation,
+            )
+
+    # ==========================================================
+    # SCENE RENDERING
+    # ==========================================================
+
+    def _get_render_scenes(
+        self,
+    ) -> tuple[
+        Scene,
+        ...
+    ]:
+        """
+        Return scenes in back-to-front render order.
+
+        SceneManager.stack contains the paused scenes below the
+        active scene.
+
+        Example:
+
+            stack:
+                Game
+                Pause
+
+            active:
+                Settings
+
+            result:
+                Game
+                Pause
+                Settings
+        """
+
+        active_scene = (
+            self._scenes.active_scene
         )
 
-        # ----------------------------------------------------------
-        # UI
-        # ----------------------------------------------------------
+        if active_scene is None:
+            return ()
 
-        self._scene.ui.set_viewport_size(
+        return (
+            *self._scenes.stack,
+            active_scene,
+        )
+
+    def _render_scene(
+        self,
+        scene: Scene,
+        interpolation: float,
+    ) -> None:
+        """
+        Render one scene using the normal Nexora scene pipeline.
+        """
+
+        # ------------------------------------------------------
+        # Synchronize UI viewport
+        # ------------------------------------------------------
+
+        scene.ui.set_viewport_size(
             self.renderer.width,
             self.renderer.height,
         )
 
-        self._scene.ui.render(
-            self.renderer,
+        # ------------------------------------------------------
+        # ECS rendering
+        # ------------------------------------------------------
+
+        scene.render(
+            interpolation
         )
+
+        # ------------------------------------------------------
+        # Node rendering
+        # ------------------------------------------------------
+
+        scene.render_nodes(
+            self.renderer,
+            interpolation,
+        )
+
+        # ------------------------------------------------------
+        # UI rendering
+        # ------------------------------------------------------
+
+        scene.ui.render(
+            self.renderer
+        )
+
     # ==========================================================
     # WINDOW
     # ==========================================================
 
-    def set_windowed(self) -> None:
+    def set_windowed(
+        self,
+    ) -> None:
         self._require_window()
+
         self.window.set_windowed()
 
-    def set_borderless(self) -> None:
+    def set_borderless(
+        self,
+    ) -> None:
         self._require_window()
+
         self.window.set_borderless()
 
-    def set_fullscreen(self) -> None:
+    def set_fullscreen(
+        self,
+    ) -> None:
         self._require_window()
+
         self.window.set_fullscreen()
 
     def set_window_mode(
@@ -227,15 +462,31 @@ class Game:
         mode: WindowMode | str,
     ) -> None:
         self._require_window()
-        self.window.set_window_mode(mode)
 
-    def toggle_fullscreen(self) -> None:
+        self.window.set_window_mode(
+            mode
+        )
+
+    def toggle_fullscreen(
+        self,
+    ) -> None:
         self._require_window()
+
         self.window.toggle_fullscreen()
 
-    def set_vsync(self, enabled: bool) -> None:
+    def set_vsync(
+        self,
+        enabled: bool,
+    ) -> None:
         self._require_window()
-        self.window.set_vsync(enabled)
+
+        self.window.set_vsync(
+            enabled
+        )
+
+    # ==========================================================
+    # SETTINGS
+    # ==========================================================
 
     @property
     def settings(
@@ -243,138 +494,264 @@ class Game:
     ) -> SettingsStore:
         return self._settings
 
-    @property
-    def window_mode(self) -> WindowMode:
-        self._require_window()
-        return self.window.window_mode
+    # ==========================================================
+    # WINDOW PROPERTIES
+    # ==========================================================
 
     @property
-    def vsync(self) -> bool:
+    def window_mode(
+        self,
+    ) -> WindowMode:
         self._require_window()
-        return self.window.vsync
+
+        return (
+            self.window.window_mode
+        )
 
     @property
-    def fullscreen(self) -> bool:
+    def vsync(
+        self,
+    ) -> bool:
         self._require_window()
-        return self.window.is_fullscreen
 
-    def _require_window(self):
+        return bool(
+            self.window.vsync
+        )
+
+    @property
+    def fullscreen(
+        self,
+    ) -> bool:
+        self._require_window()
+
+        return bool(
+            self.window.is_fullscreen
+        )
+
+    def _require_window(
+        self,
+    ) -> None:
         if self.window is None:
             raise RuntimeError(
                 "Game has not been started."
             )
 
     # ==========================================================
-    # ENGINE SERVICES
+    # SCENES
     # ==========================================================
 
     @property
-    def scenes(self) -> SceneManager:
+    def scenes(
+        self,
+    ) -> SceneManager:
+        """
+        Access the game's SceneManager.
+        """
+
         return self._scenes
 
     @property
     def scene(
         self,
     ) -> Scene | None:
-        return self._scene
+        """
+        Return the currently active scene.
 
+        This is only a convenience alias for:
+
+            game.scenes.active_scene
+
+        SceneManager remains the single source of truth.
+        """
+
+        return (
+            self._scenes.active_scene
+        )
 
     @scene.setter
     def scene(
         self,
         value: Scene | None,
     ) -> None:
-        # ----------------------------------------------------------
-        # Nothing changed.
-        # ----------------------------------------------------------
+        """
+        Convenience setter for the active scene.
 
-        if value is self._scene:
-            return
+        Existing code such as:
 
-        # ----------------------------------------------------------
-        # Clear active scene.
-        # ----------------------------------------------------------
+            self.scene = Scene("Game")
+
+        remains supported.
+
+        Internally this always goes through SceneManager.
+
+        Setting scene to None deactivates the current scene
+        without destroying it.
+        """
+
+        # ------------------------------------------------------
+        # Deactivate
+        # ------------------------------------------------------
 
         if value is None:
-            self._scene = None
-
+            self._scenes.deactivate()
             return
 
-        # ----------------------------------------------------------
-        # Make sure the scene is known by the SceneManager.
-        # ----------------------------------------------------------
+        # ------------------------------------------------------
+        # Type validation
+        # ------------------------------------------------------
 
-        if not self._scenes.is_loaded(
-            value.name
+        if not isinstance(
+            value,
+            Scene,
         ):
+            raise TypeError(
+                "scene must be a Scene instance or None."
+            )
+
+        # ------------------------------------------------------
+        # Already active
+        # ------------------------------------------------------
+
+        if (
+            self._scenes.active_scene
+            is value
+        ):
+            return
+
+        # ------------------------------------------------------
+        # Ensure loaded
+        # ------------------------------------------------------
+
+        loaded_scene = (
+            self._scenes.get(
+                value.name
+            )
+        )
+
+        if loaded_scene is None:
             self._scenes.load(
                 value
             )
 
-        # ----------------------------------------------------------
-        # Activate scene.
-        # ----------------------------------------------------------
-
-        if (
-            self._scenes.active_scene
-            is not value
-        ):
-            self._scenes.activate(
-                value.name
+        elif loaded_scene is not value:
+            raise ValueError(
+                f"A different scene named "
+                f"'{value.name}' is already loaded."
             )
 
-        self._scene = value
+        # ------------------------------------------------------
+        # Activate
+        # ------------------------------------------------------
 
+        self._scenes.change_scene(
+            value.name
+        )
+
+    # ==========================================================
+    # AUDIO
+    # ==========================================================
 
     @property
-    def audio(self):
+    def audio(
+        self,
+    ):
         if self.engine is None:
-            raise RuntimeError("Game has not been started.")
+            raise RuntimeError(
+                "Game has not been started."
+            )
 
         return self.engine.audio
 
+    # ==========================================================
+    # ASSETS
+    # ==========================================================
+
     @property
-    def assets(self):
+    def assets(
+        self,
+    ):
         if self.engine is None:
-            raise RuntimeError("Game has not been started.")
+            raise RuntimeError(
+                "Game has not been started."
+            )
 
         return self.engine.assets
 
+    # ==========================================================
+    # LOGGER
+    # ==========================================================
+
     @property
-    def logger(self):
+    def logger(
+        self,
+    ):
         if self.engine is None:
-            raise RuntimeError("Game has not been started.")
+            raise RuntimeError(
+                "Game has not been started."
+            )
 
         return self.engine.logger
 
+    # ==========================================================
+    # TIME
+    # ==========================================================
+
     @property
-    def time(self):
+    def time(
+        self,
+    ):
         if self.engine is None:
-            raise RuntimeError("Game has not been started.")
+            raise RuntimeError(
+                "Game has not been started."
+            )
 
         return self.engine.time
 
     @property
-    def delta_time(self) -> float:
+    def delta_time(
+        self,
+    ) -> float:
         if self.engine is None:
-            raise RuntimeError("Game has not been started.")
+            raise RuntimeError(
+                "Game has not been started."
+            )
 
-        return self.engine.delta_time
+        return (
+            self.engine.delta_time
+        )
 
     @property
-    def total_time(self) -> float:
+    def total_time(
+        self,
+    ) -> float:
         if self.engine is None:
-            raise RuntimeError("Game has not been started.")
+            raise RuntimeError(
+                "Game has not been started."
+            )
 
-        return self.engine.total_time
+        return (
+            self.engine.total_time
+        )
 
     @property
-    def frame(self) -> int:
+    def frame(
+        self,
+    ) -> int:
         if self.engine is None:
-            raise RuntimeError("Game has not been started.")
+            raise RuntimeError(
+                "Game has not been started."
+            )
 
-        return self.engine.frame
+        return (
+            self.engine.frame
+        )
+
+    # ==========================================================
+    # RUNTIME STATE
+    # ==========================================================
 
     @property
-    def running(self) -> bool:
+    def running(
+        self,
+    ) -> bool:
         return self._running
