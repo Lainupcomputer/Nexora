@@ -1,14 +1,21 @@
 from __future__ import annotations
 
-from nexora.debug.overlay import DebugOverlay
-from nexora.core.game_loop import GameLoop
-from nexora.debug.logger import Logger
-from nexora.input import InputManager
-from nexora.threading.context import ThreadContext
-from nexora.rendering import Renderer
-from nexora.rendering.gpu import GPUContext, WindowMode
+from pathlib import Path
+
 from nexora.assets import AssetManager
 from nexora.audio import AudioSystem
+from nexora.core.game_loop import GameLoop
+from nexora.debug.logger import Logger
+from nexora.debug.overlay import DebugOverlay
+from nexora.input import InputManager
+from nexora.rendering import Renderer
+from nexora.rendering.gpu import (
+    GPUContext,
+    WindowMode,
+)
+from nexora.save import SaveManager
+from nexora.threading.context import ThreadContext
+
 
 class Engine:
     """
@@ -32,23 +39,68 @@ class Engine:
         fullscreen: bool = False,
         window_mode: WindowMode | str | None = None,
         vsync: bool = False,
+
+        # ======================================================
+        # Save system
+        # ======================================================
+
+        save_path: str | Path = "saves",
+        save_signing_key: bytes | str = (
+            b"nexora-default-save-signing-key-"
+            b"change-this-for-your-game"
+        ),
+        save_version: int = 1,
+        save_max_file_size: int = (
+            64 * 1024 * 1024
+        ),
+        quick_save_enabled: bool = True,
+        quick_save_slot: str = "quicksave",
+        autosave_enabled: bool = True,
+        autosave_slots: int = 3,
+        autosave_prefix: str = "autosave",
     ) -> None:
-        # ------------------------------------------------------
+        # ======================================================
         # Main thread
-        # ------------------------------------------------------
+        # ======================================================
 
         ThreadContext.initialize()
 
-        # ------------------------------------------------------
+        # ======================================================
         # Core services
-        # ------------------------------------------------------
+        # ======================================================
 
         self.logger = Logger()
         self.assets = AssetManager()
 
-        # ------------------------------------------------------
+        # ======================================================
+        # Save system
+        # ======================================================
+
+        self.saves = SaveManager(
+            save_path=save_path,
+            signing_key=save_signing_key,
+            save_version=save_version,
+            max_file_size=save_max_file_size,
+            quick_save_enabled=(
+                quick_save_enabled
+            ),
+            quick_save_slot=(
+                quick_save_slot
+            ),
+            autosave_enabled=(
+                autosave_enabled
+            ),
+            autosave_slots=(
+                autosave_slots
+            ),
+            autosave_prefix=(
+                autosave_prefix
+            ),
+        )
+
+        # ======================================================
         # Window mode
-        # ------------------------------------------------------
+        # ======================================================
 
         if window_mode is None:
             window_mode = (
@@ -56,12 +108,15 @@ class Engine:
                 if fullscreen
                 else WindowMode.WINDOWED
             )
-        else:
-            window_mode = WindowMode(window_mode)
 
-        # ------------------------------------------------------
+        else:
+            window_mode = WindowMode(
+                window_mode
+            )
+
+        # ======================================================
         # GPU
-        # ------------------------------------------------------
+        # ======================================================
 
         self.gpu_context = GPUContext(
             width=width,
@@ -72,6 +127,10 @@ class Engine:
             window_mode=window_mode,
         )
 
+        # ======================================================
+        # Default font
+        # ======================================================
+
         self.default_font = (
             self.assets.load_font(
                 "fonts/Roboto-Regular.ttf",
@@ -79,34 +138,40 @@ class Engine:
             )
         )
 
+        # ======================================================
+        # Renderer
+        # ======================================================
 
         self.renderer = Renderer(
             self.gpu_context,
             font=self.default_font,
         )
 
-        # ------------------------------------------------------
+        # ======================================================
         # Window
-        #
-        # GPUContext owns the actual SDL window.
-        # The public window reference exposes the same object.
-        # ------------------------------------------------------
+        # ======================================================
 
-        self.window = self.gpu_context
+        self.window = (
+            self.gpu_context
+        )
 
-        # ------------------------------------------------------
+        # ======================================================
         # Input
-        # ------------------------------------------------------
+        # ======================================================
 
         self.input = InputManager(
             logger=self.logger,
         )
 
+        # ======================================================
+        # Audio
+        # ======================================================
+
         self.audio = AudioSystem()
 
-        # ------------------------------------------------------
+        # ======================================================
         # Game
-        # ------------------------------------------------------
+        # ======================================================
 
         self.game = game
 
@@ -115,9 +180,9 @@ class Engine:
         self.game.input = self.input
         self.game.window = self.window
 
-        # ------------------------------------------------------
+        # ======================================================
         # Game loop
-        # ------------------------------------------------------
+        # ======================================================
 
         self.loop = GameLoop(
             self,
@@ -125,15 +190,21 @@ class Engine:
             fixed_delta_time=fixed_delta_time,
         )
 
+        # ======================================================
+        # Runtime
+        # ======================================================
+
         self._initialized = False
         self._shutdown = False
 
-        # ------------------------------------------------------
+        # ======================================================
         # Debug overlay
-        # ------------------------------------------------------
+        # ======================================================
 
-        self.debug_overlay = DebugOverlay(
-            self
+        self.debug_overlay = (
+            DebugOverlay(
+                self
+            )
         )
 
     # ==========================================================
@@ -141,38 +212,66 @@ class Engine:
     # ==========================================================
 
     @property
-    def time(self):
+    def time(
+        self,
+    ):
         return self.loop.time
 
     @property
-    def delta_time(self) -> float:
-        return self.time.delta_time
+    def delta_time(
+        self,
+    ) -> float:
+        return (
+            self.time.delta_time
+        )
 
     @property
-    def unscaled_delta_time(self) -> float:
-        return self.time.unscaled_delta_time
+    def unscaled_delta_time(
+        self,
+    ) -> float:
+        return (
+            self.time.unscaled_delta_time
+        )
 
     @property
-    def total_time(self) -> float:
-        return self.time.total_time
+    def total_time(
+        self,
+    ) -> float:
+        return (
+            self.time.total_time
+        )
 
     @property
-    def fixed_time(self) -> float:
-        return self.time.fixed_time
+    def fixed_time(
+        self,
+    ) -> float:
+        return (
+            self.time.fixed_time
+        )
 
     @property
-    def frame(self) -> int:
-        return self.time.frame
+    def frame(
+        self,
+    ) -> int:
+        return (
+            self.time.frame
+        )
 
     @property
-    def fixed_frame(self) -> int:
-        return self.time.fixed_frame
+    def fixed_frame(
+        self,
+    ) -> int:
+        return (
+            self.time.fixed_frame
+        )
 
     # ==========================================================
     # INITIALIZATION
     # ==========================================================
 
-    def initialize(self) -> None:
+    def initialize(
+        self,
+    ) -> None:
         if self._initialized:
             return
 
@@ -183,6 +282,7 @@ class Engine:
         self.input.initialize(
             self.gpu_context.window,
         )
+
         self.audio.initialize()
 
         initialize = getattr(
@@ -204,7 +304,9 @@ class Engine:
     # RUN
     # ==========================================================
 
-    def run(self) -> None:
+    def run(
+        self,
+    ) -> None:
         if self._shutdown:
             raise RuntimeError(
                 "Cannot run an engine that has already "
@@ -228,17 +330,20 @@ class Engine:
     # STOP
     # ==========================================================
 
-    def stop(self) -> None:
+    def stop(
+        self,
+    ) -> None:
         self.loop.stop()
 
     # ==========================================================
     # SHUTDOWN
     # ==========================================================
 
-    def shutdown(self) -> None:
+    def shutdown(
+        self,
+    ) -> None:
         if self._shutdown:
             return
-        self.audio.shutdown()
 
         ThreadContext.assert_main_thread(
             "Engine.shutdown"
@@ -253,20 +358,50 @@ class Engine:
         if shutdown is not None:
             shutdown()
 
-        # ------------------------------------------------------
-        # Destroy renderer first.
-        #
-        # GPU resources depend on the GPU device.
-        # ------------------------------------------------------
+        try:
+            self.audio.shutdown()
 
-        self.debug_overlay.shutdown()
-        self.renderer.destroy()
-        self.assets.shutdown()
-        # ------------------------------------------------------
-        # Destroy GPU context after all GPU resources.
-        # ------------------------------------------------------
+        except Exception as exc:
+            self.logger.warning(
+                "Audio shutdown failed: "
+                f"{exc}"
+            )
 
-        self.gpu_context.destroy()
+        try:
+            self.debug_overlay.shutdown()
+
+        except Exception as exc:
+            self.logger.warning(
+                "Debug overlay shutdown failed: "
+                f"{exc}"
+            )
+
+        try:
+            self.renderer.destroy()
+
+        except Exception as exc:
+            self.logger.warning(
+                "Renderer shutdown failed: "
+                f"{exc}"
+            )
+
+        try:
+            self.assets.shutdown()
+
+        except Exception as exc:
+            self.logger.warning(
+                "AssetManager shutdown failed: "
+                f"{exc}"
+            )
+
+        try:
+            self.gpu_context.destroy()
+
+        except Exception as exc:
+            self.logger.warning(
+                "GPUContext shutdown failed: "
+                f"{exc}"
+            )
 
         self._shutdown = True
 

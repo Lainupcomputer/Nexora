@@ -3,37 +3,47 @@ from __future__ import annotations
 from pathlib import Path
 
 from nexora.core.engine import Engine
-from nexora.rendering.gpu import WindowMode
+
+from nexora.nodes import (
+    NotificationAnchor,
+    NotificationCenter,
+)
+
+from nexora.rendering.gpu import (
+    WindowMode,
+)
+
+from nexora.save import (
+    SaveManager,
+    SaveNotificationHandler,
+)
+
 from nexora.scene import (
     Scene,
     SceneManager,
 )
-from nexora.settings import SettingsStore
+
+from nexora.settings import (
+    SettingsStore,
+)
 
 
 class Game:
     """
     Public high-level Nexora game API.
 
-    SceneManager is the single source of truth for scene state.
+    SceneManager is the single source of truth for normal
+    game-scene state.
 
-    There is intentionally no separate Game._scene reference.
+    Nexora additionally owns a persistent global overlay scene
+    which is independent from SceneManager.
 
-    Scene flow:
+    The global overlay is used for systems which must survive
+    normal scene changes, such as:
 
-        Game
-            -> SceneManager
-                -> active_scene
-
-    Scene stack rendering:
-
-        Game
-          PAUSED
-        Pause
-          ACTIVE
-
-    Both scenes are rendered, but only the active scene receives
-    input and regular updates.
+        - notifications
+        - save notifications
+        - future global overlays
     """
 
     def __init__(
@@ -48,8 +58,37 @@ class Game:
         fullscreen: bool = False,
         window_mode: WindowMode | str | None = None,
         vsync: bool = False,
+
+        # ======================================================
+        # Settings
+        # ======================================================
+
         settings_path: str | Path = "settings.json",
         settings_defaults: dict | None = None,
+
+        # ======================================================
+        # Save system
+        # ======================================================
+
+        save_path: str | Path = "saves",
+
+        save_signing_key: bytes | str = (
+            b"nexora-default-save-signing-key-"
+            b"change-this-for-your-game"
+        ),
+
+        save_version: int = 1,
+
+        save_max_file_size: int = (
+            64 * 1024 * 1024
+        ),
+
+        quick_save_enabled: bool = True,
+        quick_save_slot: str = "quicksave",
+
+        autosave_enabled: bool = True,
+        autosave_slots: int = 3,
+        autosave_prefix: str = "autosave",
     ) -> None:
         # ======================================================
         # Engine services
@@ -102,7 +141,47 @@ class Game:
         )
 
         # ======================================================
-        # Runtime state
+        # Save configuration
+        # ======================================================
+
+        self._save_path = Path(
+            save_path
+        )
+
+        self._save_signing_key = (
+            save_signing_key
+        )
+
+        self._save_version = int(
+            save_version
+        )
+
+        self._save_max_file_size = int(
+            save_max_file_size
+        )
+
+        self._quick_save_enabled = bool(
+            quick_save_enabled
+        )
+
+        self._quick_save_slot = str(
+            quick_save_slot
+        )
+
+        self._autosave_enabled = bool(
+            autosave_enabled
+        )
+
+        self._autosave_slots = int(
+            autosave_slots
+        )
+
+        self._autosave_prefix = str(
+            autosave_prefix
+        )
+
+        # ======================================================
+        # Runtime
         # ======================================================
 
         self._running = False
@@ -112,16 +191,200 @@ class Game:
         # Scenes
         # ======================================================
 
-        self._scenes = SceneManager()
+        self._scenes = (
+            SceneManager()
+        )
+
+        # ======================================================
+        # Global overlay
+        # ======================================================
+
+        self._global_overlay_scene: (
+            Scene | None
+        ) = None
+
+        self._notifications: (
+            NotificationCenter | None
+        ) = None
+
+        self._save_notification_handler: (
+            SaveNotificationHandler | None
+        ) = None
 
         # ======================================================
         # Settings
         # ======================================================
 
-        self._settings = SettingsStore(
-            settings_path,
-            defaults=settings_defaults,
+        self._settings = (
+            SettingsStore(
+                settings_path,
+                defaults=settings_defaults,
+            )
         )
+
+    # ==========================================================
+    # GLOBAL OVERLAY
+    # ==========================================================
+
+    def _initialize_global_overlay(
+        self,
+    ) -> None:
+        """
+        Create persistent global UI systems.
+
+        The global overlay is intentionally not managed by the
+        normal SceneManager.
+
+        Because of that, its lifecycle must be started manually.
+        """
+
+        if (
+            self._global_overlay_scene
+            is not None
+        ):
+            return
+
+        if self.renderer is None:
+            raise RuntimeError(
+                "Cannot initialize global overlay before "
+                "the renderer is available."
+            )
+
+        # ======================================================
+        # Dedicated overlay scene
+        # ======================================================
+
+        overlay_scene = Scene(
+            "__nexora_global_overlay__"
+        )
+
+        # ------------------------------------------------------
+        # Viewport
+        # ------------------------------------------------------
+
+        overlay_scene.ui.set_viewport_size(
+            self.renderer.width,
+            self.renderer.height,
+        )
+
+        # ======================================================
+        # Notification center
+        # ======================================================
+
+        notifications = (
+            NotificationCenter(
+                "GlobalNotifications",
+                overlay_scene.world,
+                self.renderer,
+            )
+        )
+
+        notifications.anchor = (
+            NotificationAnchor.TOP_RIGHT
+        )
+
+        notifications.max_visible = 5
+
+        notifications.width = 360.0
+        notifications.height = 92.0
+
+        notifications.margin = 24.0
+        notifications.spacing = 12.0
+
+        notifications.enter_duration = 0.35
+        notifications.exit_duration = 0.30
+
+        notifications.slide_enabled = True
+        notifications.fade_enabled = True
+
+        notifications.show_progress = True
+
+        overlay_scene.add_node(
+            notifications
+        )
+
+        # ======================================================
+        # IMPORTANT
+        #
+        # This scene is outside SceneManager.
+        #
+        # SceneManager.change_scene() normally calls enter().
+        # Because this overlay bypasses SceneManager, we have
+        # to enter it ourselves.
+        # ======================================================
+
+        overlay_scene.enter()
+
+        # ======================================================
+        # Store
+        # ======================================================
+
+        self._global_overlay_scene = (
+            overlay_scene
+        )
+
+        self._notifications = (
+            notifications
+        )
+
+        # ======================================================
+        # Save notification bridge
+        # ======================================================
+
+        handler = (
+            SaveNotificationHandler(
+                notifications,
+                show_started=False,
+            )
+        )
+
+        self._save_notification_handler = (
+            handler
+        )
+
+        self.saves.add_listener(
+            handler
+        )
+
+    # ==========================================================
+    # GLOBAL OVERLAY SHUTDOWN
+    # ==========================================================
+
+    def _shutdown_global_overlay(
+        self,
+    ) -> None:
+        """
+        Destroy global overlay services.
+        """
+
+        # ======================================================
+        # Remove SaveManager listener first
+        # ======================================================
+
+        if (
+            self._save_notification_handler
+            is not None
+            and self.engine is not None
+        ):
+            self.saves.remove_listener(
+                self._save_notification_handler
+            )
+
+        self._save_notification_handler = None
+
+        # ======================================================
+        # Overlay
+        # ======================================================
+
+        overlay_scene = (
+            self._global_overlay_scene
+        )
+
+        self._global_overlay_scene = None
+        self._notifications = None
+
+        if overlay_scene is not None:
+            overlay_scene.destroy()
 
     # ==========================================================
     # LIFECYCLE
@@ -133,7 +396,7 @@ class Game:
         """
         Called automatically by Engine.initialize().
 
-        Override in a game subclass.
+        Override in game subclasses.
         """
 
         pass
@@ -142,12 +405,91 @@ class Game:
         self,
     ) -> None:
         """
-        Called automatically before the engine is shut down.
-
-        All loaded scenes are destroyed here.
+        Called automatically before Engine shutdown.
         """
 
+        # ------------------------------------------------------
+        # Global systems first
+        # ------------------------------------------------------
+
+        self._shutdown_global_overlay()
+
+        # ------------------------------------------------------
+        # Normal scenes
+        # ------------------------------------------------------
+
         self._scenes.clear()
+
+    # ==========================================================
+    # ENGINE CREATION
+    # ==========================================================
+
+    def _create_engine(
+        self,
+    ) -> Engine:
+        return Engine(
+            self,
+
+            width=self._width,
+            height=self._height,
+
+            title=self._title,
+
+            target_fps=self._target_fps,
+
+            fixed_delta_time=(
+                self._fixed_delta_time
+            ),
+
+            resizable=self._resizable,
+            fullscreen=self._fullscreen,
+
+            window_mode=(
+                self._window_mode
+            ),
+
+            vsync=self._vsync,
+
+            # --------------------------------------------------
+            # Save system
+            # --------------------------------------------------
+
+            save_path=(
+                self._save_path
+            ),
+
+            save_signing_key=(
+                self._save_signing_key
+            ),
+
+            save_version=(
+                self._save_version
+            ),
+
+            save_max_file_size=(
+                self._save_max_file_size
+            ),
+
+            quick_save_enabled=(
+                self._quick_save_enabled
+            ),
+
+            quick_save_slot=(
+                self._quick_save_slot
+            ),
+
+            autosave_enabled=(
+                self._autosave_enabled
+            ),
+
+            autosave_slots=(
+                self._autosave_slots
+            ),
+
+            autosave_prefix=(
+                self._autosave_prefix
+            ),
+        )
 
     # ==========================================================
     # RUN
@@ -156,30 +498,43 @@ class Game:
     def run(
         self,
     ) -> None:
-        """
-        Start the game.
-        """
-
         if self._shutdown:
             raise RuntimeError(
                 "Cannot run a game that has already "
                 "been shut down."
             )
 
-        self.engine = Engine(
-            self,
-            width=self._width,
-            height=self._height,
-            title=self._title,
-            target_fps=self._target_fps,
-            fixed_delta_time=(
-                self._fixed_delta_time
-            ),
-            resizable=self._resizable,
-            fullscreen=self._fullscreen,
-            window_mode=self._window_mode,
-            vsync=self._vsync,
+        if self.engine is not None:
+            raise RuntimeError(
+                "Game already owns an engine instance."
+            )
+
+        # ======================================================
+        # Engine
+        # ======================================================
+
+        self.engine = (
+            self._create_engine()
         )
+
+        # ======================================================
+        # Persistent global services
+        #
+        # Engine construction has already injected:
+        #
+        #     renderer
+        #     input
+        #     window
+        #     engine
+        #
+        # Therefore the global overlay can now be created.
+        # ======================================================
+
+        self._initialize_global_overlay()
+
+        # ======================================================
+        # Run
+        # ======================================================
 
         self._running = True
 
@@ -201,10 +556,6 @@ class Game:
     def stop(
         self,
     ) -> None:
-        """
-        Stop the running game loop.
-        """
-
         if self.engine is not None:
             self.engine.stop()
 
@@ -216,13 +567,6 @@ class Game:
         self,
         event,
     ) -> None:
-        """
-        Handle an SDL3 event.
-
-        Override in a game subclass when raw SDL events are
-        required.
-        """
-
         pass
 
     # ==========================================================
@@ -234,51 +578,78 @@ class Game:
         delta_time: float,
     ) -> None:
         """
-        Update the currently active scene.
-
-        Only SceneManager.active_scene receives:
-
-            UI input
-            node update
-            ECS update
-
-        Paused scenes in the scene stack remain loaded but do
-        not update.
+        Update normal game scene and persistent global overlay.
         """
+
+        # ======================================================
+        # Active normal scene
+        # ======================================================
 
         scene = (
             self._scenes.active_scene
         )
 
-        if scene is None:
-            return
+        if scene is not None:
+            # --------------------------------------------------
+            # Viewport
+            # --------------------------------------------------
 
-        # ------------------------------------------------------
-        # Keep UI viewport synchronized before input handling.
-        # ------------------------------------------------------
+            if self.renderer is not None:
+                scene.ui.set_viewport_size(
+                    self.renderer.width,
+                    self.renderer.height,
+                )
 
-        if self.renderer is not None:
-            scene.ui.set_viewport_size(
-                self.renderer.width,
-                self.renderer.height,
+            # --------------------------------------------------
+            # Input
+            # --------------------------------------------------
+
+            if self.input is not None:
+                scene.update_input(
+                    self.input
+                )
+
+            # --------------------------------------------------
+            # Update
+            # --------------------------------------------------
+
+            scene.update(
+                delta_time
             )
 
-        # ------------------------------------------------------
-        # UI input
-        # ------------------------------------------------------
+        # ======================================================
+        # Global overlay
+        #
+        # This always updates, even when there is no normal
+        # active scene.
+        # ======================================================
 
-        if self.input is not None:
-            scene.update_input(
-                self.input
-            )
-
-        # ------------------------------------------------------
-        # Scene update
-        # ------------------------------------------------------
-
-        scene.update(
-            delta_time
+        overlay = (
+            self._global_overlay_scene
         )
+
+        if overlay is not None:
+            # --------------------------------------------------
+            # Viewport synchronization
+            # --------------------------------------------------
+
+            if self.renderer is not None:
+                overlay.ui.set_viewport_size(
+                    self.renderer.width,
+                    self.renderer.height,
+                )
+
+            # --------------------------------------------------
+            # Node/world update
+            #
+            # NotificationCenter.update() runs through:
+            #
+            # overlay.root.update_tree()
+            # --------------------------------------------------
+
+            overlay.update(
+                delta_time
+            )
 
     # ==========================================================
     # FIXED UPDATE
@@ -288,20 +659,28 @@ class Game:
         self,
         fixed_delta_time: float,
     ) -> None:
-        """
-        Run fixed-timestep logic for the active scene only.
-        """
-
         scene = (
             self._scenes.active_scene
         )
 
-        if scene is None:
-            return
+        if scene is not None:
+            scene.fixed_update(
+                fixed_delta_time
+            )
 
-        scene.fixed_update(
-            fixed_delta_time
+        # ------------------------------------------------------
+        # Global overlay generally doesn't need fixed updates,
+        # but allowing it keeps the Scene lifecycle complete.
+        # ------------------------------------------------------
+
+        overlay = (
+            self._global_overlay_scene
         )
+
+        if overlay is not None:
+            overlay.fixed_update(
+                fixed_delta_time
+            )
 
     # ==========================================================
     # RENDER
@@ -312,38 +691,76 @@ class Game:
         interpolation: float,
     ) -> None:
         """
-        Render the complete active scene stack.
-
-        Example:
-
-            Game       PAUSED
-            Pause      ACTIVE
+        Render normal scene stack first and global overlay last.
 
         Rendering order:
 
-            Game
-              ↓
-            Pause
+            paused scene(s)
+                ↓
+            active scene
+                ↓
+            global overlay
 
-        This allows pause menus, inventories and other overlay
-        scenes to be rendered on top of the game while the game
-        itself remains paused.
+        The global overlay is therefore always above normal
+        game content.
         """
 
         if self.renderer is None:
             return
 
+        # ======================================================
+        # Normal scenes
+        # ======================================================
+
         render_scenes = (
             self._get_render_scenes()
         )
-
-        if not render_scenes:
-            return
 
         for scene in render_scenes:
             self._render_scene(
                 scene,
                 interpolation,
+            )
+
+        # ======================================================
+        # Global overlay
+        #
+        # IMPORTANT:
+        # Do NOT return when render_scenes is empty.
+        # Notifications must also work during loading states
+        # where no normal scene may currently be active.
+        # ======================================================
+
+        overlay = (
+            self._global_overlay_scene
+        )
+
+        if overlay is not None:
+            # --------------------------------------------------
+            # Overlay world
+            # --------------------------------------------------
+
+            overlay.render(
+                interpolation
+            )
+
+            # --------------------------------------------------
+            # Overlay nodes
+            #
+            # NotificationCenter.render() runs here.
+            # --------------------------------------------------
+
+            overlay.render_nodes(
+                self.renderer,
+                interpolation,
+            )
+
+            # --------------------------------------------------
+            # Future overlay UI nodes
+            # --------------------------------------------------
+
+            overlay.ui.render(
+                self.renderer
             )
 
     # ==========================================================
@@ -356,27 +773,6 @@ class Game:
         Scene,
         ...
     ]:
-        """
-        Return scenes in back-to-front render order.
-
-        SceneManager.stack contains the paused scenes below the
-        active scene.
-
-        Example:
-
-            stack:
-                Game
-                Pause
-
-            active:
-                Settings
-
-            result:
-                Game
-                Pause
-                Settings
-        """
-
         active_scene = (
             self._scenes.active_scene
         )
@@ -394,12 +790,8 @@ class Game:
         scene: Scene,
         interpolation: float,
     ) -> None:
-        """
-        Render one scene using the normal Nexora scene pipeline.
-        """
-
         # ------------------------------------------------------
-        # Synchronize UI viewport
+        # UI viewport
         # ------------------------------------------------------
 
         scene.ui.set_viewport_size(
@@ -408,7 +800,7 @@ class Game:
         )
 
         # ------------------------------------------------------
-        # ECS rendering
+        # ECS
         # ------------------------------------------------------
 
         scene.render(
@@ -416,7 +808,7 @@ class Game:
         )
 
         # ------------------------------------------------------
-        # Node rendering
+        # Nodes
         # ------------------------------------------------------
 
         scene.render_nodes(
@@ -425,7 +817,7 @@ class Game:
         )
 
         # ------------------------------------------------------
-        # UI rendering
+        # UI
         # ------------------------------------------------------
 
         scene.ui.render(
@@ -485,6 +877,28 @@ class Game:
         )
 
     # ==========================================================
+    # NOTIFICATIONS
+    # ==========================================================
+
+    @property
+    def notifications(
+        self,
+    ) -> NotificationCenter:
+        """
+        Access Nexora's global NotificationCenter.
+
+        Notifications survive normal scene changes.
+        """
+
+        if self._notifications is None:
+            raise RuntimeError(
+                "NotificationCenter is not available before "
+                "the game has been started."
+            )
+
+        return self._notifications
+
+    # ==========================================================
     # SETTINGS
     # ==========================================================
 
@@ -493,6 +907,23 @@ class Game:
         self,
     ) -> SettingsStore:
         return self._settings
+
+    # ==========================================================
+    # SAVES
+    # ==========================================================
+
+    @property
+    def saves(
+        self,
+    ) -> SaveManager:
+        if self.engine is None:
+            raise RuntimeError(
+                "Game has not been started."
+            )
+
+        return (
+            self.engine.saves
+        )
 
     # ==========================================================
     # WINDOW PROPERTIES
@@ -544,26 +975,12 @@ class Game:
     def scenes(
         self,
     ) -> SceneManager:
-        """
-        Access the game's SceneManager.
-        """
-
         return self._scenes
 
     @property
     def scene(
         self,
     ) -> Scene | None:
-        """
-        Return the currently active scene.
-
-        This is only a convenience alias for:
-
-            game.scenes.active_scene
-
-        SceneManager remains the single source of truth.
-        """
-
         return (
             self._scenes.active_scene
         )
@@ -573,21 +990,6 @@ class Game:
         self,
         value: Scene | None,
     ) -> None:
-        """
-        Convenience setter for the active scene.
-
-        Existing code such as:
-
-            self.scene = Scene("Game")
-
-        remains supported.
-
-        Internally this always goes through SceneManager.
-
-        Setting scene to None deactivates the current scene
-        without destroying it.
-        """
-
         # ------------------------------------------------------
         # Deactivate
         # ------------------------------------------------------
@@ -597,7 +999,7 @@ class Game:
             return
 
         # ------------------------------------------------------
-        # Type validation
+        # Validation
         # ------------------------------------------------------
 
         if not isinstance(
@@ -660,7 +1062,9 @@ class Game:
                 "Game has not been started."
             )
 
-        return self.engine.audio
+        return (
+            self.engine.audio
+        )
 
     # ==========================================================
     # ASSETS
@@ -675,7 +1079,9 @@ class Game:
                 "Game has not been started."
             )
 
-        return self.engine.assets
+        return (
+            self.engine.assets
+        )
 
     # ==========================================================
     # LOGGER
@@ -690,7 +1096,9 @@ class Game:
                 "Game has not been started."
             )
 
-        return self.engine.logger
+        return (
+            self.engine.logger
+        )
 
     # ==========================================================
     # TIME
@@ -705,7 +1113,9 @@ class Game:
                 "Game has not been started."
             )
 
-        return self.engine.time
+        return (
+            self.engine.time
+        )
 
     @property
     def delta_time(
