@@ -1,22 +1,33 @@
 [build-system]
+
 requires = ["setuptools>=75"]
+
 build-backend = "setuptools.build_meta"
 
 
 [project]
+
 name = "nexora-engine"
+
 version = "0.1.0"
+
 description = "A modern 2D game engine built on SDL3 and SDL_GPU"
+
 readme = "README.md"
+
 requires-python = ">=3.13"
+
 license = { file = "LICENSE" }
 
 dependencies = [
     "PySDL3>=0.9.12b1",
+    "psutil>=7.0",
+    "nvidia-ml-py>=13.0",
 ]
 
 
 [project.optional-dependencies]
+
 dev = [
     "pytest>=9.0",
 ]
@@ -28,12 +39,14 @@ docs = [
 
 
 [tool.setuptools.packages.find]
+
 include = [
     "nexora*",
 ]
 
 
 [tool.pytest.ini_options]
+
 testpaths = [
     "tests",
 ]
@@ -58,7 +71,10 @@ addopts = [
 
 markers = [
     "gpu: tests requiring SDL3 and a GPU",
+    "slow: slow integration tests",
 ]
 
+
 [project.scripts]
+
 nexora = "nexora.cli.main:main"

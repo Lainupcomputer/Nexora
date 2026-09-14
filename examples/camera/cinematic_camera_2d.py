@@ -38,7 +38,7 @@ class CinematicCameraExample(Game):
             title="Nexora - CinematicCamera2D Example",
             width=1280,
             height=720,
-            target_fps=144,
+            target_fps=60,
             resizable=True,
         )
 

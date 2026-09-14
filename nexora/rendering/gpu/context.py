@@ -392,9 +392,9 @@ class GPUContext:
         if not self.command_buffer:
             return False
 
-        texture = (
-            sdl3.LP_SDL_GPUTexture()
-        )
+        texture = ctypes.POINTER(
+            sdl3.SDL_GPUTexture
+        )()
 
         width = ctypes.c_uint32()
         height = ctypes.c_uint32()

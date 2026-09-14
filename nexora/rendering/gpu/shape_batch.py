@@ -32,6 +32,22 @@ class GPUShapeBatch:
     MAX_SHAPES = 50000
     MAX_POLYGON_POINTS = 256
 
+    # Geometry is a separate capacity from quad-based shapes.
+    #
+    # The previous implementation allocated:
+    #
+    #   max_shapes * MAX_POLYGON_POINTS * 3
+    #
+    # vertices up front. With 10,000 shapes that produced a
+    # ~175.8 MB geometry buffer, and because GPUBuffer uses three
+    # frames in flight, three equally large transfer buffers were
+    # allocated as well (~527 MB of process RAM).
+    #
+    # 65,536 vertices = 1.5 MiB of geometry data and is enough for
+    # more than 21,000 standalone triangles per frame.
+    DEFAULT_MAX_GEOMETRY_VERTICES = 65_536
+    MAX_GEOMETRY_VERTICES = 1_000_000
+
     INSTANCE_FLOATS = 11
     INSTANCE_STRIDE = 44
 
@@ -50,6 +66,7 @@ class GPUShapeBatch:
         geometry_vertex_shader_path=None,
         geometry_fragment_shader_path=None,
         camera=None,
+        max_geometry_vertices: int = DEFAULT_MAX_GEOMETRY_VERTICES,
     ):
         self.context = context
         self.device = context.device
@@ -66,6 +83,24 @@ class GPUShapeBatch:
             raise ValueError(
                 f"max_shapes cannot exceed "
                 f"{self.MAX_SHAPES}"
+            )
+
+        self.max_geometry_vertices = int(
+            max_geometry_vertices
+        )
+
+        if self.max_geometry_vertices <= 0:
+            raise ValueError(
+                "max_geometry_vertices must be greater than zero"
+            )
+
+        if (
+            self.max_geometry_vertices
+            > self.MAX_GEOMETRY_VERTICES
+        ):
+            raise ValueError(
+                "max_geometry_vertices cannot exceed "
+                f"{self.MAX_GEOMETRY_VERTICES}"
             )
 
         self.vertex_shader_path = Path(
@@ -233,14 +268,8 @@ class GPUShapeBatch:
         )
 
     def _create_geometry_buffer(self):
-        max_vertices = (
-            self.max_shapes
-            * self.MAX_POLYGON_POINTS
-            * 3
-        )
-
         size = (
-            max_vertices
+            self.max_geometry_vertices
             * self.GEOMETRY_STRIDE
         )
 
@@ -964,6 +993,17 @@ class GPUShapeBatch:
         y,
         color,
     ):
+        if (
+            self._geometry_vertex_count
+            >= self.max_geometry_vertices
+        ):
+            raise RuntimeError(
+                "GPUShapeBatch geometry capacity exceeded "
+                f"({self.max_geometry_vertices} vertices). "
+                "Increase max_geometry_vertices when creating "
+                "the renderer/shape batch."
+            )
+
         r, g, b, a = color
 
         self._geometry_data.extend(
