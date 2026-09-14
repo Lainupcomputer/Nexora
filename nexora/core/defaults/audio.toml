@@ -1,0 +1,39 @@
+# ============================================================
+# Nexora Engine - Default Audio Settings
+# ============================================================
+
+# ============================================================
+# MIXER CHANNELS
+# ============================================================
+
+[volume]
+master = 1.0
+music = 1.0
+sfx = 1.0
+ambient = 1.0
+voice = 1.0
+
+
+# ============================================================
+# AUDIO BUSES
+# ============================================================
+
+[buses.master]
+volume = 1.0
+muted = false
+
+[buses.music]
+volume = 1.0
+muted = false
+
+[buses.sfx]
+volume = 1.0
+muted = false
+
+[buses.ambient]
+volume = 1.0
+muted = false
+
+[buses.voice]
+volume = 1.0
+muted = false

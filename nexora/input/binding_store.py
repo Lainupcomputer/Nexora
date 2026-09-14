@@ -13,120 +13,135 @@ from nexora.input.bindings import (
     resolve_mouse_button,
 )
 
-
-DEFAULT_KEYBINDS_PATH = (
-    Path(__file__).resolve().parent.parent
-    / "core"
-    / "defaults"
-    / "keybinds.toml"
+from nexora.settings.layered_store import (
+    LayeredSettingsStore,
 )
 
 
-class BindingStore:
+class BindingStore(
+    LayeredSettingsStore[
+        dict[str, list[Binding]]
+    ]
+):
     """
     Layered TOML storage for input bindings.
 
-    Layers are applied in this order::
+    Layer order:
 
         engine defaults
-        project defaults
+        project settings
         mods
         user settings
 
-    A later layer replaces an entire action from an earlier layer.
-    This keeps overrides predictable and prevents old bindings from
-    accidentally surviving a user or mod override.
+    A later layer replaces an entire action from an earlier
+    layer.
+
+    The user file contains only bindings that differ from the
+    effective defaults/project/mod configuration.
     """
 
     FILE_NAME = "keybinds.toml"
 
+    USER_HEADER = (
+        "# Nexora user key bindings\n"
+        "# Only changed bindings are stored here.\n"
+    )
+
     def __init__(
         self,
         *,
+        project_name: str = "Nexora",
         defaults_path: str | Path | None = None,
         project_path: str | Path | None = None,
         mod_paths: Iterable[str | Path] = (),
-        settings_path: str | Path | None = "settings",
+        settings_path=...,
     ) -> None:
-        self.defaults_path = (
-            Path(defaults_path)
-            if defaults_path is not None
-            else DEFAULT_KEYBINDS_PATH
+        kwargs = {
+            "project_name": (
+                project_name
+            ),
+            "defaults_path": (
+                defaults_path
+            ),
+            "project_path": (
+                project_path
+            ),
+            "mod_paths": (
+                mod_paths
+            ),
+        }
+
+        if settings_path is not ...:
+            kwargs[
+                "settings_path"
+            ] = settings_path
+
+        super().__init__(
+            **kwargs
         )
 
-        self.project_path = (
-            Path(project_path)
-            if project_path is not None
-            else None
-        )
+    # ==========================================================
+    # LAYERED STORE
+    # ==========================================================
 
-        self.mod_paths = tuple(
-            Path(path)
-            for path in mod_paths
-        )
-
-        self.settings_path = (
-            Path(settings_path)
-            if settings_path is not None
-            else None
-        )
-
-        self.user_path = (
-            self.settings_path
-            / self.FILE_NAME
-            if self.settings_path is not None
-            else None
-        )
-
-    def ensure_user_file(
+    def _empty(
         self,
+    ) -> dict[
+        str,
+        list[Binding],
+    ]:
+        return {}
+
+    def _read_layer(
+        self,
+        path: Path,
+        *,
+        required: bool,
+    ) -> dict[
+        str,
+        list[Binding],
+    ]:
+        return self._read_file(
+            path,
+            required=required,
+        )
+
+    def _merge_layer(
+        self,
+        target: dict[
+            str,
+            list[Binding],
+        ],
+        source: dict[
+            str,
+            list[Binding],
+        ],
     ) -> None:
         """
-        Create the initial user keybind file when it does not exist.
-
-        The initial file contains engine + project defaults only.
-        Mod bindings remain owned by the mod and are therefore not
-        copied into the user's permanent configuration automatically.
+        A keybind layer replaces complete actions.
         """
 
-        if self.user_path is None:
-            return
+        for action, bindings in source.items():
+            target[
+                action
+            ] = list(
+                bindings
+            )
 
-        if self.user_path.exists():
-            return
-
-        initial = (
-            self._load_base_bindings()
-        )
-
-        self.save(
-            initial
-        )
-
-    def load(
+    def _encode_user(
         self,
-    ) -> dict[str, list[Binding]]:
-        self.ensure_user_file()
-
-        result = (
-            self._load_base_bindings()
+        data: dict[
+            str,
+            list[Binding],
+        ],
+    ) -> str:
+        return self._encode_toml(
+            data
         )
 
-        for path in self.mod_paths:
-            self._apply_layer(
-                result,
-                path,
-                required=False,
-            )
-
-        if self.user_path is not None:
-            self._apply_layer(
-                result,
-                self.user_path,
-                required=False,
-            )
-
-        return result
+    # ==========================================================
+    # SAVE
+    # ==========================================================
 
     def save(
         self,
@@ -135,96 +150,107 @@ class BindingStore:
             Sequence[Binding],
         ],
     ) -> None:
-        if self.user_path is None:
-            raise RuntimeError(
-                "No user settings path is configured."
+        """
+        Persist only bindings that differ from the effective
+        defaults/project/mod configuration.
+
+        Removing a default action is represented by an empty
+        action in the user layer.
+        """
+
+        baseline = (
+            self.load_without_user()
+        )
+
+        current = {
+            action: list(
+                action_bindings
             )
+            for action, action_bindings
+            in bindings.items()
+        }
 
-        self.user_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        content = (
-            self._encode_toml(
-                bindings
-            )
-        )
-
-        temporary = (
-            self.user_path.with_suffix(
-                ".toml.tmp"
-            )
-        )
-
-        temporary.write_text(
-            content,
-            encoding="utf-8",
-        )
-
-        temporary.replace(
-            self.user_path
-        )
-
-    def reset_user(
-        self,
-    ) -> None:
-        if self.user_path is None:
-            return
-
-        if self.user_path.exists():
-            self.user_path.unlink()
-
-        self.ensure_user_file()
-
-    def _load_base_bindings(
-        self,
-    ) -> dict[str, list[Binding]]:
-        result: dict[
+        overrides: dict[
             str,
             list[Binding],
         ] = {}
 
-        self._apply_layer(
-            result,
-            self.defaults_path,
-            required=True,
-        )
-
-        if self.project_path is not None:
-            self._apply_layer(
-                result,
-                self.project_path,
-                required=False,
+        actions = (
+            set(
+                baseline
             )
-
-        return result
-
-    def _apply_layer(
-        self,
-        target: dict[str, list[Binding]],
-        path: Path,
-        *,
-        required: bool,
-    ) -> None:
-        layer = (
-            self._read_file(
-                path,
-                required=required,
+            | set(
+                current
             )
         )
 
-        for action, bindings in layer.items():
-            target[
-                action
-            ] = bindings
+        for action in sorted(
+            actions
+        ):
+            baseline_bindings = (
+                baseline.get(
+                    action
+                )
+            )
+
+            current_bindings = (
+                current.get(
+                    action
+                )
+            )
+
+            # --------------------------------------------------
+            # Default action removed by user
+            # --------------------------------------------------
+
+            if current_bindings is None:
+                if baseline_bindings is not None:
+                    overrides[
+                        action
+                    ] = []
+
+                continue
+
+            # --------------------------------------------------
+            # Completely new user action
+            # --------------------------------------------------
+
+            if baseline_bindings is None:
+                overrides[
+                    action
+                ] = current_bindings
+
+                continue
+
+            # --------------------------------------------------
+            # Changed action
+            # --------------------------------------------------
+
+            if (
+                current_bindings
+                != baseline_bindings
+            ):
+                overrides[
+                    action
+                ] = current_bindings
+
+        self.save_user(
+            overrides
+        )
+
+    # ==========================================================
+    # FILE READER
+    # ==========================================================
 
     def _read_file(
         self,
         path: Path,
         *,
         required: bool,
-    ) -> dict[str, list[Binding]]:
+    ) -> dict[
+        str,
+        list[Binding],
+    ]:
         if not path.is_file():
             if required:
                 raise FileNotFoundError(
@@ -342,6 +368,10 @@ class BindingStore:
 
         return result
 
+    # ==========================================================
+    # VALIDATION
+    # ==========================================================
+
     @staticmethod
     def _string_list(
         value: object,
@@ -377,6 +407,10 @@ class BindingStore:
             value
         )
 
+    # ==========================================================
+    # TOML ENCODING
+    # ==========================================================
+
     @staticmethod
     def _encode_toml(
         bindings: Mapping[
@@ -386,10 +420,7 @@ class BindingStore:
     ) -> str:
         lines = [
             "# Nexora user key bindings",
-            (
-                "# Generated by Nexora. "
-                "This file may be edited manually."
-            ),
+            "# Only changed bindings are stored here.",
             "",
         ]
 
@@ -461,6 +492,7 @@ class BindingStore:
                 not keyboard
                 and not mouse
             ):
+                # Explicit empty override disables the action.
                 lines.append(
                     "keyboard = []"
                 )
@@ -469,8 +501,11 @@ class BindingStore:
                 ""
             )
 
-        return "\n".join(
-            lines
+        return (
+            "\n".join(
+                lines
+            ).rstrip()
+            + "\n"
         )
 
     @staticmethod

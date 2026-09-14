@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 from .device import AudioDevice
+from .listener import AudioListener
 from .mixer import AudioMixer
 from .pcm import encode_float32
 from .source import (
     AudioSource,
     AudioSourceState,
 )
-from .listener import AudioListener
 from .spatial import calculate_pan_gains
 
 
 class AudioPlayer:
     """
     Manages active audio sources and mixes them.
+
+    Output format is defined by AudioDevice.
+
+    Buffering behaviour is configured per AudioPlayer instance.
 
     Audio is generated on demand according to the amount already
     queued in SDL_AudioStream.
@@ -22,39 +26,150 @@ class AudioPlayer:
     frame rate.
     """
 
-    OUTPUT_CHANNELS = 2
-    OUTPUT_FREQUENCY = 48_000
-
-    # ----------------------------------------------------------
-    # Audio buffering
-    # ----------------------------------------------------------
-    #
-    # Maintain roughly 2048 frames ahead.
-    #
-    # 2048 @ 48 kHz ~= 42.7 ms.
-    # ----------------------------------------------------------
-
-    TARGET_QUEUE_FRAMES = 2048
-
-    # Never generate absurdly large blocks if the queue was empty
-    # for a longer time.
-    MAX_UPDATE_FRAMES = 2048
-
     def __init__(
         self,
         device: AudioDevice,
         mixer: AudioMixer,
+        *,
+        target_queue_frames: int = 2048,
+        max_update_frames: int = 2048,
     ) -> None:
         self.device = device
         self.mixer = mixer
+
+        # ======================================================
+        # Buffer configuration
+        # ======================================================
+
+        target_queue_frames = int(
+            target_queue_frames
+        )
+
+        max_update_frames = int(
+            max_update_frames
+        )
+
+        if target_queue_frames <= 0:
+            raise ValueError(
+                "target_queue_frames must be greater than zero."
+            )
+
+        if max_update_frames <= 0:
+            raise ValueError(
+                "max_update_frames must be greater than zero."
+            )
+
+        self._target_queue_frames = (
+            target_queue_frames
+        )
+
+        self._max_update_frames = (
+            max_update_frames
+        )
+
+        # ======================================================
+        # Listener
+        # ======================================================
 
         self.listener = (
             AudioListener()
         )
 
+        # ======================================================
+        # Sources
+        # ======================================================
+
         self._sources: list[
             AudioSource
         ] = []
+
+    # ==========================================================
+    # OUTPUT FORMAT
+    # ==========================================================
+
+    @property
+    def output_channels(
+        self,
+    ) -> int:
+        """
+        Number of output channels.
+
+        AudioDevice is the single source of truth.
+        """
+
+        return (
+            self.device.channels
+        )
+
+    @property
+    def output_frequency(
+        self,
+    ) -> int:
+        """
+        Output sample frequency.
+
+        AudioDevice is the single source of truth.
+        """
+
+        return (
+            self.device.frequency
+        )
+
+    # ==========================================================
+    # BUFFER SETTINGS
+    # ==========================================================
+
+    @property
+    def target_queue_frames(
+        self,
+    ) -> int:
+        return (
+            self._target_queue_frames
+        )
+
+    @target_queue_frames.setter
+    def target_queue_frames(
+        self,
+        value: int,
+    ) -> None:
+        value = int(
+            value
+        )
+
+        if value <= 0:
+            raise ValueError(
+                "target_queue_frames must be greater than zero."
+            )
+
+        self._target_queue_frames = (
+            value
+        )
+
+    @property
+    def max_update_frames(
+        self,
+    ) -> int:
+        return (
+            self._max_update_frames
+        )
+
+    @max_update_frames.setter
+    def max_update_frames(
+        self,
+        value: int,
+    ) -> None:
+        value = int(
+            value
+        )
+
+        if value <= 0:
+            raise ValueError(
+                "max_update_frames must be greater than zero."
+            )
+
+        self._max_update_frames = (
+            value
+        )
 
     # ==========================================================
     # SOURCES
@@ -151,7 +266,11 @@ class AudioPlayer:
         frame_count: int,
     ) -> bytes:
         """
-        Mix active sources into stereo float32 PCM.
+        Mix active sources into float32 PCM.
+
+        Nexora's current spatial mixer is stereo-based.
+
+        AudioDevice.channels must therefore currently be 2.
         """
 
         frame_count = int(
@@ -161,11 +280,17 @@ class AudioPlayer:
         if frame_count <= 0:
             return b""
 
+        if self.output_channels != 2:
+            raise RuntimeError(
+                "Nexora AudioPlayer currently supports "
+                "stereo output only."
+            )
+
         mixed = [
             0.0
         ] * (
             frame_count
-            * self.OUTPUT_CHANNELS
+            * self.output_channels
         )
 
         for source in self._sources:
@@ -211,7 +336,9 @@ class AudioPlayer:
             return
 
         total_frames = (
-            len(samples)
+            len(
+                samples
+            )
             // source_channels
         )
 
@@ -291,9 +418,9 @@ class AudioPlayer:
                     base_position
                 )
 
-            # --------------------------------------------------
-            # Mono
-            # --------------------------------------------------
+            # ==================================================
+            # Mono source
+            # ==================================================
 
             if source_channels == 1:
                 current = (
@@ -317,12 +444,19 @@ class AudioPlayer:
                     * fraction
                 )
 
-                left = sample
-                right = sample
+                left = (
+                    sample
+                )
 
-            # --------------------------------------------------
-            # Stereo / multi-channel
-            # --------------------------------------------------
+                right = (
+                    sample
+                )
+
+            # ==================================================
+            # Stereo / multi-channel source
+            #
+            # Nexora currently uses the first two channels.
+            # ==================================================
 
             else:
                 current_index = (
@@ -379,9 +513,9 @@ class AudioPlayer:
                     * fraction
                 )
 
-            # --------------------------------------------------
+            # ==================================================
             # Output
-            # --------------------------------------------------
+            # ==================================================
 
             output[
                 output_index
@@ -392,18 +526,21 @@ class AudioPlayer:
             )
 
             output[
-                output_index + 1
+                output_index
+                + 1
             ] += (
                 right
                 * volume
                 * right_gain
             )
 
-            output_index += 2
+            output_index += (
+                self.output_channels
+            )
 
-            # --------------------------------------------------
+            # ==================================================
             # Playback position
-            # --------------------------------------------------
+            # ==================================================
 
             source._advance_playback(
                 source.pitch
@@ -457,8 +594,8 @@ class AudioPlayer:
         """
         Keep a small amount of PCM data queued for SDL.
 
-        Crucially, audio generation is based on the current audio
-        queue depth and NOT on the game's frame rate.
+        Audio generation depends on the current device queue,
+        not on game frame rate.
         """
 
         if not self.device.initialized:
@@ -466,52 +603,47 @@ class AudioPlayer:
                 "Audio device is not initialized."
             )
 
-        # ------------------------------------------------------
+        # ======================================================
         # Nothing playing
-        # ------------------------------------------------------
-        #
-        # There is no reason to continuously enqueue silence
-        # while the game is idle.
-        # ------------------------------------------------------
+        # ======================================================
 
         if not self.has_playing_sources:
             return
 
-        # ------------------------------------------------------
+        # ======================================================
         # Current queue depth
-        # ------------------------------------------------------
+        # ======================================================
 
         queued_frames = (
             self.device.queued_frames()
         )
 
-        # Enough audio is already waiting for playback.
         if (
             queued_frames
-            >= self.TARGET_QUEUE_FRAMES
+            >= self.target_queue_frames
         ):
             return
 
-        # ------------------------------------------------------
-        # Only generate what is missing
-        # ------------------------------------------------------
+        # ======================================================
+        # Determine required frames
+        # ======================================================
 
         missing_frames = (
-            self.TARGET_QUEUE_FRAMES
+            self.target_queue_frames
             - queued_frames
         )
 
         frame_count = min(
             missing_frames,
-            self.MAX_UPDATE_FRAMES,
+            self.max_update_frames,
         )
 
         if frame_count <= 0:
             return
 
-        # ------------------------------------------------------
+        # ======================================================
         # Mix
-        # ------------------------------------------------------
+        # ======================================================
 
         data = self.mix(
             frame_count
@@ -520,9 +652,9 @@ class AudioPlayer:
         if not data:
             return
 
-        # ------------------------------------------------------
+        # ======================================================
         # Queue
-        # ------------------------------------------------------
+        # ======================================================
 
         self.device.write(
             data

@@ -614,7 +614,7 @@ def test_audio_source_effective_volume(tmp_path):
 
 
 def create_audio_player():
-    device = object()
+    device = AudioDevice()
     mixer = AudioMixer()
 
     return AudioPlayer(
@@ -3185,13 +3185,18 @@ def test_music_player_previous_uses_music_bus():
 # Audio Cache / AudioSystem Loading
 # ============================================================
 
+
 def test_audio_system_load_uses_cache(
     monkeypatch,
     tmp_path,
 ):
     audio = AudioSystem()
 
-    path = tmp_path / "test.wav"
+    path = (
+        tmp_path
+        / "test.wav"
+    )
+
     buffer = object()
 
     calls = 0
@@ -3204,7 +3209,10 @@ def test_audio_system_load_uses_cache(
 
         calls += 1
 
-        assert load_path == path.resolve()
+        assert (
+            load_path
+            == path.resolve()
+        )
 
         return buffer
 
@@ -3213,19 +3221,47 @@ def test_audio_system_load_uses_cache(
         fake_load,
     )
 
-    first = audio.load(
+    # ----------------------------------------------------------
+    # First load
+    # ----------------------------------------------------------
+
+    sound = audio.load(
         path
     )
 
-    second = audio.load(
+    assert (
+        sound.buffer
+        is buffer
+    )
+
+    assert (
+        sound.path
+        == path.resolve()
+    )
+
+    assert (
+        calls
+        == 1
+    )
+
+    # ----------------------------------------------------------
+    # Second load must use cache
+    # ----------------------------------------------------------
+
+    cached = audio.load(
         path
     )
 
-    assert first is second
-    assert first.buffer is buffer
-    assert first.path == path.resolve()
+    assert (
+        cached
+        is sound
+    )
 
-    assert calls == 1
+    assert (
+        calls
+        == 1
+    )
+
 
 def test_audio_system_unload_removes_cached_sound(
     monkeypatch,
@@ -3233,7 +3269,11 @@ def test_audio_system_unload_removes_cached_sound(
 ):
     audio = AudioSystem()
 
-    path = tmp_path / "test.wav"
+    path = (
+        tmp_path
+        / "test.wav"
+    )
+
     buffer = object()
 
     monkeypatch.setattr(
@@ -3241,23 +3281,41 @@ def test_audio_system_unload_removes_cached_sound(
         lambda self, load_path: buffer,
     )
 
+    # ----------------------------------------------------------
+    # Load
+    # ----------------------------------------------------------
+
     sound = audio.load(
         path
     )
 
-    assert audio.cache.get(
-        path
-    ) is sound
+    assert (
+        sound.buffer
+        is buffer
+    )
 
-    assert sound.buffer is buffer
+    assert (
+        audio.cache.get(
+            path
+        )
+        is sound
+    )
+
+    # ----------------------------------------------------------
+    # Unload
+    # ----------------------------------------------------------
 
     audio.unload(
         path
     )
 
-    assert audio.cache.get(
-        path
-    ) is None
+    assert (
+        audio.cache.get(
+            path
+        )
+        is None
+    )
+    
 
 def test_audio_system_clear_cache(
     monkeypatch,

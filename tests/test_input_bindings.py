@@ -138,10 +138,17 @@ def test_binding_store_creates_user_file(
     )
 
 
-def test_user_file_is_initialized_from_defaults(
+def test_user_file_is_created_as_empty_override_file(
     tmp_path: Path,
     defaults_file: Path,
 ) -> None:
+    """
+    User settings must not contain copied engine defaults.
+
+    The file should contain only the explanatory header until
+    the user changes a binding.
+    """
+
     store = BindingStore(
         settings_path=(
             tmp_path
@@ -163,11 +170,35 @@ def test_user_file_is_initialized_from_defaults(
         )
     )
 
-    assert "[move_up]" in text
-    assert 'keyboard = ["w", "up"]' in text
+    assert (
+        "Nexora user key bindings"
+        in text
+    )
 
-    assert "[jump]" in text
-    assert 'keyboard = ["space"]' in text
+    assert (
+        "Only changed bindings"
+        in text
+    )
+
+    assert (
+        "[move_up]"
+        not in text
+    )
+
+    assert (
+        "[jump]"
+        not in text
+    )
+
+    assert (
+        'keyboard = ["w", "up"]'
+        not in text
+    )
+
+    assert (
+        'keyboard = ["space"]'
+        not in text
+    )
 
 
 # ============================================================
@@ -222,6 +253,171 @@ keyboard = ["i"]
         == resolve_keyboard_key(
             "i"
         )
+    )
+
+
+def test_save_writes_only_changed_bindings(
+    tmp_path: Path,
+    defaults_file: Path,
+) -> None:
+    store = BindingStore(
+        settings_path=(
+            tmp_path
+            / "user"
+        ),
+        defaults_path=defaults_file,
+    )
+
+    bindings = store.load()
+
+    bindings[
+        "jump"
+    ] = [
+        bindings[
+            "move_up"
+        ][0]
+    ]
+
+    store.save(
+        bindings
+    )
+
+    assert (
+        store.user_path
+        is not None
+    )
+
+    text = (
+        store.user_path.read_text(
+            encoding="utf-8",
+        )
+    )
+
+    # Changed action is written.
+    assert (
+        "[jump]"
+        in text
+    )
+
+    # Unchanged defaults must not be persisted.
+    assert (
+        "[move_up]"
+        not in text
+    )
+
+    assert (
+        "[move_down]"
+        not in text
+    )
+
+    assert (
+        "[attack]"
+        not in text
+    )
+
+
+def test_save_with_no_changes_keeps_user_file_empty(
+    tmp_path: Path,
+    defaults_file: Path,
+) -> None:
+    store = BindingStore(
+        settings_path=(
+            tmp_path
+            / "user"
+        ),
+        defaults_path=defaults_file,
+    )
+
+    bindings = store.load()
+
+    store.save(
+        bindings
+    )
+
+    assert (
+        store.user_path
+        is not None
+    )
+
+    text = (
+        store.user_path.read_text(
+            encoding="utf-8",
+        )
+    )
+
+    assert (
+        "[move_up]"
+        not in text
+    )
+
+    assert (
+        "[jump]"
+        not in text
+    )
+
+    assert (
+        "[attack]"
+        not in text
+    )
+
+
+def test_removed_default_action_is_saved_as_empty_override(
+    tmp_path: Path,
+    defaults_file: Path,
+) -> None:
+    store = BindingStore(
+        settings_path=(
+            tmp_path
+            / "user"
+        ),
+        defaults_path=defaults_file,
+    )
+
+    bindings = store.load()
+
+    bindings.pop(
+        "jump"
+    )
+
+    store.save(
+        bindings
+    )
+
+    assert (
+        store.user_path
+        is not None
+    )
+
+    text = (
+        store.user_path.read_text(
+            encoding="utf-8",
+        )
+    )
+
+    assert (
+        "[jump]"
+        in text
+    )
+
+    assert (
+        "keyboard = []"
+        in text
+    )
+
+    reloaded = (
+        store.load()
+    )
+
+    assert (
+        "jump"
+        in reloaded
+    )
+
+    assert (
+        reloaded[
+            "jump"
+        ]
+        == []
     )
 
 
@@ -315,9 +511,6 @@ keyboard = ["f"]
         encoding="utf-8",
     )
 
-    # No user settings here, otherwise the automatically created
-    # user file would contain the project binding and therefore
-    # override the mod layer again.
     store = BindingStore(
         settings_path=None,
         defaults_path=defaults_file,
@@ -466,6 +659,63 @@ keyboard = ["l"]
         jump[0].code
         == resolve_keyboard_key(
             "l"
+        )
+    )
+
+
+def test_load_without_user_ignores_user_overrides(
+    tmp_path: Path,
+    defaults_file: Path,
+) -> None:
+    user_settings = (
+        tmp_path
+        / "user"
+    )
+
+    user_settings.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    (
+        user_settings
+        / "keybinds.toml"
+    ).write_text(
+        """
+[jump]
+keyboard = ["j"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    store = BindingStore(
+        settings_path=user_settings,
+        defaults_path=defaults_file,
+    )
+
+    effective = (
+        store.load()
+    )
+
+    baseline = (
+        store.load_without_user()
+    )
+
+    assert (
+        effective[
+            "jump"
+        ][0].code
+        == resolve_keyboard_key(
+            "j"
+        )
+    )
+
+    assert (
+        baseline[
+            "jump"
+        ][0].code
+        == resolve_keyboard_key(
+            "space"
         )
     )
 
@@ -706,6 +956,47 @@ def test_input_manager_attribute_released_api(
 
 
 # ============================================================
+# INPUT MANAGER SAVE
+# ============================================================
+
+
+def test_input_manager_save_bindings_writes_only_overrides(
+    tmp_path: Path,
+    defaults_file: Path,
+) -> None:
+    input_manager = InputManager(
+        settings_path=(
+            tmp_path
+            / "user"
+        ),
+        defaults_path=defaults_file,
+    )
+
+    input_manager.save_bindings()
+
+    assert (
+        input_manager.keybinds_path
+        is not None
+    )
+
+    text = (
+        input_manager.keybinds_path.read_text(
+            encoding="utf-8",
+        )
+    )
+
+    assert (
+        "[move_up]"
+        not in text
+    )
+
+    assert (
+        "[jump]"
+        not in text
+    )
+
+
+# ============================================================
 # RESET
 # ============================================================
 
@@ -761,6 +1052,43 @@ keyboard = ["i"]
         == resolve_keyboard_key(
             "w"
         )
+    )
+
+    text = (
+        store.user_path.read_text(
+            encoding="utf-8",
+        )
+    )
+
+    assert (
+        "[move_up]"
+        not in text
+    )
+
+
+# ============================================================
+# NO USER SETTINGS
+# ============================================================
+
+
+def test_store_can_run_without_user_settings(
+    defaults_file: Path,
+) -> None:
+    store = BindingStore(
+        settings_path=None,
+        defaults_path=defaults_file,
+    )
+
+    bindings = store.load()
+
+    assert (
+        store.user_path
+        is None
+    )
+
+    assert (
+        "jump"
+        in bindings
     )
 
 
