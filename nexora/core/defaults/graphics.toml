@@ -1,0 +1,20 @@
+# ============================================================
+# Nexora Engine - Default Graphics Settings
+# ============================================================
+
+[window]
+width = 1280
+height = 720
+mode = "windowed"
+resizable = true
+
+[rendering]
+vsync = true
+frames_in_flight = 2
+
+[post_processing]
+enabled = true
+brightness = 1.0
+contrast = 1.0
+saturation = 1.0
+film_grain = 0.0

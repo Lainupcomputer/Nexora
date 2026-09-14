@@ -35,7 +35,7 @@ class InputManager:
         logger: Logger | None = None,
         *,
         settings_path: str | Path | None = "settings",
-        defaults_path: str | Path = "core/defaults/keybinds.toml",
+        defaults_path: str | Path | None = None,
         project_bindings_path: str | Path | None = None,
         mod_binding_paths: Iterable[str | Path] = (),
     ):

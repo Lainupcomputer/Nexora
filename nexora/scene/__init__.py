@@ -3,14 +3,20 @@ from nexora.nodes import (
     UINode,
     UIRoot,
 )
+
 from nexora.scene.loading import (
     LoadingProgress,
     LoadingStage,
     LoadingState,
     SceneLoadTask,
 )
+
 from nexora.scene.loading_scene import (
     LoadingScene,
+)
+
+from nexora.scene.manager import (
+    SceneManager,
 )
 
 from nexora.scene.scene import (
@@ -18,22 +24,38 @@ from nexora.scene.scene import (
     SceneState,
 )
 
-from nexora.scene.manager import (
-    SceneManager,
-)
-
 from nexora.scene.transition import (
-    SceneTransition,
     FadeSceneTransition,
+    SceneTransition,
 )
 
 
 __all__ = [
+    # ----------------------------------------------------------
+    # Core scenes
+    # ----------------------------------------------------------
     "Scene",
     "SceneState",
     "SceneManager",
+
+    # ----------------------------------------------------------
+    # Transitions
+    # ----------------------------------------------------------
     "SceneTransition",
     "FadeSceneTransition",
+
+    # ----------------------------------------------------------
+    # Loading
+    # ----------------------------------------------------------
+    "LoadingScene",
+    "LoadingProgress",
+    "LoadingStage",
+    "LoadingState",
+    "SceneLoadTask",
+
+    # ----------------------------------------------------------
+    # Nodes exposed through scene API
+    # ----------------------------------------------------------
     "Node",
     "UINode",
     "UIRoot",

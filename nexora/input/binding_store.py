@@ -14,6 +14,14 @@ from nexora.input.bindings import (
 )
 
 
+DEFAULT_KEYBINDS_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "core"
+    / "defaults"
+    / "keybinds.toml"
+)
+
+
 class BindingStore:
     """
     Layered TOML storage for input bindings.
@@ -35,33 +43,44 @@ class BindingStore:
     def __init__(
         self,
         *,
-        defaults_path: str | Path = "core/defaults/keybinds.toml",
+        defaults_path: str | Path | None = None,
         project_path: str | Path | None = None,
         mod_paths: Iterable[str | Path] = (),
         settings_path: str | Path | None = "settings",
     ) -> None:
-        self.defaults_path = Path(defaults_path)
+        self.defaults_path = (
+            Path(defaults_path)
+            if defaults_path is not None
+            else DEFAULT_KEYBINDS_PATH
+        )
+
         self.project_path = (
             Path(project_path)
             if project_path is not None
             else None
         )
+
         self.mod_paths = tuple(
             Path(path)
             for path in mod_paths
         )
+
         self.settings_path = (
             Path(settings_path)
             if settings_path is not None
             else None
         )
+
         self.user_path = (
-            self.settings_path / self.FILE_NAME
+            self.settings_path
+            / self.FILE_NAME
             if self.settings_path is not None
             else None
         )
 
-    def ensure_user_file(self) -> None:
+    def ensure_user_file(
+        self,
+    ) -> None:
         """
         Create the initial user keybind file when it does not exist.
 
@@ -76,13 +95,22 @@ class BindingStore:
         if self.user_path.exists():
             return
 
-        initial = self._load_base_bindings()
-        self.save(initial)
+        initial = (
+            self._load_base_bindings()
+        )
 
-    def load(self) -> dict[str, list[Binding]]:
+        self.save(
+            initial
+        )
+
+    def load(
+        self,
+    ) -> dict[str, list[Binding]]:
         self.ensure_user_file()
 
-        result = self._load_base_bindings()
+        result = (
+            self._load_base_bindings()
+        )
 
         for path in self.mod_paths:
             self._apply_layer(
@@ -117,10 +145,16 @@ class BindingStore:
             exist_ok=True,
         )
 
-        content = self._encode_toml(bindings)
+        content = (
+            self._encode_toml(
+                bindings
+            )
+        )
 
-        temporary = self.user_path.with_suffix(
-            ".toml.tmp"
+        temporary = (
+            self.user_path.with_suffix(
+                ".toml.tmp"
+            )
         )
 
         temporary.write_text(
@@ -132,7 +166,9 @@ class BindingStore:
             self.user_path
         )
 
-    def reset_user(self) -> None:
+    def reset_user(
+        self,
+    ) -> None:
         if self.user_path is None:
             return
 
@@ -171,13 +207,17 @@ class BindingStore:
         *,
         required: bool,
     ) -> None:
-        layer = self._read_file(
-            path,
-            required=required,
+        layer = (
+            self._read_file(
+                path,
+                required=required,
+            )
         )
 
         for action, bindings in layer.items():
-            target[action] = bindings
+            target[
+                action
+            ] = bindings
 
     def _read_file(
         self,
@@ -188,51 +228,83 @@ class BindingStore:
         if not path.is_file():
             if required:
                 raise FileNotFoundError(
-                    f"Key binding file not found: {path}"
+                    "Key binding file not found: "
+                    f"{path}"
                 )
 
             return {}
 
-        with path.open("rb") as file:
-            data = tomllib.load(file)
+        with path.open(
+            "rb"
+        ) as file:
+            data = tomllib.load(
+                file
+            )
 
-        if not isinstance(data, dict):
+        if not isinstance(
+            data,
+            dict,
+        ):
             raise ValueError(
                 f"Invalid key binding file: {path}"
             )
 
-        result: dict[str, list[Binding]] = {}
+        result: dict[
+            str,
+            list[Binding],
+        ] = {}
 
         for action, config in data.items():
-            if not isinstance(action, str) or not action:
+            if (
+                not isinstance(
+                    action,
+                    str,
+                )
+                or not action
+            ):
                 raise ValueError(
                     f"Invalid action name in {path}"
                 )
 
-            if not isinstance(config, dict):
+            if not isinstance(
+                config,
+                dict,
+            ):
                 raise ValueError(
                     f"Action {action!r} in {path} "
                     "must be a TOML table."
                 )
 
-            unknown = set(config) - {
-                "keyboard",
-                "mouse",
-            }
+            unknown = (
+                set(config)
+                - {
+                    "keyboard",
+                    "mouse",
+                }
+            )
 
             if unknown:
                 names = ", ".join(
-                    sorted(unknown)
-                )
-                raise ValueError(
-                    f"Unknown binding field(s) for "
-                    f"{action!r} in {path}: {names}"
+                    sorted(
+                        unknown
+                    )
                 )
 
-            bindings: list[Binding] = []
+                raise ValueError(
+                    "Unknown binding field(s) for "
+                    f"{action!r} in {path}: "
+                    f"{names}"
+                )
+
+            bindings: list[
+                Binding
+            ] = []
 
             for key in self._string_list(
-                config.get("keyboard", []),
+                config.get(
+                    "keyboard",
+                    [],
+                ),
                 action=action,
                 field="keyboard",
                 path=path,
@@ -240,12 +312,17 @@ class BindingStore:
                 bindings.append(
                     Binding(
                         BindingType.KEYBOARD,
-                        resolve_keyboard_key(key),
+                        resolve_keyboard_key(
+                            key
+                        ),
                     )
                 )
 
             for button in self._string_list(
-                config.get("mouse", []),
+                config.get(
+                    "mouse",
+                    [],
+                ),
                 action=action,
                 field="mouse",
                 path=path,
@@ -253,11 +330,15 @@ class BindingStore:
                 bindings.append(
                     Binding(
                         BindingType.MOUSE,
-                        resolve_mouse_button(button),
+                        resolve_mouse_button(
+                            button
+                        ),
                     )
                 )
 
-            result[action] = bindings
+            result[
+                action
+            ] = bindings
 
         return result
 
@@ -269,22 +350,32 @@ class BindingStore:
         field: str,
         path: Path,
     ) -> list[str]:
-        if not isinstance(value, list):
+        if not isinstance(
+            value,
+            list,
+        ):
             raise ValueError(
-                f"{field!r} for action {action!r} "
-                f"in {path} must be an array."
+                f"{field!r} for action "
+                f"{action!r} in {path} "
+                "must be an array."
             )
 
         if not all(
-            isinstance(item, str)
+            isinstance(
+                item,
+                str,
+            )
             for item in value
         ):
             raise ValueError(
-                f"{field!r} for action {action!r} "
-                f"in {path} must contain strings only."
+                f"{field!r} for action "
+                f"{action!r} in {path} "
+                "must contain strings only."
             )
 
-        return list(value)
+        return list(
+            value
+        )
 
     @staticmethod
     def _encode_toml(
@@ -295,31 +386,59 @@ class BindingStore:
     ) -> str:
         lines = [
             "# Nexora user key bindings",
-            "# Generated by Nexora. This file may be edited manually.",
+            (
+                "# Generated by Nexora. "
+                "This file may be edited manually."
+            ),
             "",
         ]
 
-        for action in sorted(bindings):
-            keyboard: list[str] = []
-            mouse: list[str] = []
+        for action in sorted(
+            bindings
+        ):
+            keyboard: list[
+                str
+            ] = []
 
-            for binding in bindings[action]:
-                if binding.type is BindingType.KEYBOARD:
+            mouse: list[
+                str
+            ] = []
+
+            for binding in bindings[
+                action
+            ]:
+                if (
+                    binding.type
+                    is BindingType.KEYBOARD
+                ):
                     keyboard.append(
-                        keyboard_key_name(binding.code)
+                        keyboard_key_name(
+                            binding.code
+                        )
                     )
-                elif binding.type is BindingType.MOUSE:
+
+                elif (
+                    binding.type
+                    is BindingType.MOUSE
+                ):
                     mouse.append(
-                        mouse_button_name(binding.code)
+                        mouse_button_name(
+                            binding.code
+                        )
                     )
+
                 else:
                     raise ValueError(
-                        f"Unsupported binding type: "
+                        "Unsupported binding type: "
                         f"{binding.type}"
                     )
 
             lines.append(
-                f"[{BindingStore._toml_key(action)}]"
+                "["
+                + BindingStore._toml_key(
+                    action
+                )
+                + "]"
             )
 
             if keyboard:
@@ -338,12 +457,21 @@ class BindingStore:
                     )
                 )
 
-            if not keyboard and not mouse:
-                lines.append("keyboard = []")
+            if (
+                not keyboard
+                and not mouse
+            ):
+                lines.append(
+                    "keyboard = []"
+                )
 
-            lines.append("")
+            lines.append(
+                ""
+            )
 
-        return "\n".join(lines)
+        return "\n".join(
+            lines
+        )
 
     @staticmethod
     def _toml_array(
@@ -351,16 +479,48 @@ class BindingStore:
     ) -> str:
         escaped = [
             '"'
-            + value.replace("\\", "\\\\").replace('"', '\\"')
+            + value.replace(
+                "\\",
+                "\\\\",
+            ).replace(
+                '"',
+                '\\"',
+            )
             + '"'
             for value in values
         ]
-        return "[" + ", ".join(escaped) + "]"
+
+        return (
+            "["
+            + ", ".join(
+                escaped
+            )
+            + "]"
+        )
 
     @staticmethod
-    def _toml_key(value: str) -> str:
-        if value.replace("_", "a").isalnum() and not value[0].isdigit():
+    def _toml_key(
+        value: str,
+    ) -> str:
+        if (
+            value.replace(
+                "_",
+                "a",
+            ).isalnum()
+            and not value[
+                0
+            ].isdigit()
+        ):
             return value
 
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        escaped = (
+            value.replace(
+                "\\",
+                "\\\\",
+            ).replace(
+                '"',
+                '\\"',
+            )
+        )
+
         return f'"{escaped}"'
