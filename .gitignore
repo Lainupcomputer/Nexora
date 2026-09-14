@@ -38,3 +38,9 @@ Thumbs.db
 
 # Project archives
 *.zip
+
+# Local font assets
+assets/fonts/
+
+# Local / generated DSC tools
+tools/dsc/
