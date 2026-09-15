@@ -77,6 +77,14 @@ class Node:
         self._signal_connections: set = set()
         self._owned_signals: set = set()
 
+        # ======================================================
+        # Tweens
+        # ======================================================
+        # Runtime tweens can use a Node as their owner. Tracking
+        # them here allows Node.destroy() to stop them immediately.
+
+        self._owned_tweens: set = set()
+
     # ==============================================================
     # World transform
     # ==============================================================
@@ -525,6 +533,44 @@ class Node:
 
         self._owned_signals.clear()
 
+
+    # ==============================================================
+    # Tweens
+    # ==============================================================
+
+    def _track_tween(
+        self,
+        tween,
+    ) -> None:
+        self._owned_tweens.add(
+            tween
+        )
+
+    def _untrack_tween(
+        self,
+        tween,
+    ) -> None:
+        self._owned_tweens.discard(
+            tween
+        )
+
+    def _cancel_tweens(
+        self,
+    ) -> None:
+        for tween in tuple(
+            self._owned_tweens
+        ):
+            stop = getattr(
+                tween,
+                "stop",
+                None,
+            )
+
+            if stop is not None:
+                stop()
+
+        self._owned_tweens.clear()
+
     # ==============================================================
     # Destroy
     # ==============================================================
@@ -532,6 +578,7 @@ class Node:
     def destroy(
         self,
     ) -> None:
+        self._cancel_tweens()
         self._disconnect_signals()
 
         for child in tuple(

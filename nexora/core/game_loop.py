@@ -126,6 +126,8 @@ class GameLoop:
 
         self.running = True
 
+        # Reset timing here so time spent between creating the
+        # engine and actually starting the loop is ignored.
         self.time.reset()
 
         try:
@@ -141,13 +143,15 @@ class GameLoop:
                 self.time.begin_frame()
 
                 # --------------------------------------------------
-                # SDL events
+                # SDL3 events
                 # --------------------------------------------------
 
                 events = list(
                     self.gpu_context.poll_events()
                 )
 
+                # InputManager receives the full SDL event stream
+                # before game logic is updated.
                 self.input.begin_frame(
                     events
                 )
@@ -177,12 +181,8 @@ class GameLoop:
                 # --------------------------------------------------
                 # Render scope helper
                 # --------------------------------------------------
-                #
-                # Real Renderer has overlay_scope().
-                #
-                # Lightweight test renderers may not implement it.
-                # In that case nullcontext() keeps the old behavior.
-                # --------------------------------------------------
+                # Real Renderer has overlay_scope(). Lightweight
+                # test renderers may not implement it.
 
                 def overlay_scope():
                     factory = getattr(
@@ -198,6 +198,13 @@ class GameLoop:
 
                 # --------------------------------------------------
                 # Global engine input
+                # --------------------------------------------------
+                #
+                # This runs ONCE per frame.
+                #
+                # Do not place this inside the SDL event loop,
+                # otherwise debug actions may toggle multiple times
+                # in one frame when multiple events are received.
                 # --------------------------------------------------
 
                 if (
@@ -240,6 +247,13 @@ class GameLoop:
                 # --------------------------------------------------
                 # Debug console update
                 # --------------------------------------------------
+                #
+                # Console editing/navigation is processed once per
+                # frame after global actions.
+                #
+                # The console is optional here so lightweight engine
+                # test doubles do not need to implement it.
+                # --------------------------------------------------
 
                 if console is not None:
                     console.update(
@@ -247,7 +261,11 @@ class GameLoop:
                     )
 
                 # --------------------------------------------------
-                # Debug overlay update
+                # Debug metrics
+                # --------------------------------------------------
+                #
+                # Use unscaled time so debug metrics continue to
+                # update correctly even when time_scale is 0.
                 # --------------------------------------------------
 
                 if debug_overlay is not None:
@@ -290,6 +308,25 @@ class GameLoop:
 
                     self.input.end_frame()
                     break
+
+                # --------------------------------------------------
+                # Tweens
+                # --------------------------------------------------
+                # Update before game logic so properties are already
+                # at their current frame values when Game/Scene update.
+                # The service is optional for lightweight test engines.
+
+                tweens = getattr(
+                    self.engine,
+                    "tweens",
+                    None,
+                )
+
+                if tweens is not None:
+                    tweens.update(
+                        self.time.delta_time,
+                        self.time.unscaled_delta_time,
+                    )
 
                 # --------------------------------------------------
                 # Variable update
@@ -343,6 +380,10 @@ class GameLoop:
                         # ------------------------------------------
                         # Global debug overlay
                         # ------------------------------------------
+                        #
+                        # Render after the game so debug information
+                        # stays above Scene and UI content.
+                        # ------------------------------------------
 
                         if debug_overlay is not None:
                             with overlay_scope():
@@ -352,6 +393,10 @@ class GameLoop:
 
                         # ------------------------------------------
                         # Global debug console
+                        # ------------------------------------------
+                        #
+                        # Render last so the console always remains
+                        # above scenes, UI and the debug overlay.
                         # ------------------------------------------
 
                         if console is not None:

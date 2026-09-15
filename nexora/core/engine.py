@@ -55,6 +55,10 @@ from nexora.settings import (
 from nexora.threading.context import (
     ThreadContext,
 )
+
+from nexora.tween import (
+    TweenManager,
+)
 from nexora.core.paths import (
     ProjectPaths,
 )
@@ -623,6 +627,14 @@ class Engine:
         self._apply_audio_settings()
 
         # ======================================================
+        # Tween system
+        # ======================================================
+
+        self.tweens = (
+            TweenManager()
+        )
+
+        # ======================================================
         # Game
         # ======================================================
 
@@ -644,6 +656,10 @@ class Engine:
 
         self.game.graphics = (
             self.graphics
+        )
+
+        self.game.tweens = (
+            self.tweens
         )
 
         # ======================================================
