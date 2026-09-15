@@ -115,6 +115,18 @@ class Scene:
 
         self._destroyed = False
 
+        # ======================================================
+        # Serialization metadata
+        # ======================================================
+
+        # Asset groups required by this scene. SceneSerializer
+        # stores these in the scene header/state so a loading
+        # scene can preload them before constructing all nodes.
+        self.asset_groups: list[str] = []
+
+        # Safe primitive metadata for tooling/game-specific data.
+        self.serialization_metadata: dict = {}
+
     # ==========================================================
     # LIFECYCLE PROPERTIES
     # ==========================================================
