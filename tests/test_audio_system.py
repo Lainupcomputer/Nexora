@@ -5,8 +5,10 @@ import math
 import struct
 import wave
 
+
 import pytest
 
+pytestmark = pytest.mark.audio
 from nexora.audio import (
     AudioBuffer,
     AudioBus,
