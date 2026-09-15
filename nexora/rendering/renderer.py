@@ -285,6 +285,7 @@ class Renderer:
             1.0,
             1.0,
         ),
+        layer: int = 0,
     ) -> None:
         self.gpu.sprite(
             texture,
@@ -298,6 +299,7 @@ class Renderer:
             flip_x=flip_x,
             flip_y=flip_y,
             uv=uv,
+            layer=layer,
         )
 
     def sprites(
@@ -306,11 +308,13 @@ class Renderer:
         sprites,
         *,
         workers: int | None = None,
+        layer: int = 0,
     ) -> int:
         return self.gpu.sprites(
             texture,
             sprites,
             workers=workers,
+            layer=layer,
         )
 
     # ==========================================================
@@ -336,6 +340,7 @@ class Renderer:
             0.5,
         ),
         radius: float = 0.0,
+        layer: int = 0,
     ) -> None:
         self.gpu.rect(
             x,
@@ -346,6 +351,7 @@ class Renderer:
             rotation=rotation,
             origin=origin,
             radius=radius,
+            layer=layer,
         )
 
     # ==========================================================
@@ -364,12 +370,14 @@ class Renderer:
             1.0,
         ),
         size: float = 1.0,
+        layer: int = 0,
     ) -> None:
         self.gpu.pixel(
             x,
             y,
             color=color,
             size=size,
+            layer=layer,
         )
 
     # ==========================================================
@@ -390,6 +398,7 @@ class Renderer:
             1.0,
             1.0,
         ),
+        layer: int = 0,
     ) -> None:
         self.gpu.line(
             x1,
@@ -398,6 +407,7 @@ class Renderer:
             y2,
             width=width,
             color=color,
+            layer=layer,
         )
 
     # ==========================================================
@@ -421,6 +431,7 @@ class Renderer:
             0.5,
             0.5,
         ),
+        layer: int = 0,
     ) -> None:
         self.gpu.circle(
             x,
@@ -429,6 +440,7 @@ class Renderer:
             color=color,
             rotation=rotation,
             origin=origin,
+            layer=layer,
         )
 
     # ==========================================================
@@ -453,6 +465,7 @@ class Renderer:
             0.5,
             0.5,
         ),
+        layer: int = 0,
     ) -> None:
         self.gpu.ellipse(
             x,
@@ -462,6 +475,7 @@ class Renderer:
             color=color,
             rotation=rotation,
             origin=origin,
+            layer=layer,
         )
 
     # ==========================================================
@@ -483,6 +497,7 @@ class Renderer:
             1.0,
             1.0,
         ),
+        layer: int = 0,
     ) -> None:
         self.gpu.triangle(
             x1,
@@ -492,6 +507,7 @@ class Renderer:
             x3,
             y3,
             color=color,
+            layer=layer,
         )
 
     # ==========================================================
@@ -508,10 +524,12 @@ class Renderer:
             1.0,
             1.0,
         ),
+        layer: int = 0,
     ) -> None:
         self.gpu.polygon(
             points,
             color=color,
+            layer=layer,
         )
 
     # ==========================================================
@@ -521,10 +539,12 @@ class Renderer:
     def text(
         self,
         *args,
+        layer: int = 0,
         **kwargs,
     ):
         return self.gpu.text(
             *args,
+            layer=layer,
             **kwargs,
         )
 
@@ -559,10 +579,13 @@ class Renderer:
         self,
         snapshot,
         texture,
+        *,
+        layer: int = 0,
     ) -> int:
         return self.gpu.submit(
             snapshot,
             texture,
+            layer=layer,
         )
 
     # ==========================================================

@@ -17,22 +17,24 @@ from nexora.rendering.gpu.shader import GPUShader
 
 class GPUSpriteBatch:
     """
-    GPU-instanced sprite renderer.
+    GPU-instanced multi-texture sprite renderer.
 
-    Supports both:
+    Features:
+        - instanced sprite rendering
+        - multiple textures per frame
+        - submission-order preservation
+        - texture draw runs
+        - clipping / scissor runs
+        - bulk sprite submission
+        - RenderSnapshot submission
+        - parallel CPU-side instance preparation
+        - nearest-neighbour sampling
+        - camera uniform support
 
-        batch.add(...)
+    GPU operations always remain on the rendering thread.
 
-    and high-performance bulk preparation:
-
-        batch.add_many(sprites)
-
-    Bulk preparation uses real worker threads when running on
-    Python's free-threaded build.
-
-    Worker threads only prepare CPU-side instance data.
-
-    SDL / GPU operations remain on the rendering thread.
+    Worker threads are only used for preparing CPU-side
+    instance data.
     """
 
     MAX_SPRITES = 50000
@@ -44,7 +46,6 @@ class GPUSpriteBatch:
     CAMERA_UNIFORM_SIZE = 32
 
     DEFAULT_WORKERS = 4
-
     PARALLEL_THRESHOLD = 2048
 
     def __init__(
@@ -56,9 +57,13 @@ class GPUSpriteBatch:
         fragment_shader_path,
         camera=None,
         workers: int = DEFAULT_WORKERS,
-    ):
+    ) -> None:
         self.context = context
         self.device = context.device
+
+        # ======================================================
+        # Capacity
+        # ======================================================
 
         self.max_sprites = int(
             max_sprites
@@ -71,11 +76,19 @@ class GPUSpriteBatch:
 
         if self.max_sprites > self.MAX_SPRITES:
             raise ValueError(
-                f"max_sprites cannot exceed "
+                "max_sprites cannot exceed "
                 f"{self.MAX_SPRITES}"
             )
 
+        # ======================================================
+        # Camera
+        # ======================================================
+
         self.camera = camera
+
+        # ======================================================
+        # Shader paths
+        # ======================================================
 
         self.vertex_shader_path = Path(
             vertex_shader_path
@@ -97,9 +110,7 @@ class GPUSpriteBatch:
         self.worker_count = max(
             1,
             min(
-                int(
-                    workers
-                ),
+                int(workers),
                 cpu_count,
             ),
         )
@@ -133,6 +144,15 @@ class GPUSpriteBatch:
 
         self._sprite_count = 0
 
+        # One texture entry per sprite.
+        #
+        # We intentionally preserve submission order instead of
+        # globally sorting by texture.
+        self._textures: list[
+            object
+        ] = []
+
+        # One clip rectangle per sprite.
         self._clip_rects: list[
             tuple[
                 float,
@@ -142,68 +162,40 @@ class GPUSpriteBatch:
             ] | None
         ] = []
 
-        self._texture = None
+        # ======================================================
+        # Camera uniform
+        # ======================================================
 
         self._camera_data = bytearray(
             self.CAMERA_UNIFORM_SIZE
         )
+
+        # ======================================================
+        # State
+        # ======================================================
 
         self._destroyed = False
 
         self._create_resources()
 
     # ==========================================================
-    # SNAPSHOT
+    # Properties
     # ==========================================================
 
-    def submit_snapshot(
+    @property
+    def sprite_count(
         self,
-        snapshot: RenderSnapshot,
-    ):
-        if self._destroyed:
-            raise RuntimeError(
-                "GPUSpriteBatch has been destroyed"
-            )
+    ) -> int:
+        return self._sprite_count
 
-        count = len(
-            snapshot
-        )
-
-        if count == 0:
-            self._sprite_count = 0
-
-            self._clip_rects.clear()
-
-            return 0
-
-        if count > self.max_sprites:
-            raise RuntimeError(
-                "RenderSnapshot exceeds SpriteBatch capacity "
-                f"({count} > {self.max_sprites})"
-            )
-
-        snapshot_size = (
-            count
-            * self.INSTANCE_STRIDE
-        )
-
-        self._instance_data[
-            :snapshot_size
-        ] = snapshot.data[
-            :snapshot_size
-        ]
-
-        self._sprite_count = count
-
-        # Snapshots currently carry no clipping information.
-        self._clip_rects = (
-            [None] * count
-        )
-
-        return count
+    @property
+    def empty(
+        self,
+    ) -> bool:
+        return self._sprite_count == 0
 
     # ==========================================================
-    # ERROR
+    # Error helpers
     # ==========================================================
 
     @staticmethod
@@ -220,9 +212,7 @@ class GPUSpriteBatch:
             )
 
         if error is None:
-            return (
-                "<unknown SDL error>"
-            )
+            return "<unknown SDL error>"
 
         return str(
             error
@@ -231,24 +221,26 @@ class GPUSpriteBatch:
     def _check(
         self,
         condition,
-        message,
-    ):
-        if not condition:
-            error = self._decode_error(
-                sdl3.SDL_GetError()
-            )
+        message: str,
+    ) -> None:
+        if condition:
+            return
 
-            raise RuntimeError(
-                f"{message}: {error}"
-            )
+        error = self._decode_error(
+            sdl3.SDL_GetError()
+        )
+
+        raise RuntimeError(
+            f"{message}: {error}"
+        )
 
     # ==========================================================
-    # RESOURCE CREATION
+    # Resource creation
     # ==========================================================
 
     def _create_resources(
         self,
-    ):
+    ) -> None:
         self._create_shaders()
         self._create_quad()
         self._create_instance_buffer()
@@ -256,12 +248,12 @@ class GPUSpriteBatch:
         self._create_pipeline()
 
     # ==========================================================
-    # SHADERS
+    # Shaders
     # ==========================================================
 
     def _create_shaders(
         self,
-    ):
+    ) -> None:
         self.vertex_shader = GPUShader(
             self.device,
             self.vertex_shader_path,
@@ -281,19 +273,19 @@ class GPUSpriteBatch:
         )
 
     # ==========================================================
-    # QUAD
+    # Quad
     # ==========================================================
 
     def _create_quad(
         self,
-    ):
+    ) -> None:
         """
-        Quad vertices:
+        Create the static six-vertex quad.
+
+        Vertex layout:
 
             position.xy
             uv.xy
-
-        Six vertices = two triangles.
         """
 
         vertices = struct.pack(
@@ -334,37 +326,33 @@ class GPUSpriteBatch:
 
         self.quad_buffer = GPUBuffer(
             self.device,
-            len(
-                vertices
-            ),
+            len(vertices),
             sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
             initial_data=vertices,
         )
 
     # ==========================================================
-    # INSTANCE BUFFER
+    # Instance buffer
     # ==========================================================
 
     def _create_instance_buffer(
         self,
-    ):
+    ) -> None:
         self.instance_buffer = GPUBuffer(
             self.device,
-            len(
-                self._instance_data
-            ),
+            len(self._instance_data),
             sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
             dynamic=True,
             frames_in_flight=3,
         )
 
     # ==========================================================
-    # SAMPLER
+    # Sampler
     # ==========================================================
 
     def _create_sampler(
         self,
-    ):
+    ) -> None:
         self.sampler = GPUSampler(
             self.device,
             min_filter=(
@@ -388,12 +376,12 @@ class GPUSpriteBatch:
         )
 
     # ==========================================================
-    # PIPELINE
+    # Pipeline
     # ==========================================================
 
     def _create_pipeline(
         self,
-    ):
+    ) -> None:
         vertex_buffer_descriptions = (
             sdl3.SDL_GPUVertexBufferDescription
             * 2
@@ -403,13 +391,8 @@ class GPUSpriteBatch:
         # Quad vertex buffer
         # ------------------------------------------------------
 
-        vertex_buffer_descriptions[
-            0
-        ].slot = 0
-
-        vertex_buffer_descriptions[
-            0
-        ].pitch = 16
+        vertex_buffer_descriptions[0].slot = 0
+        vertex_buffer_descriptions[0].pitch = 16
 
         vertex_buffer_descriptions[
             0
@@ -425,15 +408,11 @@ class GPUSpriteBatch:
         # Instance buffer
         # ------------------------------------------------------
 
-        vertex_buffer_descriptions[
-            1
-        ].slot = 1
+        vertex_buffer_descriptions[1].slot = 1
 
         vertex_buffer_descriptions[
             1
-        ].pitch = (
-            self.INSTANCE_STRIDE
-        )
+        ].pitch = self.INSTANCE_STRIDE
 
         vertex_buffer_descriptions[
             1
@@ -462,12 +441,6 @@ class GPUSpriteBatch:
         # offset 48 : uv_size.xy
         #
         # 14 floats = 56 bytes
-        #
-        # IMPORTANT:
-        #
-        # flip_x and flip_y are separate shader attributes.
-        # Do NOT combine them into FLOAT2 unless the sprite shader
-        # input layout is changed as well.
         # ======================================================
 
         attributes = (
@@ -475,169 +448,92 @@ class GPUSpriteBatch:
             * 11
         )()
 
-        # ------------------------------------------------------
         # Vertex position
-        # location 0
-        # float2
-        # ------------------------------------------------------
-
         attributes[0].location = 0
         attributes[0].buffer_slot = 0
-
         attributes[0].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-
         attributes[0].offset = 0
 
-        # ------------------------------------------------------
         # Vertex UV
-        # location 1
-        # float2
-        # ------------------------------------------------------
-
         attributes[1].location = 1
         attributes[1].buffer_slot = 0
-
         attributes[1].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-
         attributes[1].offset = 8
 
-        # ------------------------------------------------------
         # Instance position
-        # location 2
-        # float2
-        # ------------------------------------------------------
-
         attributes[2].location = 2
         attributes[2].buffer_slot = 1
-
         attributes[2].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-
         attributes[2].offset = 0
 
-        # ------------------------------------------------------
         # Instance size
-        # location 3
-        # float2
-        # ------------------------------------------------------
-
         attributes[3].location = 3
         attributes[3].buffer_slot = 1
-
         attributes[3].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-
         attributes[3].offset = 8
 
-        # ------------------------------------------------------
         # Rotation
-        # location 4
-        # float
-        # ------------------------------------------------------
-
         attributes[4].location = 4
         attributes[4].buffer_slot = 1
-
         attributes[4].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
-
         attributes[4].offset = 16
 
-        # ------------------------------------------------------
         # Origin
-        # location 5
-        # float2
-        # ------------------------------------------------------
-
         attributes[5].location = 5
         attributes[5].buffer_slot = 1
-
         attributes[5].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-
         attributes[5].offset = 20
 
-        # ------------------------------------------------------
         # Alpha
-        # location 6
-        # float
-        # ------------------------------------------------------
-
         attributes[6].location = 6
         attributes[6].buffer_slot = 1
-
         attributes[6].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
-
         attributes[6].offset = 28
 
-        # ------------------------------------------------------
         # Flip X
-        # location 7
-        # float
-        # ------------------------------------------------------
-
         attributes[7].location = 7
         attributes[7].buffer_slot = 1
-
         attributes[7].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
-
         attributes[7].offset = 32
 
-        # ------------------------------------------------------
         # Flip Y
-        # location 8
-        # float
-        # ------------------------------------------------------
-
         attributes[8].location = 8
         attributes[8].buffer_slot = 1
-
         attributes[8].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT
         )
-
         attributes[8].offset = 36
 
-        # ------------------------------------------------------
         # UV origin
-        # location 9
-        # float2
-        # ------------------------------------------------------
-
         attributes[9].location = 9
         attributes[9].buffer_slot = 1
-
         attributes[9].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-
         attributes[9].offset = 40
 
-        # ------------------------------------------------------
         # UV size
-        # location 10
-        # float2
-        # ------------------------------------------------------
-
         attributes[10].location = 10
         attributes[10].buffer_slot = 1
-
         attributes[10].format = (
             sdl3.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2
         )
-
         attributes[10].offset = 48
 
         # ======================================================
@@ -750,9 +646,7 @@ class GPUSpriteBatch:
             * 1
         )()
 
-        color_targets[
-            0
-        ] = color_target
+        color_targets[0] = color_target
 
         # ======================================================
         # Target info
@@ -767,7 +661,6 @@ class GPUSpriteBatch:
         )
 
         target_info.num_color_targets = 1
-
         target_info.depth_stencil_format = 0
 
         target_info.has_depth_stencil_target = (
@@ -818,30 +711,16 @@ class GPUSpriteBatch:
             sdl3.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST
         )
 
-        info.rasterizer_state = (
-            rasterizer
-        )
-
-        info.multisample_state = (
-            multisample
-        )
-
-        info.depth_stencil_state = (
-            depth
-        )
-
-        info.target_info = (
-            target_info
-        )
-
+        info.rasterizer_state = rasterizer
+        info.multisample_state = multisample
+        info.depth_stencil_state = depth
+        info.target_info = target_info
         info.props = 0
 
         self.pipeline = (
             sdl3.SDL_CreateGPUGraphicsPipeline(
                 self.device,
-                ctypes.byref(
-                    info
-                ),
+                ctypes.byref(info),
             )
         )
 
@@ -851,25 +730,44 @@ class GPUSpriteBatch:
         )
 
     # ==========================================================
-    # BEGIN
+    # Begin
     # ==========================================================
 
     def begin(
         self,
-        texture,
-    ):
+    ) -> None:
+        """
+        Begin a new sprite batch.
+
+        No texture is required. Textures are attached to
+        individual sprite submissions.
+        """
+
         if self._destroyed:
             raise RuntimeError(
                 "GPUSpriteBatch has been destroyed"
             )
 
-        self._texture = texture
+        self.clear()
+
+    # ==========================================================
+    # Clear
+    # ==========================================================
+
+    def clear(
+        self,
+    ) -> None:
+        """
+        Clear all transient per-frame sprite data.
+        """
+
         self._sprite_count = 0
 
+        self._textures.clear()
         self._clip_rects.clear()
 
     # ==========================================================
-    # ADD - SINGLE SPRITE
+    # Add
     # ==========================================================
 
     def add(
@@ -879,6 +777,7 @@ class GPUSpriteBatch:
         width: float,
         height: float,
         *,
+        texture,
         rotation: float = 0.0,
         origin=(
             0.5,
@@ -899,7 +798,15 @@ class GPUSpriteBatch:
             float,
             float,
         ] | None = None,
-    ):
+    ) -> None:
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        if texture is None:
+            return
+
         if (
             self._sprite_count
             >= self.max_sprites
@@ -909,8 +816,10 @@ class GPUSpriteBatch:
                 f"({self.max_sprites} sprites)"
             )
 
+        index = self._sprite_count
+
         self._write_instance(
-            self._sprite_count,
+            index,
             x,
             y,
             width,
@@ -923,6 +832,10 @@ class GPUSpriteBatch:
             uv,
         )
 
+        self._textures.append(
+            texture
+        )
+
         self._clip_rects.append(
             self._normalize_clip_rect(
                 clip_rect
@@ -932,7 +845,7 @@ class GPUSpriteBatch:
         self._sprite_count += 1
 
     # ==========================================================
-    # WRITE INSTANCE
+    # Write instance
     # ==========================================================
 
     def _write_instance(
@@ -948,7 +861,7 @@ class GPUSpriteBatch:
         flip_x: bool,
         flip_y: bool,
         uv,
-    ):
+    ) -> None:
         ox, oy = origin
 
         (
@@ -968,69 +881,38 @@ class GPUSpriteBatch:
             self._instance_data,
             offset,
 
-            float(
-                x
-            ),
-            float(
-                y
-            ),
+            float(x),
+            float(y),
 
-            float(
-                width
-            ),
-            float(
-                height
-            ),
+            float(width),
+            float(height),
 
-            float(
-                rotation
-            ),
+            float(rotation),
 
-            float(
-                ox
-            ),
-            float(
-                oy
-            ),
+            float(ox),
+            float(oy),
 
-            float(
-                alpha
-            ),
+            float(alpha),
 
-            (
-                1.0
-                if flip_x
-                else 0.0
-            ),
-            (
-                1.0
-                if flip_y
-                else 0.0
-            ),
+            1.0 if flip_x else 0.0,
+            1.0 if flip_y else 0.0,
 
-            float(
-                uv_x
-            ),
-            float(
-                uv_y
-            ),
+            float(uv_x),
+            float(uv_y),
 
-            float(
-                uv_w
-            ),
-            float(
-                uv_h
-            ),
+            float(uv_w),
+            float(uv_h),
         )
 
     # ==========================================================
-    # BULK / PARALLEL PREPARATION
+    # Add many
     # ==========================================================
 
     def add_many(
         self,
         sprites,
         *,
+        texture,
         workers: int | None = None,
         clip_rect: tuple[
             float,
@@ -1038,11 +920,18 @@ class GPUSpriteBatch:
             float,
             float,
         ] | None = None,
-    ):
+    ) -> int:
+        """
+        Add multiple sprites sharing one texture.
+        """
+
         if self._destroyed:
             raise RuntimeError(
                 "GPUSpriteBatch has been destroyed"
             )
+
+        if texture is None:
+            return 0
 
         if not hasattr(
             sprites,
@@ -1083,10 +972,7 @@ class GPUSpriteBatch:
         # Small batch
         # ------------------------------------------------------
 
-        if (
-            count
-            < self.PARALLEL_THRESHOLD
-        ):
+        if count < self.PARALLEL_THRESHOLD:
             self._write_range(
                 sprites,
                 0,
@@ -1094,91 +980,73 @@ class GPUSpriteBatch:
                 start_index,
             )
 
-            self._clip_rects.extend(
-                [normalized_clip]
-                * count
-            )
-
-            self._sprite_count += (
-                count
-            )
-
-            return count
-
         # ------------------------------------------------------
-        # Worker count
+        # Parallel batch
         # ------------------------------------------------------
 
-        worker_count = (
-            self.worker_count
-            if workers is None
-            else max(
-                1,
-                int(
-                    workers
-                ),
-            )
-        )
-
-        worker_count = min(
-            worker_count,
-            count,
-        )
-
-        # ------------------------------------------------------
-        # Chunks
-        # ------------------------------------------------------
-
-        chunk_size = (
-            count
-            + worker_count
-            - 1
-        ) // worker_count
-
-        futures = []
-
-        for worker_index in range(
-            worker_count
-        ):
-            local_start = (
-                worker_index
-                * chunk_size
-            )
-
-            local_end = min(
-                local_start
-                + chunk_size,
-                count,
-            )
-
-            if (
-                local_start
-                >= local_end
-            ):
-                break
-
-            futures.append(
-                self._executor.submit(
-                    self._write_range,
-                    sprites,
-                    local_start,
-                    local_end,
-                    start_index
-                    + local_start,
+        else:
+            worker_count = (
+                self.worker_count
+                if workers is None
+                else max(
+                    1,
+                    int(workers),
                 )
             )
 
-        for future in futures:
-            future.result()
+            worker_count = min(
+                worker_count,
+                count,
+            )
+
+            chunk_size = (
+                count
+                + worker_count
+                - 1
+            ) // worker_count
+
+            futures = []
+
+            for worker_index in range(
+                worker_count
+            ):
+                local_start = (
+                    worker_index
+                    * chunk_size
+                )
+
+                local_end = min(
+                    local_start
+                    + chunk_size,
+                    count,
+                )
+
+                if local_start >= local_end:
+                    break
+
+                futures.append(
+                    self._executor.submit(
+                        self._write_range,
+                        sprites,
+                        local_start,
+                        local_end,
+                        start_index
+                        + local_start,
+                    )
+                )
+
+            for future in futures:
+                future.result()
+
+        self._textures.extend(
+            [texture] * count
+        )
 
         self._clip_rects.extend(
-            [normalized_clip]
-            * count
+            [normalized_clip] * count
         )
 
-        self._sprite_count += (
-            count
-        )
+        self._sprite_count += count
 
         return count
 
@@ -1188,7 +1056,7 @@ class GPUSpriteBatch:
         start: int,
         end: int,
         destination_start: int,
-    ):
+    ) -> None:
         for local_index in range(
             start,
             end,
@@ -1232,63 +1100,110 @@ class GPUSpriteBatch:
                 self._instance_data,
                 offset,
 
-                float(
-                    x
-                ),
-                float(
-                    y
-                ),
+                float(x),
+                float(y),
 
-                float(
-                    width
-                ),
-                float(
-                    height
-                ),
+                float(width),
+                float(height),
 
-                float(
-                    rotation
-                ),
+                float(rotation),
 
-                float(
-                    ox
-                ),
-                float(
-                    oy
-                ),
+                float(ox),
+                float(oy),
 
-                float(
-                    alpha
-                ),
+                float(alpha),
 
-                (
-                    1.0
-                    if flip_x
-                    else 0.0
-                ),
-                (
-                    1.0
-                    if flip_y
-                    else 0.0
-                ),
+                1.0 if flip_x else 0.0,
+                1.0 if flip_y else 0.0,
 
-                float(
-                    uv_x
-                ),
-                float(
-                    uv_y
-                ),
+                float(uv_x),
+                float(uv_y),
 
-                float(
-                    uv_w
-                ),
-                float(
-                    uv_h
-                ),
+                float(uv_w),
+                float(uv_h),
             )
 
     # ==========================================================
-    # CLIPPING
+    # Snapshot
+    # ==========================================================
+
+    def submit_snapshot(
+        self,
+        snapshot: RenderSnapshot,
+        *,
+        texture,
+    ) -> int:
+        """
+        Append a RenderSnapshot to the current sprite batch.
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        if texture is None:
+            return 0
+
+        count = len(
+            snapshot
+        )
+
+        if count == 0:
+            return 0
+
+        if (
+            self._sprite_count
+            + count
+            > self.max_sprites
+        ):
+            raise RuntimeError(
+                "RenderSnapshot exceeds remaining "
+                "SpriteBatch capacity "
+                f"({self._sprite_count + count} > "
+                f"{self.max_sprites})"
+            )
+
+        start_index = (
+            self._sprite_count
+        )
+
+        destination_start = (
+            start_index
+            * self.INSTANCE_STRIDE
+        )
+
+        snapshot_size = (
+            count
+            * self.INSTANCE_STRIDE
+        )
+
+        destination_end = (
+            destination_start
+            + snapshot_size
+        )
+
+        self._instance_data[
+            destination_start:
+            destination_end
+        ] = snapshot.data[
+            :snapshot_size
+        ]
+
+        self._textures.extend(
+            [texture] * count
+        )
+
+        self._clip_rects.extend(
+            [None] * count
+        )
+
+        self._sprite_count += count
+
+        return count
+
+    # ==========================================================
+    # Clipping
     # ==========================================================
 
     @staticmethod
@@ -1316,22 +1231,14 @@ class GPUSpriteBatch:
         ) = clip_rect
 
         return (
-            float(
-                x
-            ),
-            float(
-                y
-            ),
+            float(x),
+            float(y),
             max(
-                float(
-                    width
-                ),
+                float(width),
                 0.0,
             ),
             max(
-                float(
-                    height
-                ),
+                float(height),
                 0.0,
             ),
         )
@@ -1362,14 +1269,8 @@ class GPUSpriteBatch:
         if clip_rect is None:
             left = 0
             top = 0
-
-            right = (
-                viewport_width
-            )
-
-            bottom = (
-                viewport_height
-            )
+            right = viewport_width
+            bottom = viewport_height
 
         else:
             (
@@ -1443,37 +1344,28 @@ class GPUSpriteBatch:
                 ),
             )
 
-        rect = (
-            sdl3.SDL_Rect()
-        )
+        rect = sdl3.SDL_Rect()
 
-        rect.x = int(
-            left
-        )
-
-        rect.y = int(
-            top
-        )
+        rect.x = int(left)
+        rect.y = int(top)
 
         rect.w = int(
-            right
-            - left
+            right - left
         )
 
         rect.h = int(
-            bottom
-            - top
+            bottom - top
         )
 
         return rect
 
     # ==========================================================
-    # CAMERA
+    # Camera
     # ==========================================================
 
     def _update_camera_uniform(
         self,
-    ):
+    ) -> None:
         if self.camera is None:
             camera_x = 0.0
             camera_y = 0.0
@@ -1531,28 +1423,25 @@ class GPUSpriteBatch:
         )
 
     # ==========================================================
-    # RENDER INTO ACTIVE FRAME
+    # Render into active frame
     # ==========================================================
 
     def render_into(
         self,
         command_buffer,
-    ):
+    ) -> int:
+        """
+        Upload all prepared instance data and camera data.
+
+        Does not create a render pass.
+        """
+
         if self._destroyed:
             raise RuntimeError(
                 "GPUSpriteBatch has been destroyed"
             )
 
-        if self._texture is None:
-            raise RuntimeError(
-                "GPUSpriteBatch.begin(texture) "
-                "must be called before rendering"
-            )
-
-        if (
-            self._sprite_count
-            == 0
-        ):
+        if self._sprite_count == 0:
             return 0
 
         instance_size = (
@@ -1593,29 +1482,75 @@ class GPUSpriteBatch:
         return self._sprite_count
 
     # ==========================================================
-    # DRAW INTO ACTIVE RENDER PASS
+    # Texture binding
+    # ==========================================================
+
+    def _bind_texture(
+        self,
+        render_pass,
+        texture,
+    ) -> None:
+        texture_binding = (
+            sdl3.SDL_GPUTextureSamplerBinding()
+        )
+
+        texture_binding.texture = (
+            texture.texture
+        )
+
+        texture_binding.sampler = (
+            self.sampler.sampler
+        )
+
+        sdl3.SDL_BindGPUFragmentSamplers(
+            render_pass,
+            0,
+            ctypes.byref(
+                texture_binding
+            ),
+            1,
+        )
+
+    # ==========================================================
+    # Draw
     # ==========================================================
 
     def draw_into(
         self,
         render_pass,
-    ):
+    ) -> int:
+        """
+        Draw all sprites.
+
+        Consecutive sprites with the same texture and clip
+        rectangle are grouped into one draw call.
+
+        Submission order is preserved.
+        """
+
         if self._destroyed:
             raise RuntimeError(
                 "GPUSpriteBatch has been destroyed"
             )
 
-        if self._texture is None:
+        if self._sprite_count == 0:
+            return 0
+
+        if (
+            len(self._textures)
+            != self._sprite_count
+        ):
             raise RuntimeError(
-                "GPUSpriteBatch.begin(texture) "
-                "must be called before drawing"
+                "Sprite texture state is inconsistent"
             )
 
         if (
-            self._sprite_count
-            == 0
+            len(self._clip_rects)
+            != self._sprite_count
         ):
-            return 0
+            raise RuntimeError(
+                "Sprite clip state is inconsistent"
+            )
 
         # ------------------------------------------------------
         # Pipeline
@@ -1640,18 +1575,18 @@ class GPUSpriteBatch:
             * 2
         )()
 
-        vertex_bindings[
-            0
-        ] = self.quad_buffer.binding(
-            0,
-            self.quad_buffer.size,
+        vertex_bindings[0] = (
+            self.quad_buffer.binding(
+                0,
+                self.quad_buffer.size,
+            )
         )
 
-        vertex_bindings[
-            1
-        ] = self.instance_buffer.binding(
-            0,
-            instance_size,
+        vertex_bindings[1] = (
+            self.instance_buffer.binding(
+                0,
+                instance_size,
+            )
         )
 
         sdl3.SDL_BindGPUVertexBuffers(
@@ -1661,43 +1596,23 @@ class GPUSpriteBatch:
             2,
         )
 
-        # ------------------------------------------------------
-        # Texture
-        # ------------------------------------------------------
-
-        texture_binding = (
-            sdl3.SDL_GPUTextureSamplerBinding()
-        )
-
-        texture_binding.texture = (
-            self._texture.texture
-        )
-
-        texture_binding.sampler = (
-            self.sampler.sampler
-        )
-
-        sdl3.SDL_BindGPUFragmentSamplers(
-            render_pass,
-            0,
-            ctypes.byref(
-                texture_binding
-            ),
-            1,
-        )
-
-        # ------------------------------------------------------
-        # Clip runs
-        # ------------------------------------------------------
+        # ======================================================
+        # Draw runs
+        # ======================================================
 
         drawn = 0
-
         run_start = 0
 
         while (
             run_start
             < self._sprite_count
         ):
+            texture = (
+                self._textures[
+                    run_start
+                ]
+            )
+
             clip_rect = (
                 self._clip_rects[
                     run_start
@@ -1709,15 +1624,37 @@ class GPUSpriteBatch:
                 + 1
             )
 
+            # --------------------------------------------------
+            # Extend while texture AND clipping are identical.
+            #
+            # Texture comparison deliberately uses identity.
+            # GPU texture wrappers represent concrete resources.
+            # --------------------------------------------------
+
             while (
                 run_end
                 < self._sprite_count
+                and self._textures[
+                    run_end
+                ] is texture
                 and self._clip_rects[
                     run_end
-                ]
-                == clip_rect
+                ] == clip_rect
             ):
                 run_end += 1
+
+            # --------------------------------------------------
+            # Bind texture
+            # --------------------------------------------------
+
+            self._bind_texture(
+                render_pass,
+                texture,
+            )
+
+            # --------------------------------------------------
+            # Scissor
+            # --------------------------------------------------
 
             scissor = (
                 self._make_scissor_rect(
@@ -1749,13 +1686,9 @@ class GPUSpriteBatch:
                     run_start,
                 )
 
-                drawn += (
-                    run_count
-                )
+                drawn += run_count
 
-            run_start = (
-                run_end
-            )
+            run_start = run_end
 
         # ------------------------------------------------------
         # Restore full viewport
@@ -1776,55 +1709,224 @@ class GPUSpriteBatch:
 
         return drawn
 
+
     # ==========================================================
-    # END
+    # Draw range
     # ==========================================================
 
-    def end(
+    def draw_range(
         self,
-    ):
+        render_pass,
+        start: int,
+        count: int,
+    ) -> int:
+        """
+        Draw a contiguous range of already uploaded sprite
+        instances.
+
+        This is used by GPURenderer to preserve global layer and
+        submission order across different renderer types.
+        """
+
         if self._destroyed:
             raise RuntimeError(
                 "GPUSpriteBatch has been destroyed"
             )
 
-        if self._texture is None:
-            raise RuntimeError(
-                "GPUSpriteBatch.begin(texture) "
-                "must be called before end()"
+        start = int(start)
+        count = int(count)
+
+        if count <= 0:
+            return 0
+
+        if start < 0:
+            raise ValueError(
+                "start must be greater than or equal to zero"
+            )
+
+        end = start + count
+
+        if end > self._sprite_count:
+            raise ValueError(
+                "Sprite draw range exceeds current batch "
+                f"({end} > {self._sprite_count})"
             )
 
         if (
-            self._sprite_count
-            == 0
+            len(self._textures)
+            != self._sprite_count
         ):
-            self._texture = None
-            return
+            raise RuntimeError(
+                "Sprite texture state is inconsistent"
+            )
+
+        if (
+            len(self._clip_rects)
+            != self._sprite_count
+        ):
+            raise RuntimeError(
+                "Sprite clip state is inconsistent"
+            )
+
+        sdl3.SDL_BindGPUGraphicsPipeline(
+            render_pass,
+            self.pipeline,
+        )
+
+        instance_size = (
+            self._sprite_count
+            * self.INSTANCE_STRIDE
+        )
+
+        vertex_bindings = (
+            sdl3.SDL_GPUBufferBinding
+            * 2
+        )()
+
+        vertex_bindings[0] = (
+            self.quad_buffer.binding(
+                0,
+                self.quad_buffer.size,
+            )
+        )
+
+        vertex_bindings[1] = (
+            self.instance_buffer.binding(
+                0,
+                instance_size,
+            )
+        )
+
+        sdl3.SDL_BindGPUVertexBuffers(
+            render_pass,
+            0,
+            vertex_bindings,
+            2,
+        )
+
+        drawn = 0
+        run_start = start
+
+        while run_start < end:
+            texture = (
+                self._textures[
+                    run_start
+                ]
+            )
+
+            clip_rect = (
+                self._clip_rects[
+                    run_start
+                ]
+            )
+
+            run_end = (
+                run_start
+                + 1
+            )
+
+            while (
+                run_end
+                < end
+                and self._textures[
+                    run_end
+                ] is texture
+                and self._clip_rects[
+                    run_end
+                ] == clip_rect
+            ):
+                run_end += 1
+
+            self._bind_texture(
+                render_pass,
+                texture,
+            )
+
+            scissor = (
+                self._make_scissor_rect(
+                    clip_rect
+                )
+            )
+
+            if (
+                scissor.w > 0
+                and scissor.h > 0
+            ):
+                sdl3.SDL_SetGPUScissor(
+                    render_pass,
+                    ctypes.byref(
+                        scissor
+                    ),
+                )
+
+                run_count = (
+                    run_end
+                    - run_start
+                )
+
+                sdl3.SDL_DrawGPUPrimitives(
+                    render_pass,
+                    6,
+                    run_count,
+                    0,
+                    run_start,
+                )
+
+                drawn += run_count
+
+            run_start = run_end
+
+        full_scissor = (
+            self._make_scissor_rect(
+                None
+            )
+        )
+
+        sdl3.SDL_SetGPUScissor(
+            render_pass,
+            ctypes.byref(
+                full_scissor
+            ),
+        )
+
+        return drawn
+
+    # ==========================================================
+    # Standalone end
+    # ==========================================================
+
+    def end(
+        self,
+    ) -> int:
+        """
+        Standalone SpriteBatch rendering path.
+
+        Normally GPURenderer should own frame creation.
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPUSpriteBatch has been destroyed"
+            )
+
+        if self._sprite_count == 0:
+            self.clear()
+            return 0
 
         if not self.context.begin_frame():
-            self._texture = None
-            return
+            self.clear()
+            return 0
+
+        drawn = 0
 
         try:
             command_buffer = (
                 self.context.command_buffer
             )
 
-            instance_size = (
-                self._sprite_count
-                * self.INSTANCE_STRIDE
+            self.render_into(
+                command_buffer
             )
-
-            self.instance_buffer.upload_into(
-                command_buffer,
-                memoryview(
-                    self._instance_data
-                )[
-                    :instance_size
-                ],
-            )
-
-            self._update_camera_uniform()
 
             render_pass = (
                 self.context.begin_render_pass(
@@ -1838,28 +1940,7 @@ class GPUSpriteBatch:
             )
 
             try:
-                camera_buffer = (
-                    (
-                        ctypes.c_ubyte
-                        * self.CAMERA_UNIFORM_SIZE
-                    ).from_buffer(
-                        self._camera_data
-                    )
-                )
-
-                sdl3.SDL_PushGPUVertexUniformData(
-                    command_buffer,
-                    0,
-                    ctypes.cast(
-                        camera_buffer,
-                        ctypes.c_void_p,
-                    ),
-                    self.CAMERA_UNIFORM_SIZE,
-                )
-
-                # Reuse the same draw path so clipping works
-                # in standalone batch usage too.
-                self.draw_into(
+                drawn = self.draw_into(
                     render_pass
                 )
 
@@ -1870,10 +1951,12 @@ class GPUSpriteBatch:
 
             self.context.end_frame()
 
+            return drawn
+
         except Exception:
             if self.context.frame_active:
                 try:
-                    self.context.end_frame()
+                    self.context.cancel_frame()
 
                 except Exception:
                     pass
@@ -1881,20 +1964,22 @@ class GPUSpriteBatch:
             raise
 
         finally:
-            self._texture = None
+            self.clear()
 
     # ==========================================================
-    # FLUSH
+    # Flush
     # ==========================================================
 
     def flush(
         self,
-    ) -> None:
+        command_buffer,
+        render_pass,
+    ) -> int:
         """
-        Render the currently prepared sprite instances into the
-        already active GPU frame.
+        Upload and draw the currently prepared sprites into an
+        already active GPU frame and render pass.
 
-        This method does NOT begin or end a GPU frame.
+        The batch is cleared after drawing.
         """
 
         if self._destroyed:
@@ -1902,25 +1987,28 @@ class GPUSpriteBatch:
                 "GPUSpriteBatch has been destroyed"
             )
 
-        if (
-            self._sprite_count
-            <= 0
-        ):
-            return
+        if self._sprite_count == 0:
+            return 0
 
-        if not self.context.frame_active:
-            raise RuntimeError(
-                "GPUSpriteBatch.flush() requires "
-                "an active GPU frame."
-            )
+        self.render_into(
+            command_buffer
+        )
+
+        drawn = self.draw_into(
+            render_pass
+        )
+
+        self.clear()
+
+        return drawn
 
     # ==========================================================
-    # DESTROY
+    # Destroy
     # ==========================================================
 
     def destroy(
         self,
-    ):
+    ) -> None:
         if self._destroyed:
             return
 
@@ -1930,7 +2018,7 @@ class GPUSpriteBatch:
         # Worker threads
         # ------------------------------------------------------
 
-        if self._executor:
+        if self._executor is not None:
             try:
                 self._executor.shutdown(
                     wait=True
@@ -1971,7 +2059,7 @@ class GPUSpriteBatch:
         # Sampler
         # ------------------------------------------------------
 
-        if self.sampler:
+        if self.sampler is not None:
             try:
                 self.sampler.destroy()
 
@@ -1984,7 +2072,7 @@ class GPUSpriteBatch:
         # Instance buffer
         # ------------------------------------------------------
 
-        if self.instance_buffer:
+        if self.instance_buffer is not None:
             try:
                 self.instance_buffer.destroy()
 
@@ -1997,7 +2085,7 @@ class GPUSpriteBatch:
         # Quad buffer
         # ------------------------------------------------------
 
-        if self.quad_buffer:
+        if self.quad_buffer is not None:
             try:
                 self.quad_buffer.destroy()
 
@@ -2010,7 +2098,7 @@ class GPUSpriteBatch:
         # Shaders
         # ------------------------------------------------------
 
-        if self.vertex_shader:
+        if self.vertex_shader is not None:
             try:
                 self.vertex_shader.destroy()
 
@@ -2019,7 +2107,7 @@ class GPUSpriteBatch:
 
             self.vertex_shader = None
 
-        if self.fragment_shader:
+        if self.fragment_shader is not None:
             try:
                 self.fragment_shader.destroy()
 
@@ -2028,16 +2116,25 @@ class GPUSpriteBatch:
 
             self.fragment_shader = None
 
-        self._texture = None
+        # ------------------------------------------------------
+        # CPU state
+        # ------------------------------------------------------
+
+        self._sprite_count = 0
+
+        self._textures.clear()
+        self._clip_rects.clear()
 
         self._instance_data = (
             bytearray()
         )
 
-        self._clip_rects.clear()
+        self._camera_data = (
+            bytearray()
+        )
 
     # ==========================================================
-    # CONTEXT MANAGER
+    # Context manager
     # ==========================================================
 
     def __enter__(

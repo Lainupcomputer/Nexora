@@ -633,6 +633,17 @@ class GPURectBatch:
             "SDL_CreateGPUGraphicsPipeline failed",
         )
 
+
+    # ==========================================================
+    # Properties
+    # ==========================================================
+
+    @property
+    def rect_count(
+        self,
+    ) -> int:
+        return self._rect_count
+
     # ==========================================================
     # BEGIN
     # ==========================================================
@@ -1077,6 +1088,155 @@ class GPURectBatch:
         # ------------------------------------------------------
         # Restore effectively unclipped state
         # ------------------------------------------------------
+
+        full_scissor = (
+            self._make_scissor_rect(
+                None
+            )
+        )
+
+        sdl3.SDL_SetGPUScissor(
+            render_pass,
+            ctypes.byref(
+                full_scissor
+            ),
+        )
+
+        return drawn
+
+
+    # ==========================================================
+    # Draw range
+    # ==========================================================
+
+    def draw_range(
+        self,
+        render_pass,
+        start: int,
+        count: int,
+    ) -> int:
+        """
+        Draw a contiguous range of already uploaded rectangle
+        instances.
+        """
+
+        if self._destroyed:
+            raise RuntimeError(
+                "GPURectBatch has been destroyed"
+            )
+
+        start = int(start)
+        count = int(count)
+
+        if count <= 0:
+            return 0
+
+        if start < 0:
+            raise ValueError(
+                "start must be greater than or equal to zero"
+            )
+
+        end = start + count
+
+        if end > self._rect_count:
+            raise ValueError(
+                "Rectangle draw range exceeds current batch "
+                f"({end} > {self._rect_count})"
+            )
+
+        sdl3.SDL_BindGPUGraphicsPipeline(
+            render_pass,
+            self.pipeline,
+        )
+
+        instance_size = (
+            self._rect_count
+            * self.INSTANCE_STRIDE
+        )
+
+        vertex_bindings = (
+            sdl3.SDL_GPUBufferBinding
+            * 2
+        )()
+
+        vertex_bindings[0] = (
+            self.quad_buffer.binding(
+                0,
+                self.quad_buffer.size,
+            )
+        )
+
+        vertex_bindings[1] = (
+            self.instance_buffer.binding(
+                0,
+                instance_size,
+            )
+        )
+
+        sdl3.SDL_BindGPUVertexBuffers(
+            render_pass,
+            0,
+            vertex_bindings,
+            2,
+        )
+
+        drawn = 0
+        run_start = start
+
+        while run_start < end:
+            clip_rect = (
+                self._clip_rects[
+                    run_start
+                ]
+            )
+
+            run_end = (
+                run_start
+                + 1
+            )
+
+            while (
+                run_end
+                < end
+                and self._clip_rects[
+                    run_end
+                ] == clip_rect
+            ):
+                run_end += 1
+
+            scissor = (
+                self._make_scissor_rect(
+                    clip_rect
+                )
+            )
+
+            if (
+                scissor.w > 0
+                and scissor.h > 0
+            ):
+                sdl3.SDL_SetGPUScissor(
+                    render_pass,
+                    ctypes.byref(
+                        scissor
+                    ),
+                )
+
+                run_count = (
+                    run_end
+                    - run_start
+                )
+
+                sdl3.SDL_DrawGPUPrimitives(
+                    render_pass,
+                    6,
+                    run_count,
+                    0,
+                    run_start,
+                )
+
+                drawn += run_count
+
+            run_start = run_end
 
         full_scissor = (
             self._make_scissor_rect(

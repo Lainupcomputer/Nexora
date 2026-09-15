@@ -36,12 +36,11 @@ class GPURenderer:
         - frame rendering
         - camera reference
 
-    Shader binaries are loaded from the shader directory
-    supplied by the engine.
+    The sprite renderer supports multiple textures per frame.
 
-    The current sprite batch supports one texture per frame.
-    The sprite batch is initialized lazily when the first
-    textured sprite is submitted.
+    Submission order is preserved. Consecutive sprites using
+    the same texture and clip rectangle are grouped into draw
+    runs by GPUSpriteBatch.
 
     Public drawing API:
         - sprite()
@@ -55,7 +54,23 @@ class GPURenderer:
         - polygon()
         - text()
 
-    Render flow with post-processing enabled:
+    Render flow:
+
+        begin_frame()
+
+            submit draw commands
+
+        end_frame()
+
+            CPU instance data
+                ↓
+            GPU upload
+                ↓
+            render pass
+                ↓
+            swapchain
+
+    With post-processing:
 
         Scene
           ↓
@@ -230,11 +245,37 @@ class GPURenderer:
 
         self._frame_started = False
 
-        # Texture currently assigned to SpriteBatch.
+        # ======================================================
+        # Ordered render commands
+        # ======================================================
         #
-        # None means that no sprite has been submitted during
-        # the current frame yet.
-        self._active_texture = None
+        # Commands currently cover sprites and rectangles/pixels.
+        #
+        # Tuple layout:
+        #
+        #   (
+        #       layer,
+        #       submission_index,
+        #       kind,
+        #       start,
+        #       count,
+        #   )
+        #
+        # Lower layers are drawn first. Commands on the same layer
+        # preserve exact submission order.
+        # ======================================================
+
+        self._render_commands: list[
+            tuple[
+                int,
+                int,
+                str,
+                int,
+                int,
+            ]
+        ] = []
+
+        self._submission_index = 0
 
         # ======================================================
         # Clipping
@@ -248,6 +289,10 @@ class GPURenderer:
                 float,
             ]
         ] = []
+
+        # ======================================================
+        # State
+        # ======================================================
 
         self._destroyed = False
 
@@ -283,10 +328,6 @@ class GPURenderer:
     def post_processing(
         self,
     ) -> PostProcess:
-        """
-        Public access to the post-processing system.
-        """
-
         return self.post_processor
 
     # ==========================================================
@@ -305,11 +346,9 @@ class GPURenderer:
         """
         Return the currently active clip rectangle.
 
-        Rectangles are represented as:
+        Rectangles use:
 
             (x, y, width, height)
-
-        where x/y are the top-left corner.
         """
 
         if not self._clip_stack:
@@ -332,8 +371,8 @@ class GPURenderer:
         """
         Push a clip rectangle.
 
-        If another clip rectangle is active, the new rectangle
-        is intersected with it.
+        Nested clipping automatically creates the intersection
+        between the current clip rectangle and the new one.
         """
 
         x = float(x)
@@ -359,9 +398,11 @@ class GPURenderer:
         current = self.clip_rect
 
         if current is not None:
-            new_rect = self._intersect_clip_rects(
-                current,
-                new_rect,
+            new_rect = (
+                self._intersect_clip_rects(
+                    current,
+                    new_rect,
+                )
             )
 
         self._clip_stack.append(
@@ -378,10 +419,6 @@ class GPURenderer:
         float,
         float,
     ] | None:
-        """
-        Pop the most recently pushed clip rectangle.
-        """
-
         if not self._clip_stack:
             raise RuntimeError(
                 "Cannot pop clip rectangle: "
@@ -395,10 +432,6 @@ class GPURenderer:
     def clear_clip_rects(
         self,
     ) -> None:
-        """
-        Clear the complete clip stack.
-        """
-
         self._clip_stack.clear()
 
     @staticmethod
@@ -421,10 +454,6 @@ class GPURenderer:
         float,
         float,
     ]:
-        """
-        Return the intersection of two clip rectangles.
-        """
-
         ax, ay, aw, ah = a
         bx, by, bw, bh = b
 
@@ -466,7 +495,7 @@ class GPURenderer:
         )
 
     # ==========================================================
-    # Frame
+    # Begin frame
     # ==========================================================
 
     def begin_frame(
@@ -482,27 +511,25 @@ class GPURenderer:
                 "GPU renderer frame already active"
             )
 
+        # ------------------------------------------------------
+        # Begin GPU frame
+        # ------------------------------------------------------
+
         if not self.context.begin_frame():
             return False
 
         self._frame_started = True
 
-        self._active_texture = None
-
         self._clip_stack.clear()
+
+        self._render_commands.clear()
+        self._submission_index = 0
 
         # ------------------------------------------------------
         # Begin batches
         # ------------------------------------------------------
-        #
-        # IMPORTANT:
-        #
-        # GPUSpriteBatch.begin() requires a texture.
-        # At this point no sprite texture is known yet.
-        #
-        # Therefore the sprite batch is started lazily inside
-        # _set_texture() when the first sprite is submitted.
-        # ------------------------------------------------------
+
+        self.sprite_batch.begin()
 
         self.rect_batch.begin()
 
@@ -538,13 +565,12 @@ class GPURenderer:
             )
 
             # ==================================================
-            # Prepare GPU data
+            # Upload GPU data
             # ==================================================
 
-            if self._active_texture is not None:
-                self.sprite_batch.render_into(
-                    command_buffer
-                )
+            self.sprite_batch.render_into(
+                command_buffer
+            )
 
             self.rect_batch.render_into(
                 command_buffer
@@ -576,7 +602,7 @@ class GPURenderer:
                 self._render_direct()
 
             # ==================================================
-            # Submit frame
+            # Submit GPU frame
             # ==================================================
 
             self.context.end_frame()
@@ -584,6 +610,11 @@ class GPURenderer:
             return True
 
         except Exception:
+            # --------------------------------------------------
+            # Only cancel if the context still owns an active
+            # frame.
+            # --------------------------------------------------
+
             if self.context.frame_active:
                 try:
                     self.context.cancel_frame()
@@ -604,9 +635,7 @@ class GPURenderer:
         self,
     ) -> None:
         """
-        Render directly into the swapchain.
-
-        Used when post-processing is disabled.
+        Render the complete scene directly into the swapchain.
         """
 
         render_pass = (
@@ -631,7 +660,7 @@ class GPURenderer:
             )
 
     # ==========================================================
-    # Post processing rendering
+    # Post-processing rendering
     # ==========================================================
 
     def _render_with_post_processing(
@@ -639,9 +668,13 @@ class GPURenderer:
         command_buffer,
     ) -> None:
         """
-        Render the scene into an offscreen render target and
-        then process it into the swapchain.
+        Render scene into an offscreen target and then process
+        that target into the swapchain.
         """
+
+        # ------------------------------------------------------
+        # Ensure render target matches viewport
+        # ------------------------------------------------------
 
         self.post_processor.ensure_target(
             self.width,
@@ -661,7 +694,7 @@ class GPURenderer:
         # ======================================================
         # Pass 1
         #
-        # Scene -> offscreen texture
+        # Scene -> offscreen target
         # ======================================================
 
         scene_pass = (
@@ -691,7 +724,7 @@ class GPURenderer:
         # ======================================================
         # Pass 2
         #
-        # Offscreen -> post process -> swapchain
+        # Offscreen target -> post process -> swapchain
         # ======================================================
 
         post_pass = (
@@ -716,6 +749,35 @@ class GPURenderer:
                 post_pass
             )
 
+
+    # ==========================================================
+    # Ordered command queue
+    # ==========================================================
+
+    def _queue_render_command(
+        self,
+        kind: str,
+        start: int,
+        count: int,
+        layer: int,
+    ) -> None:
+        count = int(count)
+
+        if count <= 0:
+            return
+
+        self._render_commands.append(
+            (
+                int(layer),
+                self._submission_index,
+                str(kind),
+                int(start),
+                count,
+            )
+        )
+
+        self._submission_index += 1
+
     # ==========================================================
     # Draw scene
     # ==========================================================
@@ -725,52 +787,81 @@ class GPURenderer:
         render_pass,
     ) -> None:
         """
-        Draw all currently submitted render batches.
+        Draw all ordered render commands.
+
+        Sorting rule:
+
+            1. layer ascending
+            2. original submission order
         """
 
-        # ------------------------------------------------------
-        # Sprites
-        # ------------------------------------------------------
+        for (
+            _layer,
+            _submission_index,
+            kind,
+            start,
+            count,
+        ) in sorted(
+            self._render_commands,
+            key=lambda command: (
+                command[0],
+                command[1],
+            ),
+        ):
+            if kind == "sprite":
+                self.sprite_batch.draw_range(
+                    render_pass,
+                    start,
+                    count,
+                )
 
-        if self._active_texture is not None:
-            self.sprite_batch.draw_into(
-                render_pass
-            )
+            elif kind == "rect":
+                self.rect_batch.draw_range(
+                    render_pass,
+                    start,
+                    count,
+                )
 
-        # ------------------------------------------------------
-        # Rectangles
-        # ------------------------------------------------------
+            elif kind == "line":
+                self.line_batch.draw_range(
+                    render_pass,
+                    start,
+                    count,
+                )
 
-        self.rect_batch.draw_into(
-            render_pass
-        )
+            elif kind == "shape":
+                self.shape_batch.draw_shape_range(
+                    render_pass,
+                    start,
+                    count,
+                )
 
-        # ------------------------------------------------------
-        # Lines
-        # ------------------------------------------------------
+            elif kind == "geometry":
+                self.shape_batch.draw_geometry_range(
+                    render_pass,
+                    start,
+                    count,
+                )
 
-        self.line_batch.draw_into(
-            render_pass
-        )
+            elif kind == "text":
+                if self.text_renderer is None:
+                    raise RuntimeError(
+                        "Text command queued but "
+                        "text_renderer is None"
+                    )
 
-        # ------------------------------------------------------
-        # Shapes
-        # ------------------------------------------------------
+                self.text_renderer.draw_range(
+                    render_pass,
+                    start,
+                    count,
+                )
 
-        self.shape_batch.draw_into(
-            render_pass
-        )
+            else:
+                raise RuntimeError(
+                    "Unknown render command kind: "
+                    f"{kind!r}"
+                )
 
-        # ------------------------------------------------------
-        # Text
-        # ------------------------------------------------------
-
-        if self.text_renderer is not None:
-            self.text_renderer.draw_into(
-                render_pass
-            )
-
-    # ==========================================================
     # ==========================================================
     # Frame cleanup
     # ==========================================================
@@ -779,29 +870,25 @@ class GPURenderer:
         self,
     ) -> None:
         """
-        Reset transient frame state after rendering.
+        Reset all transient frame state.
+
+        No private GPUSpriteBatch internals are touched here.
         """
 
         # ------------------------------------------------------
-        # Frame state
+        # Clipping
         # ------------------------------------------------------
-
-        self._active_texture = None
 
         self._clip_stack.clear()
 
-        self._frame_started = False
+        self._render_commands.clear()
+        self._submission_index = 0
 
         # ------------------------------------------------------
         # Sprite batch
         # ------------------------------------------------------
-        #
-        # GPUSpriteBatch currently has no public clear() method.
-        # Reset its transient per-frame state manually.
-        # ------------------------------------------------------
 
-        self.sprite_batch._texture = None
-        self.sprite_batch._sprite_count = 0
+        self.sprite_batch.clear()
 
         # ------------------------------------------------------
         # Other batches
@@ -819,6 +906,13 @@ class GPURenderer:
 
         if self.text_renderer is not None:
             self.text_renderer.clear()
+
+        # ------------------------------------------------------
+        # Frame state
+        # ------------------------------------------------------
+
+        self._frame_started = False
+
     # ==========================================================
     # Sprites
     # ==========================================================
@@ -845,9 +939,13 @@ class GPURenderer:
             1.0,
             1.0,
         ),
+        layer: int = 0,
     ) -> None:
         """
         Submit one sprite.
+
+        Lower layers are drawn first. Sprites on the same layer
+        preserve submission order.
         """
 
         self._require_frame()
@@ -855,15 +953,14 @@ class GPURenderer:
         if texture is None:
             return
 
-        self._set_texture(
-            texture
-        )
+        start = self.sprite_batch.sprite_count
 
         self.sprite_batch.add(
             x,
             y,
             width,
             height,
+            texture=texture,
             rotation=rotation,
             origin=origin,
             alpha=alpha,
@@ -873,15 +970,30 @@ class GPURenderer:
             clip_rect=self.clip_rect,
         )
 
+        self._queue_render_command(
+            "sprite",
+            start,
+            1,
+            layer,
+        )
+
+    # ==========================================================
+    # Multiple sprites
+    # ==========================================================
+
     def sprites(
         self,
         texture,
         sprites,
         *,
         workers: int | None = None,
+        layer: int = 0,
     ) -> int:
         """
-        Submit many sprites using one texture.
+        Submit multiple sprites using the same texture.
+
+        Different calls to sprites() may use different textures
+        within the same frame.
 
         Expected sprite format:
 
@@ -919,49 +1031,23 @@ class GPURenderer:
         if not sprites:
             return 0
 
-        self._set_texture(
-            texture
-        )
+        start = self.sprite_batch.sprite_count
 
-        return self.sprite_batch.add_many(
+        count = self.sprite_batch.add_many(
             sprites,
+            texture=texture,
             workers=workers,
             clip_rect=self.clip_rect,
         )
 
-    # ==========================================================
-    # Texture handling
-    # ==========================================================
-
-    def _set_texture(
-        self,
-        texture,
-    ) -> None:
-        """
-        Initialize the sprite batch with the first texture used
-        during the current frame.
-
-        The current GPUSpriteBatch supports one texture per
-        frame.
-        """
-
-        if texture is None:
-            return
-
-        if self._active_texture is texture:
-            return
-
-        if self._active_texture is not None:
-            raise RuntimeError(
-                "Multiple textures in one frame are not "
-                "supported by the current GPUSpriteBatch."
-            )
-
-        self._active_texture = texture
-
-        self.sprite_batch.begin(
-            texture
+        self._queue_render_command(
+            "sprite",
+            start,
+            count,
+            layer,
         )
+
+        return count
 
     # ==========================================================
     # Rectangles
@@ -986,8 +1072,11 @@ class GPURenderer:
             0.5,
         ),
         radius: float = 0.0,
+        layer: int = 0,
     ) -> None:
         self._require_frame()
+
+        start = self.rect_batch.rect_count
 
         self.rect_batch.add(
             x,
@@ -999,6 +1088,13 @@ class GPURenderer:
             origin=origin,
             radius=radius,
             clip_rect=self.clip_rect,
+        )
+
+        self._queue_render_command(
+            "rect",
+            start,
+            1,
+            layer,
         )
 
     # ==========================================================
@@ -1017,8 +1113,11 @@ class GPURenderer:
             1.0,
         ),
         size: float = 1.0,
+        layer: int = 0,
     ) -> None:
         self._require_frame()
+
+        start = self.rect_batch.rect_count
 
         self.rect_batch.add(
             x,
@@ -1032,6 +1131,13 @@ class GPURenderer:
                 0.5,
             ),
             clip_rect=self.clip_rect,
+        )
+
+        self._queue_render_command(
+            "rect",
+            start,
+            1,
+            layer,
         )
 
     # ==========================================================
@@ -1052,8 +1158,11 @@ class GPURenderer:
             1.0,
             1.0,
         ),
+        layer: int = 0,
     ) -> None:
         self._require_frame()
+
+        start = self.line_batch.line_count
 
         self.line_batch.add(
             x1,
@@ -1062,6 +1171,13 @@ class GPURenderer:
             y2,
             width=width,
             color=color,
+        )
+
+        self._queue_render_command(
+            "line",
+            start,
+            1,
+            layer,
         )
 
     # ==========================================================
@@ -1085,8 +1201,11 @@ class GPURenderer:
             0.5,
             0.5,
         ),
+        layer: int = 0,
     ) -> None:
         self._require_frame()
+
+        start = self.shape_batch.shape_count
 
         self.shape_batch.circle(
             x,
@@ -1095,6 +1214,13 @@ class GPURenderer:
             color=color,
             rotation=rotation,
             origin=origin,
+        )
+
+        self._queue_render_command(
+            "shape",
+            start,
+            1,
+            layer,
         )
 
     # ==========================================================
@@ -1119,8 +1245,11 @@ class GPURenderer:
             0.5,
             0.5,
         ),
+        layer: int = 0,
     ) -> None:
         self._require_frame()
+
+        start = self.shape_batch.shape_count
 
         self.shape_batch.ellipse(
             x,
@@ -1130,6 +1259,13 @@ class GPURenderer:
             color=color,
             rotation=rotation,
             origin=origin,
+        )
+
+        self._queue_render_command(
+            "shape",
+            start,
+            1,
+            layer,
         )
 
     # ==========================================================
@@ -1151,8 +1287,11 @@ class GPURenderer:
             1.0,
             1.0,
         ),
+        layer: int = 0,
     ) -> None:
         self._require_frame()
+
+        start = self.shape_batch.geometry_vertex_count
 
         self.shape_batch.triangle(
             x1,
@@ -1162,6 +1301,18 @@ class GPURenderer:
             x3,
             y3,
             color=color,
+        )
+
+        count = (
+            self.shape_batch.geometry_vertex_count
+            - start
+        )
+
+        self._queue_render_command(
+            "geometry",
+            start,
+            count,
+            layer,
         )
 
     # ==========================================================
@@ -1178,12 +1329,28 @@ class GPURenderer:
             1.0,
             1.0,
         ),
+        layer: int = 0,
     ) -> None:
         self._require_frame()
+
+        points = list(points)
+        start = self.shape_batch.geometry_vertex_count
 
         self.shape_batch.polygon(
             points,
             color=color,
+        )
+
+        count = (
+            self.shape_batch.geometry_vertex_count
+            - start
+        )
+
+        self._queue_render_command(
+            "geometry",
+            start,
+            count,
+            layer,
         )
 
     # ==========================================================
@@ -1193,13 +1360,14 @@ class GPURenderer:
     def text(
         self,
         *args,
+        layer: int = 0,
         **kwargs,
     ):
         """
         Draw text using GPUTextRenderer.
 
-        The currently active renderer clip rectangle is
-        automatically attached to the text draw command.
+        The active renderer clip rectangle is automatically
+        passed to GPUTextRenderer.
         """
 
         self._require_frame()
@@ -1215,10 +1383,25 @@ class GPURenderer:
             self.clip_rect,
         )
 
-        return self.text_renderer.draw(
+        start = self.text_renderer.glyph_count
+
+        count = self.text_renderer.draw(
             *args,
             **kwargs,
         )
+
+        self._queue_render_command(
+            "text",
+            start,
+            count,
+            layer,
+        )
+
+        return count
+
+    # ==========================================================
+    # Text measurement
+    # ==========================================================
 
     def text_measure(
         self,
@@ -1239,6 +1422,10 @@ class GPURenderer:
             text,
             scale=scale,
         )
+
+    # ==========================================================
+    # Text baseline
+    # ==========================================================
 
     def text_baseline(
         self,
@@ -1262,16 +1449,21 @@ class GPURenderer:
         )
 
     # ==========================================================
-    # ECS / Snapshot
+    # ECS / RenderSnapshot
     # ==========================================================
 
     def submit(
         self,
         snapshot: RenderSnapshot,
         texture,
+        *,
+        layer: int = 0,
     ) -> int:
         """
-        Submit a RenderSnapshot using one texture.
+        Submit a RenderSnapshot using the supplied texture.
+
+        Snapshot sprites participate in the same global render
+        layer queue as sprite(), rect(), line(), shapes and text.
         """
 
         self._require_frame()
@@ -1279,13 +1471,21 @@ class GPURenderer:
         if texture is None:
             return 0
 
-        self._set_texture(
-            texture
+        start = self.sprite_batch.sprite_count
+
+        count = self.sprite_batch.submit_snapshot(
+            snapshot,
+            texture=texture,
         )
 
-        return self.sprite_batch.submit_snapshot(
-            snapshot
+        self._queue_render_command(
+            "sprite",
+            start,
+            count,
+            layer,
         )
+
+        return count
 
     # ==========================================================
     # Validation
@@ -1294,6 +1494,11 @@ class GPURenderer:
     def _require_frame(
         self,
     ) -> None:
+        if self._destroyed:
+            raise RuntimeError(
+                "GPURenderer has been destroyed"
+            )
+
         if not self._frame_started:
             raise RuntimeError(
                 "Call renderer.begin_frame() before drawing"
@@ -1324,6 +1529,10 @@ class GPURenderer:
             return
 
         self._destroyed = True
+
+        # ------------------------------------------------------
+        # Wait for GPU before releasing resources
+        # ------------------------------------------------------
 
         try:
             self.context.wait_idle()
@@ -1397,10 +1606,11 @@ class GPURenderer:
             finally:
                 self.text_renderer = None
 
-        self._active_texture = None
+        # ------------------------------------------------------
+        # State
+        # ------------------------------------------------------
 
         self._clip_stack.clear()
-
         self._frame_started = False
 
     # ==========================================================

@@ -810,15 +810,18 @@ class GPUTextRenderer:
             float,
             float,
         ] | None = None,
-    ) -> None:
+    ) -> int:
         """
         Add text to the current batch.
 
         x/y represent the text baseline.
+        Returns the number of generated glyph instances.
         """
 
         if not text:
-            return
+            return 0
+
+        start_glyph_count = self._glyph_count
 
         if scale <= 0:
             raise ValueError(
@@ -1021,6 +1024,11 @@ class GPUTextRenderer:
                 glyph.advance
                 * scale
             )
+
+        return (
+            self._glyph_count
+            - start_glyph_count
+        )
 
     # ==============================================================
     # GPU upload
@@ -1425,6 +1433,161 @@ class GPUTextRenderer:
                 full_scissor
             ),
         )
+
+    # ==============================================================
+    # Draw range
+    # ==============================================================
+
+    def draw_range(
+        self,
+        render_pass,
+        start: int,
+        count: int,
+    ) -> int:
+        if count <= 0:
+            return 0
+
+        start = int(start)
+        count = int(count)
+
+        if start < 0:
+            raise ValueError(
+                "start must be greater than or equal to zero"
+            )
+
+        end = start + count
+
+        if end > self._glyph_count:
+            raise ValueError(
+                "Text draw range exceeds current batch "
+                f"({end} > {self._glyph_count})"
+            )
+
+        command_buffer = self.context.command_buffer
+
+        if command_buffer is None:
+            raise RuntimeError(
+                "No active GPU command buffer."
+            )
+
+        camera_data = struct.pack(
+            "<8f",
+            0.0,
+            0.0,
+            float(self.context.swapchain_width),
+            float(self.context.swapchain_height),
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+
+        sdl3.SDL_PushGPUVertexUniformData(
+            command_buffer,
+            0,
+            camera_data,
+            len(camera_data),
+        )
+
+        color_data = struct.pack(
+            "<4f",
+            *self._text_color,
+        )
+
+        sdl3.SDL_PushGPUFragmentUniformData(
+            command_buffer,
+            0,
+            color_data,
+            len(color_data),
+        )
+
+        sdl3.SDL_BindGPUGraphicsPipeline(
+            render_pass,
+            self._pipeline,
+        )
+
+        vertex_bindings = (
+            sdl3.SDL_GPUBufferBinding * 2
+        )()
+
+        vertex_bindings[0].buffer = (
+            self._vertex_buffer.current_buffer
+        )
+        vertex_bindings[0].offset = 0
+
+        vertex_bindings[1].buffer = (
+            self._instance_buffer.current_buffer
+        )
+        vertex_bindings[1].offset = 0
+
+        sdl3.SDL_BindGPUVertexBuffers(
+            render_pass,
+            0,
+            vertex_bindings,
+            2,
+        )
+
+        texture_binding = (
+            sdl3.SDL_GPUTextureSamplerBinding()
+        )
+        texture_binding.texture = self.atlas.texture.texture
+        texture_binding.sampler = self._sampler.sampler
+
+        texture_bindings = (
+            sdl3.SDL_GPUTextureSamplerBinding * 1
+        )()
+        texture_bindings[0] = texture_binding
+
+        sdl3.SDL_BindGPUFragmentSamplers(
+            render_pass,
+            0,
+            texture_bindings,
+            1,
+        )
+
+        drawn = 0
+        run_start = start
+
+        while run_start < end:
+            clip_rect = self._clip_rects[run_start]
+            run_end = run_start + 1
+
+            while (
+                run_end < end
+                and self._clip_rects[run_end] == clip_rect
+            ):
+                run_end += 1
+
+            scissor = self._make_scissor_rect(clip_rect)
+
+            if scissor.w > 0 and scissor.h > 0:
+                sdl3.SDL_SetGPUScissor(
+                    render_pass,
+                    ctypes.byref(scissor),
+                )
+
+                run_count = run_end - run_start
+
+                sdl3.SDL_DrawGPUPrimitives(
+                    render_pass,
+                    6,
+                    run_count,
+                    0,
+                    run_start,
+                )
+
+                drawn += run_count
+
+            run_start = run_end
+
+        full_scissor = self._make_scissor_rect(None)
+
+        sdl3.SDL_SetGPUScissor(
+            render_pass,
+            ctypes.byref(full_scissor),
+        )
+
+        return drawn
 
     # ==============================================================
     # Convenience frame rendering

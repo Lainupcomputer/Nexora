@@ -488,6 +488,16 @@ class GPULineBatch:
         )
 
     # ==========================================================
+    # State
+    # ==========================================================
+
+    @property
+    def line_count(
+        self,
+    ) -> int:
+        return self._line_count
+
+    # ==========================================================
     # BEGIN
     # ==========================================================
 
@@ -769,6 +779,85 @@ class GPULineBatch:
         )
 
         return self._line_count
+
+    # ==========================================================
+    # DRAW RANGE
+    # ==========================================================
+
+    def draw_range(
+        self,
+        render_pass,
+        start: int,
+        count: int,
+    ) -> int:
+        if self._destroyed:
+            raise RuntimeError(
+                "GPULineBatch has been destroyed"
+            )
+
+        start = int(start)
+        count = int(count)
+
+        if count <= 0:
+            return 0
+
+        if start < 0:
+            raise ValueError(
+                "start must be greater than or equal to zero"
+            )
+
+        end = start + count
+
+        if end > self._line_count:
+            raise ValueError(
+                "Line draw range exceeds current batch "
+                f"({end} > {self._line_count})"
+            )
+
+        sdl3.SDL_BindGPUGraphicsPipeline(
+            render_pass,
+            self.pipeline,
+        )
+
+        instance_size = (
+            self._line_count
+            * self.INSTANCE_STRIDE
+        )
+
+        vertex_bindings = (
+            sdl3.SDL_GPUBufferBinding * 2
+        )()
+
+        vertex_bindings[0] = (
+            self.quad_buffer.binding(
+                0,
+                self.quad_buffer.size,
+            )
+        )
+
+        vertex_bindings[1] = (
+            self.instance_buffer.binding(
+                0,
+                instance_size,
+            )
+        )
+
+        sdl3.SDL_BindGPUVertexBuffers(
+            render_pass,
+            0,
+            vertex_bindings,
+            2,
+        )
+
+        sdl3.SDL_DrawGPUPrimitives(
+            render_pass,
+            6,
+            count,
+            0,
+            start,
+        )
+
+        return count
 
     # ==========================================================
     # CLEAR
