@@ -65,6 +65,18 @@ class Node:
         self.enabled: bool = True
         self.visible: bool = True
 
+        # ======================================================
+        # Signals
+        # ======================================================
+        #
+        # Incoming connections are tracked so destroying a Node
+        # automatically disconnects callbacks owned by it.
+        # Signals created through create_signal() are tracked as
+        # owned signals and are cleared during destruction.
+
+        self._signal_connections: set = set()
+        self._owned_signals: set = set()
+
     # ==============================================================
     # World transform
     # ==============================================================
@@ -448,12 +460,80 @@ class Node:
         return False
 
     # ==============================================================
+    # Signals
+    # ==============================================================
+
+    def create_signal(
+        self,
+        name: str,
+    ):
+        """
+        Create a Signal owned by this Node.
+
+        Owned signals are cleared automatically when the Node is
+        destroyed.
+        """
+
+        from nexora.signals import Signal
+
+        return Signal(
+            name,
+            owner=self,
+        )
+
+    def _track_signal_connection(
+        self,
+        connection,
+    ) -> None:
+        self._signal_connections.add(
+            connection
+        )
+
+    def _untrack_signal_connection(
+        self,
+        connection,
+    ) -> None:
+        self._signal_connections.discard(
+            connection
+        )
+
+    def _track_owned_signal(
+        self,
+        signal,
+    ) -> None:
+        self._owned_signals.add(
+            signal
+        )
+
+    def _disconnect_signals(
+        self,
+    ) -> None:
+        # Disconnect listeners first. A connection may remove itself
+        # from this set while disconnecting, so iterate over a copy.
+        for connection in tuple(
+            self._signal_connections
+        ):
+            connection.disconnect()
+
+        self._signal_connections.clear()
+
+        # Then clear signals emitted by this Node.
+        for signal in tuple(
+            self._owned_signals
+        ):
+            signal.clear()
+
+        self._owned_signals.clear()
+
+    # ==============================================================
     # Destroy
     # ==============================================================
 
     def destroy(
         self,
     ) -> None:
+        self._disconnect_signals()
+
         for child in tuple(
             self.children
         ):
