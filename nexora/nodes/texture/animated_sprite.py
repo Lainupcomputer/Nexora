@@ -84,6 +84,7 @@ class AnimatedSprite(Node):
         # ======================================================
 
         self.animator = Animator()
+        self._external_animation_driver: bool = False
 
     # ==============================================================
     # Single animations
@@ -306,9 +307,10 @@ class AnimatedSprite(Node):
         Called automatically through the Scene/Node lifecycle.
         """
 
-        self.animator.update(
-            delta_time
-        )
+        if not self._external_animation_driver:
+            self.animator.update(
+                delta_time
+            )
 
     # ==============================================================
     # Render

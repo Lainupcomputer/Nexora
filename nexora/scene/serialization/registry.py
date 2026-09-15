@@ -14,6 +14,7 @@ from nexora.nodes.world.tilemap_node import TileMapNode
 from nexora.nodes.navigation.navigation_agent_2d import NavigationAgent2D
 from nexora.nodes.navigation.navigation_obstacle_2d import NavigationObstacle2D
 from nexora.tilemap import TileMap, TileSet
+from nexora.animation import AnimationClip, AnimationEvent, AnimationFrame, AnimationPlayer
 
 from .errors import UnregisteredNodeTypeError
 
@@ -332,6 +333,80 @@ class NodeFactoryRegistry:
             load_state=load_navigation_obstacle,
         )
 
+
+        def dump_animation_player(node: AnimationPlayer) -> dict[str, Any]:
+            return {
+                "speed_scale": float(node.speed_scale),
+                "autoplay": node.autoplay,
+                "target_node_name": node.target_node_name,
+                "animations": [
+                    {
+                        "name": clip.name,
+                        "loop": bool(clip.loop),
+                        "frames": [
+                            {
+                                "index": int(frame.index),
+                                "duration": float(frame.duration),
+                                "uv": frame.uv,
+                            }
+                            for frame in clip.frames
+                        ],
+                        "events": [
+                            {
+                                "frame": int(event.frame),
+                                "name": event.name,
+                                "data": event.data,
+                            }
+                            for event in clip.events
+                        ],
+                    }
+                    for clip in node.animations
+                ],
+            }
+
+        def load_animation_player(
+            node: AnimationPlayer,
+            state: dict[str, Any],
+            context: dict[str, Any],
+        ) -> None:
+            del context
+            node.speed_scale = float(state.get("speed_scale", 1.0))
+            autoplay = state.get("autoplay")
+            node.autoplay = None if autoplay is None else str(autoplay)
+            target = state.get("target_node_name")
+            node.target_node_name = None if target is None else str(target)
+            for clip_state in state.get("animations", []):
+                frames = tuple(
+                    AnimationFrame(
+                        index=int(frame["index"]),
+                        duration=float(frame["duration"]),
+                        uv=None if frame.get("uv") is None else tuple(frame["uv"]),
+                    )
+                    for frame in clip_state.get("frames", [])
+                )
+                events = tuple(
+                    AnimationEvent(
+                        frame=int(event["frame"]),
+                        name=str(event["name"]),
+                        data=event.get("data"),
+                    )
+                    for event in clip_state.get("events", [])
+                )
+                node.add_animation(
+                    AnimationClip(
+                        name=str(clip_state["name"]),
+                        frames=frames,
+                        loop=bool(clip_state.get("loop", True)),
+                        events=events,
+                    )
+                )
+
+        self.register(
+            "AnimationPlayer",
+            AnimationPlayer,
+            dump_state=dump_animation_player,
+            load_state=load_animation_player,
+        )
 
         def dump_tilemap_node(node: TileMapNode) -> dict[str, Any]:
             if node.tilemap is None or node.tileset is None:

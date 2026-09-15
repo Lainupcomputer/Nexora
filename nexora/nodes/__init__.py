@@ -1,3 +1,4 @@
+from nexora.animation.player import AnimationPlayer
 from .node import Node
 
 from .camera import (
@@ -61,6 +62,7 @@ from .ui import (
 __all__ = [
     # Base
     "Node",
+    "AnimationPlayer",
 
     # Camera
     "Camera2D",

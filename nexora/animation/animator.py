@@ -5,6 +5,7 @@ from collections.abc import Callable
 from nexora.animation.clip import (
     AnimationClip,
     AnimationFrame,
+    AnimationEvent,
 )
 
 
@@ -41,6 +42,10 @@ class Animator:
                 None,
             ]
             | None
+        ) = None
+
+        self.on_event: (
+            Callable[[AnimationEvent], None] | None
         ) = None
 
         self.on_finished: (
@@ -322,13 +327,15 @@ class Animator:
             self.current_frame
         )
 
-        if (
-            frame is not None
-            and self.on_frame_changed is not None
-        ):
-            self.on_frame_changed(
-                frame
-            )
+        if frame is None:
+            return
+
+        if self.on_frame_changed is not None:
+            self.on_frame_changed(frame)
+
+        if self._clip is not None and self.on_event is not None:
+            for event in self._clip.events_for_frame(self._frame_index):
+                self.on_event(event)
 
     # ==========================================================
     # State
@@ -368,6 +375,18 @@ class Animator:
         self,
     ) -> bool:
         return self._finished
+
+    @property
+    def current_animation(self) -> AnimationClip | None:
+        return self._clip
+
+    @property
+    def speed_scale(self) -> float:
+        return self.speed
+
+    @speed_scale.setter
+    def speed_scale(self, value: float) -> None:
+        self.speed = float(value)
 
     # ==========================================================
     # Progress
