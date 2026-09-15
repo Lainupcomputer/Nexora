@@ -19,6 +19,7 @@ from .entity import (
 
 from .navigation import (
     NavigationAgent2D,
+    NavigationObstacle2D,
 )
 
 from .texture import (
@@ -78,6 +79,7 @@ __all__ = [
 
     # Navigation
     "NavigationAgent2D",
+    "NavigationObstacle2D",
 
     # Texture
     "AnimatedSprite",

@@ -12,6 +12,9 @@ from nexora.tilemap import (
     TileMetadataHit,
     TilePrefabSpawn,
     TileTeleportEvent,
+    NavigationState,
+    NavigationAvoidanceState,
+    TileNavigation,
 )
 
 
@@ -53,6 +56,11 @@ class TileMapNode(Node):
         self.tilemap: TileMap | None = None
         self.tileset: TileSet | None = None
         self.texture = None
+
+        # Shared navigation state. Every TileNavigation created from this
+        # TileMapNode sees the same dynamic blockers/revision.
+        self._navigation_state = NavigationState()
+        self._avoidance_state = NavigationAvoidanceState()
 
         # ======================================================
         # Rendering
@@ -139,6 +147,11 @@ class TileMapNode(Node):
         self.tileset = tileset
         self.texture = texture
 
+        # Dynamic blockers belong to one concrete map. Replacing the map
+        # therefore starts a fresh shared navigation state.
+        self._navigation_state = NavigationState()
+        self._avoidance_state = NavigationAvoidanceState()
+
         # A different map / tileset invalidates all previous
         # chunk render caches.
         self._chunk_caches.clear()
@@ -157,6 +170,40 @@ class TileMapNode(Node):
             force_reload=force_reload,
         )
         self.set_map(tilemap, tileset, texture)
+
+    @property
+    def navigation_state(self) -> NavigationState:
+        return self._navigation_state
+
+    @property
+    def avoidance_state(self) -> NavigationAvoidanceState:
+        return self._avoidance_state
+
+    def create_navigation(
+        self,
+        *,
+        layer_name: str = "ground",
+        allow_diagonal: bool = False,
+        allow_corner_cutting: bool = False,
+        empty_walkable: bool = True,
+        default_cost: float = 1.0,
+        cache_paths: bool = True,
+    ) -> TileNavigation:
+        """Create navigation using this map's shared dynamic blocker state."""
+        if self.tilemap is None or self.tileset is None:
+            raise RuntimeError("TileMapNode must have a TileMap and TileSet.")
+
+        return TileNavigation(
+            self.tilemap,
+            self.tileset,
+            layer_name=layer_name,
+            allow_diagonal=allow_diagonal,
+            allow_corner_cutting=allow_corner_cutting,
+            empty_walkable=empty_walkable,
+            default_cost=default_cost,
+            cache_paths=cache_paths,
+            state=self._navigation_state,
+        )
 
     def update(self, delta_time: float) -> None:
         self._animation_time += max(0.0, float(delta_time))

@@ -47,6 +47,15 @@ class NavigationAgent2D(Node):
         self.auto_repath: bool = True
         self.repath_interval: float = 0.25
 
+        # Local crowd avoidance. This adjusts the preferred path velocity
+        # without modifying the global A* path.
+        self.avoidance_enabled: bool = True
+        self.avoidance_radius: float = 12.0
+        self.avoidance_neighbor_distance: float = 64.0
+        self.avoidance_time_horizon: float = 0.75
+        self.avoidance_strength: float = 1.0
+        self._avoidance_owner_id: int = id(self)
+
         self.navigation: TileNavigation | None = None
         self.path: NavigationPath | None = None
         self._world_points: tuple[tuple[float, float], ...] = ()
@@ -91,6 +100,9 @@ class NavigationAgent2D(Node):
         if map_node.tilemap is None or map_node.tileset is None:
             raise RuntimeError("TileMapNode must have a TileMap and TileSet.")
 
+        if self.map_node is not None and self.map_node is not map_node:
+            self._unregister_avoidance()
+
         self.map_node = map_node
         self.map_node_name = map_node.name
         self.layer_name = str(layer_name)
@@ -106,9 +118,7 @@ class NavigationAgent2D(Node):
         if cache_paths is not None:
             self.cache_paths = bool(cache_paths)
 
-        self.navigation = TileNavigation(
-            map_node.tilemap,
-            map_node.tileset,
+        self.navigation = map_node.create_navigation(
             layer_name=self.layer_name,
             allow_diagonal=self.allow_diagonal,
             allow_corner_cutting=self.allow_corner_cutting,
@@ -118,6 +128,7 @@ class NavigationAgent2D(Node):
         )
         self._last_navigation_revision = self.navigation.revision
         self._target_dirty = self.target_position is not None
+        self._sync_avoidance_agent()
         return self.navigation
 
     def set_navigation(
@@ -138,6 +149,7 @@ class NavigationAgent2D(Node):
         self.cache_paths = navigation.cache_paths
         self._last_navigation_revision = navigation.revision
         self._target_dirty = self.target_position is not None
+        self._sync_avoidance_agent()
 
     def _try_lazy_bind(self) -> bool:
         if self.navigation is not None:
@@ -281,12 +293,64 @@ class NavigationAgent2D(Node):
             return (0.0, 0.0)
         return (dx / length, dy / length)
 
-    def desired_velocity(self, speed: float) -> tuple[float, float]:
+    def preferred_velocity(self, speed: float) -> tuple[float, float]:
+        """Return raw path-following velocity before local avoidance."""
         speed = float(speed)
         if speed < 0.0:
             raise ValueError("speed must be greater than or equal to zero.")
         dx, dy = self.desired_direction
         return (dx * speed, dy * speed)
+
+    def desired_velocity(self, speed: float) -> tuple[float, float]:
+        """Return path velocity adjusted by local crowd avoidance."""
+        speed = float(speed)
+        if speed < 0.0:
+            raise ValueError("speed must be greater than or equal to zero.")
+
+        preferred = self.preferred_velocity(speed)
+        if (
+            not self.avoidance_enabled
+            or self.map_node is None
+            or speed <= 0.0
+        ):
+            return preferred
+
+        self._sync_avoidance_agent()
+        return self.map_node.avoidance_state.solve_velocity(
+            self._avoidance_owner_id,
+            preferred,
+            max_speed=speed,
+            neighbor_distance=self.avoidance_neighbor_distance,
+            time_horizon=self.avoidance_time_horizon,
+            strength=self.avoidance_strength,
+        )
+
+    def _sync_avoidance_agent(self) -> None:
+        if self.map_node is None:
+            return
+
+        body = self.body
+        if body is None:
+            return
+
+        position = body.world_position
+        velocity = (
+            float(body.velocity.x),
+            float(body.velocity.y),
+        )
+        self.map_node.avoidance_state.register(
+            self._avoidance_owner_id,
+            position=position,
+            velocity=velocity,
+            radius=max(float(self.avoidance_radius), 0.0),
+            enabled=bool(self.avoidance_enabled),
+        )
+
+    def _unregister_avoidance(self) -> None:
+        if self.map_node is not None:
+            self.map_node.avoidance_state.unregister(
+                self._avoidance_owner_id
+            )
 
     @property
     def distance_to_target(self) -> float:
@@ -328,6 +392,7 @@ class NavigationAgent2D(Node):
         if not self._try_lazy_bind():
             return
 
+        self._sync_avoidance_agent()
         self._repath_elapsed += max(float(delta_time), 0.0)
 
         if self.navigation is not None and self.navigation.revision != self._last_navigation_revision:
@@ -346,6 +411,10 @@ class NavigationAgent2D(Node):
 
         self._advance_waypoints()
         self._check_target_reached()
+
+    def destroy(self) -> None:
+        self._unregister_avoidance()
+        super().destroy()
 
     # ------------------------------------------------------------------
     # Callback API

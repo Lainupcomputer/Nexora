@@ -30,6 +30,118 @@ class NavigationPath:
         return len(self.tiles)
 
 
+
+
+class NavigationState:
+    """Shared dynamic navigation state for a TileMapNode.
+
+    Multiple TileNavigation instances may use the same state while keeping
+    their own movement rules (diagonal movement, costs, layer, ...). Dynamic
+    blockers therefore affect every agent bound to the same TileMapNode.
+    """
+
+    def __init__(self) -> None:
+        self._dynamic_blockers: set[GridPoint] = set()
+        self._owned_blockers: dict[int, set[GridPoint]] = {}
+        self._revision: int = 0
+
+    @property
+    def revision(self) -> int:
+        return self._revision
+
+    @property
+    def dynamic_blockers(self) -> frozenset[GridPoint]:
+        points = set(self._dynamic_blockers)
+        for owned in self._owned_blockers.values():
+            points.update(owned)
+        return frozenset(points)
+
+    def invalidate(self) -> None:
+        self._revision += 1
+
+    def is_blocked(self, x: int, y: int) -> bool:
+        point = (int(x), int(y))
+        if point in self._dynamic_blockers:
+            return True
+        return any(point in owned for owned in self._owned_blockers.values())
+
+    def set_blocked(self, x: int, y: int, blocked: bool = True) -> bool:
+        point = (int(x), int(y))
+        changed = False
+
+        if blocked:
+            if point not in self._dynamic_blockers:
+                self._dynamic_blockers.add(point)
+                changed = True
+        elif point in self._dynamic_blockers:
+            self._dynamic_blockers.remove(point)
+            changed = True
+
+        if changed:
+            self.invalidate()
+
+        return changed
+
+    def move_blocker(
+        self,
+        old: GridPoint | None,
+        new: GridPoint | None,
+    ) -> bool:
+        old_point = None if old is None else (int(old[0]), int(old[1]))
+        new_point = None if new is None else (int(new[0]), int(new[1]))
+
+        if old_point == new_point:
+            return False
+
+        changed = False
+        if old_point is not None and old_point in self._dynamic_blockers:
+            self._dynamic_blockers.remove(old_point)
+            changed = True
+        if new_point is not None and new_point not in self._dynamic_blockers:
+            self._dynamic_blockers.add(new_point)
+            changed = True
+
+        if changed:
+            self.invalidate()
+        return changed
+
+    def set_owner_tiles(
+        self,
+        owner_id: int,
+        points,
+    ) -> bool:
+        owner_id = int(owner_id)
+        normalized = {
+            (int(point[0]), int(point[1]))
+            for point in points
+        }
+        previous = self._owned_blockers.get(owner_id, set())
+        if previous == normalized:
+            return False
+
+        before = self.dynamic_blockers
+        if normalized:
+            self._owned_blockers[owner_id] = normalized
+        else:
+            self._owned_blockers.pop(owner_id, None)
+        after = self.dynamic_blockers
+
+        if before != after:
+            self.invalidate()
+        return True
+
+    def clear_owner(self, owner_id: int) -> bool:
+        return self.set_owner_tiles(int(owner_id), ())
+
+    def clear_blockers(self) -> bool:
+        if not self._dynamic_blockers and not self._owned_blockers:
+            return False
+        self._dynamic_blockers.clear()
+        self._owned_blockers.clear()
+        self.invalidate()
+        return True
+
+
 class TileNavigation:
     """A* navigation over a TileMap layer.
 
@@ -69,6 +181,7 @@ class TileNavigation:
         empty_walkable: bool = True,
         default_cost: float = 1.0,
         cache_paths: bool = True,
+        state: NavigationState | None = None,
     ) -> None:
         if tilemap.tile_size != tileset.tile_size:
             raise ValueError(
@@ -90,8 +203,8 @@ class TileNavigation:
         self.default_cost = default_cost
         self.cache_paths = bool(cache_paths)
 
-        self._dynamic_blockers: set[GridPoint] = set()
-        self._revision = 0
+        self.state = state if state is not None else NavigationState()
+        self._cache_revision = self.state.revision
         self._cache: dict[
             tuple[int, GridPoint, GridPoint, bool, bool], NavigationPath | None
         ] = {}
@@ -102,16 +215,22 @@ class TileNavigation:
 
     @property
     def revision(self) -> int:
-        return self._revision
+        return self.state.revision
 
     @property
     def dynamic_blockers(self) -> frozenset[GridPoint]:
-        return frozenset(self._dynamic_blockers)
+        return self.state.dynamic_blockers
 
     def invalidate(self) -> None:
         """Invalidate cached paths after map/metadata changes."""
-        self._revision += 1
+        self.state.invalidate()
         self._cache.clear()
+        self._cache_revision = self.state.revision
+
+    def _sync_cache_revision(self) -> None:
+        if self._cache_revision != self.state.revision:
+            self._cache.clear()
+            self._cache_revision = self.state.revision
 
     def set_blocked(self, x: int, y: int, blocked: bool = True) -> None:
         point = (int(x), int(y))
@@ -121,22 +240,12 @@ class TileNavigation:
                 f"{self.tilemap.width}x{self.tilemap.height}."
             )
 
-        changed = False
-        if blocked:
-            if point not in self._dynamic_blockers:
-                self._dynamic_blockers.add(point)
-                changed = True
-        elif point in self._dynamic_blockers:
-            self._dynamic_blockers.remove(point)
-            changed = True
-
-        if changed:
-            self.invalidate()
+        if self.state.set_blocked(*point, blocked=blocked):
+            self._sync_cache_revision()
 
     def clear_blockers(self) -> None:
-        if self._dynamic_blockers:
-            self._dynamic_blockers.clear()
-            self.invalidate()
+        if self.state.clear_blockers():
+            self._sync_cache_revision()
 
     def tile_id(self, x: int, y: int) -> int:
         if not self.tilemap.contains(x, y):
@@ -159,7 +268,7 @@ class TileNavigation:
 
         if not self.tilemap.contains(x, y):
             return False
-        if (x, y) in self._dynamic_blockers:
+        if self.state.is_blocked(x, y):
             return False
 
         tile_id = self.layer.get_tile(x, y)
@@ -242,6 +351,8 @@ class TileNavigation:
         start = (int(start[0]), int(start[1]))
         goal = (int(goal[0]), int(goal[1]))
 
+        self._sync_cache_revision()
+
         if not self.tilemap.contains(*start) or not self.tilemap.contains(*goal):
             return None
         if start == goal:
@@ -255,7 +366,7 @@ class TileNavigation:
             return None
 
         cache_key = (
-            self._revision,
+            self.revision,
             start,
             goal,
             allow_blocked_start,
