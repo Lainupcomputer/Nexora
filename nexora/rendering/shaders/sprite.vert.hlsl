@@ -16,12 +16,14 @@ struct VSInput
     float2 instance_uv_size  : TEXCOORD10;
 };
 
+
 struct VSOutput
 {
     float4 position : SV_Position;
     float2 uv       : TEXCOORD0;
     float  alpha    : TEXCOORD1;
 };
+
 
 cbuffer CameraBuffer : register(b0, space1)
 {
@@ -35,118 +37,186 @@ cbuffer CameraBuffer : register(b0, space1)
     float padding;
 };
 
-VSOutput main(VSInput input)
+
+VSOutput main(
+    VSInput input
+)
 {
     VSOutput output;
 
-    // --------------------------------------------------------------
-    // Local quad coordinates
-    // --------------------------------------------------------------
+    // ==========================================================
+    // LOCAL QUAD COORDINATES
+    // ==========================================================
 
     float2 local = input.position;
 
+    // ----------------------------------------------------------
+    // Origin
+    //
     // origin = (0.5, 0.5) -> center
     // origin = (0.0, 0.0) -> top-left
-    local -= (input.instance_origin - 0.5);
+    // ----------------------------------------------------------
 
-    // --------------------------------------------------------------
-    // Flip
-    // --------------------------------------------------------------
+    local -= (
+        input.instance_origin
+        - 0.5
+    );
 
-    if (input.instance_flip_x > 0.5)
-    {
-        local.x = -local.x;
-    }
+    // ==========================================================
+    // IMPORTANT
+    //
+    // Do NOT flip the geometry here.
+    //
+    // Sprite flipping is performed by flipping the UV
+    // coordinates below.
+    //
+    // Flipping both geometry and UVs would cancel the visual
+    // flip.
+    // ==========================================================
 
-    if (input.instance_flip_y > 0.5)
-    {
-        local.y = -local.y;
-    }
 
-    // --------------------------------------------------------------
-    // Pixel size
-    // --------------------------------------------------------------
+    // ==========================================================
+    // PIXEL SIZE
+    // ==========================================================
 
-    local *= input.instance_size;
+    local *= (
+        input.instance_size
+    );
 
-    // --------------------------------------------------------------
-    // Rotation
-    // --------------------------------------------------------------
 
-    float c = cos(input.instance_rotation);
-    float s = sin(input.instance_rotation);
+    // ==========================================================
+    // ROTATION
+    // ==========================================================
+
+    float c = cos(
+        input.instance_rotation
+    );
+
+    float s = sin(
+        input.instance_rotation
+    );
 
     float2 rotated;
 
     rotated.x =
-        local.x * c -
-        local.y * s;
+        local.x * c
+        - local.y * s;
 
     rotated.y =
-        local.x * s +
-        local.y * c;
+        local.x * s
+        + local.y * c;
 
-    // --------------------------------------------------------------
-    // World position
-    // --------------------------------------------------------------
+
+    // ==========================================================
+    // WORLD POSITION
+    // ==========================================================
 
     float2 world_position =
-        input.instance_position +
-        rotated;
+        input.instance_position
+        + rotated;
 
-    // --------------------------------------------------------------
-    // Camera + screen shake
-    // --------------------------------------------------------------
+
+    // ==========================================================
+    // CAMERA
+    // ==========================================================
 
     float2 camera_relative =
-        world_position -
-        camera_position +
-        camera_shake;
+        world_position
+        - camera_position
+        + camera_shake;
 
-    camera_relative *= camera_zoom;
+    camera_relative *= (
+        camera_zoom
+    );
 
-    // --------------------------------------------------------------
-    // Pixel -> NDC
-    // --------------------------------------------------------------
+
+    // ==========================================================
+    // PIXEL -> NDC
+    // ==========================================================
 
     float2 ndc;
 
     ndc.x =
-        (camera_relative.x / viewport_size.x) * 2.0;
+        (
+            camera_relative.x
+            / viewport_size.x
+        )
+        * 2.0;
 
     ndc.y =
-        -(camera_relative.y / viewport_size.y) * 2.0;
+        -(
+            camera_relative.y
+            / viewport_size.y
+        )
+        * 2.0;
 
-    output.position =
-        float4(
-            ndc,
-            0.0,
+
+    output.position = float4(
+        ndc,
+        0.0,
+        1.0
+    );
+
+
+    // ==========================================================
+    // UV
+    // ==========================================================
+
+    float2 uv = (
+        input.uv
+    );
+
+
+    // ----------------------------------------------------------
+    // Horizontal flip
+    // ----------------------------------------------------------
+
+    if (
+        input.instance_flip_x
+        > 0.5
+    )
+    {
+        uv.x = (
             1.0
+            - uv.x
         );
-
-    // --------------------------------------------------------------
-    // Atlas UV
-    // --------------------------------------------------------------
-
-    float2 uv = input.uv;
-
-    if (input.instance_flip_x > 0.5)
-    {
-        uv.x = 1.0 - uv.x;
     }
 
-    if (input.instance_flip_y > 0.5)
+
+    // ----------------------------------------------------------
+    // Vertical flip
+    // ----------------------------------------------------------
+
+    if (
+        input.instance_flip_y
+        > 0.5
+    )
     {
-        uv.y = 1.0 - uv.y;
+        uv.y = (
+            1.0
+            - uv.y
+        );
     }
+
+
+    // ==========================================================
+    // ATLAS UV
+    // ==========================================================
 
     output.uv =
-        input.instance_uv +
-        uv * input.instance_uv_size;
+        input.instance_uv
+        + uv
+        * input.instance_uv_size;
 
-    output.alpha =
-        input.instance_alpha;
+
+    // ==========================================================
+    // ALPHA
+    // ==========================================================
+
+    output.alpha = (
+        input.instance_alpha
+    );
+
 
     return output;
 }
-
