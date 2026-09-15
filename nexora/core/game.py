@@ -21,6 +21,7 @@ from nexora.save import (
 from nexora.scene import (
     Scene,
     SceneManager,
+    SceneSerializer,
 )
 
 
@@ -106,6 +107,8 @@ class Game:
             b"nexora-default-save-signing-key-"
             b"change-this-for-your-game"
         ),
+
+        scene_signing_key: bytes | str | None = None,
 
         save_version: int = 1,
 
@@ -252,6 +255,12 @@ class Game:
             save_signing_key
         )
 
+        self._scene_signing_key = (
+            scene_signing_key
+            if scene_signing_key is not None
+            else save_signing_key
+        )
+
         self._save_version = int(
             save_version
         )
@@ -291,8 +300,14 @@ class Game:
         # Scenes
         # ======================================================
 
+        self._scene_serializer = SceneSerializer(
+            signing_key=self._scene_signing_key,
+        )
+
         self._scenes = (
-            SceneManager()
+            SceneManager(
+                serializer=self._scene_serializer,
+            )
         )
 
         # ======================================================
@@ -653,6 +668,25 @@ class Game:
 
         self.engine = (
             self._create_engine()
+        )
+
+        # ======================================================
+        # Serialized scene runtime services
+        # ======================================================
+
+        self._scenes.bind_assets(
+            self.engine.assets
+        )
+
+        self._scenes.bind_serialization_context_provider(
+            lambda: {
+                "game": self,
+                "engine": self.engine,
+                "renderer": self.renderer,
+                "input": self.input,
+                "assets": self.engine.assets,
+                "audio": self.engine.audio,
+            }
         )
 
         # ======================================================
@@ -1196,6 +1230,12 @@ class Game:
             raise RuntimeError(
                 "Game has not been started."
             )
+
+    @property
+    def scene_serializer(
+        self,
+    ) -> SceneSerializer:
+        return self._scene_serializer
 
     # ==========================================================
     # SCENES

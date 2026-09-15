@@ -11,7 +11,7 @@ from nexora.scene.loading import (
     SceneLoadTask,
 )
 from nexora.scene.loading_scene import LoadingScene
-from nexora.scene.manager import SceneManager
+from nexora.scene.manager import SceneManager, SerializedSceneRegistration
 from nexora.scene.scene import Scene, SceneState
 from nexora.scene.transition import FadeSceneTransition, SceneTransition
 from nexora.scene.serialization import (
@@ -20,7 +20,6 @@ from nexora.scene.serialization import (
     NodeFactoryRegistry,
     PrefabSerializer,
     SceneIntegrityError,
-    SceneLoadResult,
     SceneMigrationError,
     SceneSerializationError,
     SceneSerializer,
@@ -32,6 +31,7 @@ __all__ = [
     "Scene",
     "SceneState",
     "SceneManager",
+    "SerializedSceneRegistration",
     "SceneTransition",
     "FadeSceneTransition",
     "LoadingScene",
@@ -40,7 +40,6 @@ __all__ = [
     "LoadingState",
     "SceneLoadTask",
     "SceneSerializer",
-    "SceneLoadResult",
     "PrefabSerializer",
     "NodeFactoryRegistry",
     "MigrationRegistry",

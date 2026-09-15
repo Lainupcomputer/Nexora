@@ -712,6 +712,136 @@ class AssetManager:
                             self._group_resource_refs.get(token, 0) + 1
                         )
 
+    @staticmethod
+    def _normalize_group_list(
+        names: Iterable[str],
+    ) -> tuple[str, ...]:
+        result: list[str] = []
+        seen: set[str] = set()
+
+        for name in names:
+            normalized = normalize_group_name(name)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(normalized)
+
+        return tuple(result)
+
+    def _groups_acquire_deltas(
+        self,
+        names: Iterable[str],
+    ) -> Counter[str]:
+        combined: Counter[str] = Counter()
+        for name in self._normalize_group_list(names):
+            combined.update(self._group_acquire_deltas(name))
+        return combined
+
+    def load_groups(
+        self,
+        names: Iterable[str],
+        *,
+        callbacks: AssetLoadCallbacks | None = None,
+        force_reload: bool = False,
+    ) -> tuple[AssetGroupDefinition, ...]:
+        """Acquire several groups as one ordered asset pipeline.
+
+        Dependencies and duplicate resources are resolved globally so assets
+        still load exactly once in Font -> Audio -> Texture order.
+        """
+        normalized = self._normalize_group_list(names)
+        if not normalized:
+            return ()
+
+        deltas = self._groups_acquire_deltas(normalized)
+        definitions = self._transitioning_groups(
+            deltas,
+            force_reload=force_reload,
+        )
+        fonts, sounds, textures = self._collect_group_assets(definitions)
+
+        self.preload(
+            fonts=fonts,
+            sounds=sounds,
+            textures=textures,
+            callbacks=callbacks,
+            force_reload=force_reload,
+        )
+        self._commit_group_acquire(deltas)
+        return tuple(self._require_group(name) for name in normalized)
+
+    def add_groups_loading_stages(
+        self,
+        task,
+        names: Iterable[str],
+        *,
+        callbacks: AssetLoadCallbacks | None = None,
+        force_reload: bool = False,
+        font_weight: float = 1.0,
+        audio_weight: float = 1.0,
+        texture_weight: float = 1.0,
+        commit_weight: float = 0.05,
+    ) -> list[object]:
+        """Add multiple groups to one SceneLoadTask pipeline.
+
+        This is intended for serialized scenes. All scene groups are resolved
+        together, which preserves the global category order even when a scene
+        references several groups.
+        """
+        normalized = self._normalize_group_list(names)
+        if not normalized:
+            return []
+
+        deltas = self._groups_acquire_deltas(normalized)
+        definitions = self._transitioning_groups(
+            deltas,
+            force_reload=force_reload,
+        )
+        fonts, sounds, textures = self._collect_group_assets(definitions)
+
+        stages = self.add_loading_stages(
+            task,
+            fonts=fonts,
+            sounds=sounds,
+            textures=textures,
+            callbacks=callbacks,
+            force_reload=force_reload,
+            font_weight=font_weight,
+            audio_weight=audio_weight,
+            texture_weight=texture_weight,
+        )
+
+        def commit() -> None:
+            self._commit_group_acquire(deltas)
+
+        label = ", ".join(normalized)
+        commit_stage = task.add_stage(
+            "assets_groups_commit",
+            weight=max(0.0001, float(commit_weight)),
+            status=f"Asset-Gruppen bereit: {label}",
+            callback=commit,
+        )
+        stages.append(commit_stage)
+        return stages
+
+    def unload_groups(
+        self,
+        names: Iterable[str],
+        *,
+        force: bool = False,
+        unload_assets: bool = True,
+    ) -> int:
+        """Release one reference for every named root group."""
+        released = 0
+        for name in reversed(self._normalize_group_list(names)):
+            if self.unload_group(
+                name,
+                force=force,
+                unload_assets=unload_assets,
+            ):
+                released += 1
+        return released
+
     def load_group(
         self,
         name: str,

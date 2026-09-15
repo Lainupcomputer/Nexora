@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
 
 from nexora.scene.loading import (
     SceneLoadTask,
@@ -18,6 +19,10 @@ from nexora.scene.scene import (
 
 from nexora.scene.transition import (
     SceneTransition,
+)
+
+from nexora.scene.serialization import (
+    SceneSerializer,
 )
 
 
@@ -54,6 +59,17 @@ class SceneRegistration:
     name: str
     factory: SceneFactory
     keep_loaded: bool = True
+
+
+@dataclass(slots=True)
+class SerializedSceneRegistration:
+    """Registered .nxscene source."""
+
+    name: str
+    path: Path
+    asset_groups: tuple[str, ...]
+    metadata: dict[str, Any]
+    keep_loaded: bool = False
 
 
 class SceneManager:
@@ -106,6 +122,8 @@ class SceneManager:
 
     def __init__(
         self,
+        *,
+        serializer: SceneSerializer | None = None,
     ) -> None:
         # ======================================================
         # Loaded scene instances
@@ -123,6 +141,27 @@ class SceneManager:
         self._registrations: dict[
             str,
             SceneRegistration,
+        ] = {}
+
+        # ======================================================
+        # Serialized scene registrations
+        # ======================================================
+
+        self._serialized_registrations: dict[
+            str,
+            SerializedSceneRegistration,
+        ] = {}
+
+        self._scene_serializer = serializer
+        self._asset_manager = None
+        self._serialization_context_provider: (
+            Callable[[], dict[str, Any]] | None
+        ) = None
+
+        # Scene name -> root asset groups acquired by this manager.
+        self._managed_scene_groups: dict[
+            str,
+            tuple[str, ...],
         ] = {}
 
         # ======================================================
@@ -218,7 +257,9 @@ class SceneManager:
         """
 
         return tuple(
-            self._registrations.keys()
+            dict.fromkeys(
+                (*self._registrations.keys(), *self._serialized_registrations.keys())
+            )
         )
 
     # ==========================================================
@@ -296,6 +337,64 @@ class SceneManager:
             transition is not None
             and transition.running
         )
+
+    # ==========================================================
+    # SERIALIZED SCENE SERVICES
+    # ==========================================================
+
+    @property
+    def scene_serializer(self) -> SceneSerializer | None:
+        return self._scene_serializer
+
+    def bind_scene_serializer(
+        self,
+        serializer: SceneSerializer,
+    ) -> None:
+        if not isinstance(serializer, SceneSerializer):
+            raise TypeError("serializer must be a SceneSerializer.")
+        self._scene_serializer = serializer
+
+    def bind_assets(self, asset_manager) -> None:
+        if asset_manager is None:
+            raise ValueError("asset_manager cannot be None.")
+        self._asset_manager = asset_manager
+
+    def bind_serialization_context_provider(
+        self,
+        provider: Callable[[], dict[str, Any]] | None,
+    ) -> None:
+        if provider is not None and not callable(provider):
+            raise TypeError("provider must be callable or None.")
+        self._serialization_context_provider = provider
+
+    def _serialization_context(
+        self,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        context: dict[str, Any] = {}
+        if self._serialization_context_provider is not None:
+            provided = self._serialization_context_provider()
+            if provided:
+                context.update(dict(provided))
+        if extra:
+            context.update(dict(extra))
+        return context
+
+    def _require_scene_serializer(self) -> SceneSerializer:
+        if self._scene_serializer is None:
+            raise RuntimeError(
+                "SceneManager has no SceneSerializer. "
+                "Bind one before using serialized scenes."
+            )
+        return self._scene_serializer
+
+    def _require_asset_manager(self):
+        if self._asset_manager is None:
+            raise RuntimeError(
+                "SceneManager has no AssetManager. "
+                "Bind one before loading serialized scene asset groups."
+            )
+        return self._asset_manager
 
     # ==========================================================
     # REGISTRATION
@@ -391,8 +490,8 @@ class SceneManager:
         name: str,
     ) -> bool:
         return (
-            name
-            in self._registrations
+            name in self._registrations
+            or name in self._serialized_registrations
         )
 
     def registration(
@@ -402,6 +501,123 @@ class SceneManager:
         return self._registrations.get(
             name
         )
+
+    # ==========================================================
+    # SERIALIZED REGISTRATION
+    # ==========================================================
+
+    def register_serialized(
+        self,
+        path: str | Path,
+        *,
+        name: str | None = None,
+        keep_loaded: bool = False,
+        replace: bool = False,
+    ) -> SerializedSceneRegistration:
+        serializer = self._require_scene_serializer()
+        source = Path(path).expanduser().resolve()
+        metadata = serializer.inspect_metadata(source)
+
+        resolved_name = str(name or metadata["name"]).strip()
+        if not resolved_name:
+            raise ValueError("Serialized scene name cannot be empty.")
+
+        if resolved_name in self._registrations:
+            raise ValueError(
+                f"Scene '{resolved_name}' already has a factory registration."
+            )
+        if resolved_name in self._scenes:
+            raise ValueError(
+                f"Scene '{resolved_name}' is already loaded."
+            )
+        if resolved_name in self._serialized_registrations and not replace:
+            raise ValueError(
+                f"Serialized scene '{resolved_name}' is already registered."
+            )
+
+        groups = tuple(
+            dict.fromkeys(str(group).strip() for group in metadata.get("asset_groups", ()) if str(group).strip())
+        )
+        registration = SerializedSceneRegistration(
+            name=resolved_name,
+            path=source,
+            asset_groups=groups,
+            metadata=dict(metadata.get("metadata", {})),
+            keep_loaded=bool(keep_loaded),
+        )
+        self._serialized_registrations[resolved_name] = registration
+        return registration
+
+    def unregister_serialized(
+        self,
+        name: str,
+        *,
+        unload: bool = False,
+    ) -> None:
+        self._ensure_not_transitioning()
+        if name not in self._serialized_registrations:
+            raise KeyError(f"Serialized scene '{name}' is not registered.")
+        if unload and self.is_loaded(name):
+            self.unload(name)
+        del self._serialized_registrations[name]
+
+    def serialized_registration(
+        self,
+        name: str,
+    ) -> SerializedSceneRegistration | None:
+        return self._serialized_registrations.get(name)
+
+    @property
+    def serialized_names(self) -> tuple[str, ...]:
+        return tuple(self._serialized_registrations.keys())
+
+    def load_serialized_registered(
+        self,
+        name: str,
+        *,
+        activate: bool = False,
+        context: dict[str, Any] | None = None,
+        force_reload_assets: bool = False,
+    ) -> Scene:
+        existing = self._scenes.get(name)
+        if existing is not None:
+            if activate:
+                self.change_scene(name)
+            return existing
+
+        registration = self._serialized_registrations.get(name)
+        if registration is None:
+            raise KeyError(f"Serialized scene '{name}' is not registered.")
+
+        assets = self._require_asset_manager() if registration.asset_groups else None
+        acquired = False
+        if assets is not None:
+            assets.load_groups(
+                registration.asset_groups,
+                force_reload=force_reload_assets,
+            )
+            acquired = True
+
+        try:
+            scene = self._require_scene_serializer().load(
+                registration.path,
+                context=self._serialization_context(context),
+            )
+            if scene.name != name:
+                raise ValueError(
+                    f"Serialized scene registered as '{name}' loaded as '{scene.name}'."
+                )
+            self._scenes[name] = scene
+            if acquired:
+                self._managed_scene_groups[name] = registration.asset_groups
+        except Exception:
+            if acquired:
+                assets.unload_groups(registration.asset_groups)
+            raise
+
+        if activate:
+            self.change_scene(name)
+        return scene
 
     # ==========================================================
     # LOAD EXISTING INSTANCE
@@ -552,6 +768,9 @@ class SceneManager:
         if scene is not None:
             return scene
 
+        if name in self._serialized_registrations:
+            return self.load_serialized_registered(name)
+
         return self.load_registered(
             name
         )
@@ -657,6 +876,8 @@ class SceneManager:
         del self._scenes[
             name
         ]
+
+        self._release_managed_scene_groups(name)
 
     # ==========================================================
     # CHANGE SCENE
@@ -811,16 +1032,18 @@ class SceneManager:
             )
         )
 
+        if registration is not None:
+            return not registration.keep_loaded
+
+        serialized = self._serialized_registrations.get(scene.name)
+        if serialized is not None:
+            return not serialized.keep_loaded
+
         # ------------------------------------------------------
         # Manually loaded scenes are persistent by default.
         # ------------------------------------------------------
 
-        if registration is None:
-            return False
-
-        return not (
-            registration.keep_loaded
-        )
+        return False
 
     # ==========================================================
     # IMMEDIATE CHANGE
@@ -935,6 +1158,8 @@ class SceneManager:
                 None,
             )
 
+            self._release_managed_scene_groups(previous_name)
+
         return next_scene
 
     # ==========================================================
@@ -1030,6 +1255,7 @@ class SceneManager:
         if (
             target_name not in self._scenes
             and target_name not in self._registrations
+            and target_name not in self._serialized_registrations
         ):
             raise KeyError(
                 f"Scene '{target_name}' is neither "
@@ -1114,6 +1340,122 @@ class SceneManager:
         )
 
         return scene
+
+    # ==========================================================
+    # SERIALIZED LOADING + ASSET LIFECYCLE
+    # ==========================================================
+
+    def _release_managed_scene_groups(
+        self,
+        scene_name: str,
+    ) -> None:
+        groups = self._managed_scene_groups.pop(scene_name, ())
+        if not groups:
+            return
+        assets = self._require_asset_manager()
+        assets.unload_groups(groups)
+
+    def begin_serialized_loading(
+        self,
+        name: str,
+        *,
+        loading_scene: str = "Loading",
+        enter_transition: SceneTransition | None = None,
+        exit_transition: SceneTransition | None = None,
+        unload_previous: bool | None = None,
+        context: dict[str, Any] | None = None,
+        force_reload_assets: bool = False,
+    ) -> Scene:
+        """Load a registered .nxscene through the existing LoadingScene.
+
+        Order:
+            metadata already registered
+            -> acquire all scene asset groups
+            -> Font -> Audio -> Texture
+            -> deserialize scene + prefabs
+            -> release transient previous scene
+            -> activate target using the existing exit transition
+        """
+        self._ensure_not_transitioning()
+
+        registration = self._serialized_registrations.get(name)
+        if registration is None:
+            raise KeyError(f"Serialized scene '{name}' is not registered.")
+
+        if name in self._scenes:
+            return self.change_scene(
+                name,
+                unload_previous=unload_previous,
+                transition=exit_transition,
+            )
+
+        previous_scene = self._active_scene
+        previous_name = None if previous_scene is None else previous_scene.name
+        release_previous = self._resolve_unload_previous(
+            previous_scene,
+            unload_previous,
+        )
+
+        task = SceneLoadTask(f"Scene: {name}")
+        assets = self._require_asset_manager() if registration.asset_groups else None
+
+        if assets is not None:
+            assets.add_groups_loading_stages(
+                task,
+                registration.asset_groups,
+                force_reload=force_reload_assets,
+            )
+
+        acquired_groups = bool(registration.asset_groups)
+
+        def deserialize() -> None:
+            try:
+                scene = self._require_scene_serializer().load(
+                    registration.path,
+                    context=self._serialization_context(context),
+                )
+                if scene.name != name:
+                    raise ValueError(
+                        f"Serialized scene registered as '{name}' loaded as '{scene.name}'."
+                    )
+                if name in self._scenes:
+                    raise ValueError(f"Scene '{name}' became loaded during serialized loading.")
+                self._scenes[name] = scene
+                if acquired_groups:
+                    self._managed_scene_groups[name] = registration.asset_groups
+            except Exception:
+                if acquired_groups and assets is not None:
+                    assets.unload_groups(registration.asset_groups)
+                raise
+
+        task.add_stage(
+            "deserialize_scene",
+            status=f"Initialisiere Szene: {name}",
+            callback=deserialize,
+        )
+
+        if release_previous and previous_name is not None:
+            def release_previous_scene() -> None:
+                if previous_name in self._scenes:
+                    self.unload(previous_name)
+
+            task.add_stage(
+                "release_previous_scene",
+                weight=0.05,
+                status="Bereinige vorherige Szene...",
+                callback=release_previous_scene,
+            )
+
+        # Preserve the previous scene while assets are loading. If its policy
+        # is transient it is released by the final task stage above.
+        return self.begin_loading(
+            name,
+            task,
+            loading_scene=loading_scene,
+            enter_transition=enter_transition,
+            exit_transition=exit_transition,
+            unload_previous=False,
+        )
 
     # ==========================================================
     # PUSH SCENE
