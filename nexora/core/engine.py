@@ -422,11 +422,19 @@ class Engine:
         )
 
         # ======================================================
+        # Asset GPU binding
+        # ======================================================
+
+        self.assets.bind_gpu(
+            self.gpu_context
+        )
+
+        # ======================================================
         # Default font
         # ======================================================
 
         self.default_font = (
-            self.assets.load_font(
+            self.assets.font(
                 "fonts/Roboto-Regular.ttf",
                 24.0,
             )
@@ -568,6 +576,14 @@ class Engine:
                     max_update_frames
                 ),
             )
+        )
+
+        # ======================================================
+        # Asset audio binding
+        # ======================================================
+
+        self.assets.bind_audio_cache(
+            self.audio.cache
         )
 
         # ======================================================

@@ -583,11 +583,26 @@ class LoadingScene(Scene):
                 info.stage_count,
             )
 
+            stage_percent = int(
+                round(
+                    max(
+                        0.0,
+                        min(
+                            1.0,
+                            info.stage_progress,
+                        ),
+                    )
+                    * 100.0
+                )
+            )
+
             self.stage_label.text = (
                 f"Stage "
                 f"{visible_stage}"
                 f" / "
                 f"{info.stage_count}"
+                f"  -  "
+                f"{stage_percent}%"
             )
 
         else:

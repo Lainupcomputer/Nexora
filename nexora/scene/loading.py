@@ -43,6 +43,7 @@ class LoadingProgress:
     stage_name: str = ""
     stage_index: int = 0
     stage_count: int = 0
+    stage_progress: float = 0.0
 
 
 class LoadingStage:
@@ -113,6 +114,27 @@ class LoadingStage:
 
         self.started = False
         self.finished = False
+        self._progress = 0.0
+
+
+    @property
+    def progress(
+        self,
+    ) -> float:
+        return self._progress
+
+    @progress.setter
+    def progress(
+        self,
+        value: float,
+    ) -> None:
+        self._progress = max(
+            0.0,
+            min(
+                1.0,
+                float(value),
+            ),
+        )
 
     # ==========================================================
     # START
@@ -135,6 +157,7 @@ class LoadingStage:
 
             if self.update_callback is None:
                 self.finished = True
+                self.progress = 1.0
 
     # ==========================================================
     # UPDATE
@@ -151,16 +174,19 @@ class LoadingStage:
         """
 
         if self.finished:
+            self.progress = 1.0
             return True
 
         if not self.started:
             self.start()
 
         if self.finished:
+            self.progress = 1.0
             return True
 
         if self.update_callback is None:
             self.finished = True
+            self.progress = 1.0
             return True
 
         result = self.update_callback(
@@ -171,6 +197,7 @@ class LoadingStage:
 
         if result:
             self.finished = True
+            self.progress = 1.0
 
         return self.finished
 
@@ -541,10 +568,25 @@ class SceneLoadTask:
             if stage.finished
         )
 
+        active_weight = 0.0
+        stage = self.current_stage
+
+        if (
+            stage is not None
+            and not stage.finished
+        ):
+            active_weight = (
+                stage.weight
+                * stage.progress
+            )
+
         return max(
             0.0,
             min(
-                completed_weight
+                (
+                    completed_weight
+                    + active_weight
+                )
                 / total_weight,
                 1.0,
             ),
@@ -604,6 +646,16 @@ class SceneLoadTask:
             ),
         )
 
+        stage_progress = (
+            stage.progress
+            if stage is not None
+            else (
+                1.0
+                if self.done
+                else 0.0
+            )
+        )
+
         return LoadingProgress(
             progress=self.progress,
             status=self.status,
@@ -612,4 +664,5 @@ class SceneLoadTask:
             stage_count=len(
                 self._stages
             ),
+            stage_progress=stage_progress,
         )

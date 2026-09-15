@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from nexora import Game
 
+from nexora.assets import (
+    AssetLoadCallbacks,
+)
+
 from nexora.nodes import (
     Label,
 )
@@ -234,6 +238,51 @@ class SceneLoadingExample(Game):
     ) -> SceneLoadTask:
         task = SceneLoadTask(
             "Dungeon"
+        )
+
+        # ======================================================
+        # Asset initialization
+        #
+        # Fixed order:
+        #
+        #   Font -> Audio -> Texture
+        #
+        # One asset is processed per SceneLoadTask.update(), so
+        # LoadingScene remains responsive and can render every
+        # progress step.
+        # ======================================================
+
+        callbacks = AssetLoadCallbacks(
+            on_progress=lambda progress: print(
+                progress.status
+            ),
+        )
+
+        self.assets.add_loading_stages(
+            task,
+            fonts=[
+                (
+                    "fonts/Roboto-Regular.ttf",
+                    24.0,
+                ),
+                (
+                    "fonts/Roboto-Bold.ttf",
+                    32.0,
+                ),
+            ],
+            sounds=[
+                "audio/kick.wav",
+                "audio/snare.wav",
+                "audio/hihat.wav",
+            ],
+            textures=[
+                "characters/punk_idle_8x64x128.png",
+                "characters/punk_walk_8x64x128.png",
+            ],
+            callbacks=callbacks,
+            font_weight=1.0,
+            audio_weight=1.0,
+            texture_weight=1.0,
         )
 
         # ------------------------------------------------------
