@@ -119,7 +119,19 @@ class FakeDebugOverlay:
         pass
 
 
+class FakeActionPressed:
+    debug_overlay = False
+    physics_debug = False
+
+
 class FakeInput:
+    def __init__(
+        self,
+    ):
+        self.action_pressed = (
+            FakeActionPressed()
+        )
+
     def key_pressed(
         self,
         key: str,

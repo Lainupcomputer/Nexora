@@ -8,6 +8,7 @@ from nexora.tilemap.tileset import TileRegion, TileSet
 from nexora.tilemap.tile_chunk_cache import CachedTile, TileChunkRenderCache
 from nexora.tilemap.tile_metadata import TileMetadata
 from nexora.tilemap.tile_collision import SolidTileHit, TileCollision, TileMoveResult
+from nexora.tilemap.navigation import NavigationPath, TileNavigation
 
 __all__ = [
     "EMPTY_TILE",
@@ -25,6 +26,8 @@ __all__ = [
     "SolidTileHit",
     "TileCollision",
     "TileMoveResult",
+    "NavigationPath",
+    "TileNavigation",
     "TileMetadataHit",
     "TilePrefabSpawn",
     "TileTeleportEvent",

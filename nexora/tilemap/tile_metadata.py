@@ -128,6 +128,17 @@ class TileMetadata:
         self.solid = not bool(value)
 
     @property
+    def navigation_cost(self) -> float:
+        return float(self.properties.get("navigation_cost", 1.0))
+
+    @navigation_cost.setter
+    def navigation_cost(self, value: float) -> None:
+        value = float(value)
+        if value <= 0.0:
+            raise ValueError("navigation_cost must be greater than zero.")
+        self.properties["navigation_cost"] = value
+
+    @property
     def damage(self) -> float:
         return float(self.properties.get("damage", 0.0))
 

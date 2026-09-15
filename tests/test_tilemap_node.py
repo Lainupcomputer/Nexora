@@ -38,6 +38,7 @@ class DummyRenderer:
         flip_x,
         flip_y,
         uv,
+        layer=0,
     ) -> None:
         self.calls.append(
             {
@@ -62,6 +63,7 @@ class DummyRenderer:
         sprites,
         *,
         workers=None,
+        layer=0,
     ):
         sprites = list(
             sprites
@@ -113,6 +115,8 @@ class DummyRenderer:
                         uv_width,
                         uv_height,
                     ),
+
+                    "layer": layer,
                 }
             )
 

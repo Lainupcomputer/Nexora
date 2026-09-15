@@ -17,6 +17,10 @@ from .entity import (
     Area2D,
 )
 
+from .navigation import (
+    NavigationAgent2D,
+)
+
 from .texture import (
     AnimatedSprite,
 )
@@ -71,6 +75,9 @@ __all__ = [
     "Vector2",
     "StaticBody2D",
     "Area2D",
+
+    # Navigation
+    "NavigationAgent2D",
 
     # Texture
     "AnimatedSprite",
