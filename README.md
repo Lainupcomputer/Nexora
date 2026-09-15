@@ -12,7 +12,7 @@ Scene graphs · ECS · GPU rendering · Isometric tilemaps · Navigation · UI
 ![Free-Threading](https://img.shields.io/badge/Python-Free--Threading-blueviolet)
 ![Development](https://img.shields.io/badge/Status-Early%20Development-orange)
 
-[Getting Started](#getting-started) · [Features](#features) · [Examples](#examples) · [Contributing](#contributing)
+[Getting Started](#getting-started) · [API Reference](README_API.md) · [Features](#features) · [Examples](#examples) · [Contributing](#contributing)
 
 </div>
 
