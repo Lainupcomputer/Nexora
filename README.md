@@ -1,266 +1,204 @@
+<div align="center">
+
 # Nexora Engine
+
+**A Python 2D game engine powered by SDL3 and SDL_GPU.**
+
+Scene graphs · ECS · GPU rendering · Isometric tilemaps · Navigation · UI
+
 [![Tests](https://github.com/Lainupcomputer/Nexora/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Lainupcomputer/Nexora/actions/workflows/tests.yml)
 ![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white)
-![Runtime](https://img.shields.io/badge/Runtime-Free--Threading-blueviolet)
-![Status](https://img.shields.io/badge/Status-Early%20Development-orange)
+![SDL](https://img.shields.io/badge/Rendering-SDL3%20%2B%20SDL_GPU-blue)
+![Free-Threading](https://img.shields.io/badge/Python-Free--Threading-blueviolet)
+![Development](https://img.shields.io/badge/Status-Early%20Development-orange)
 
-**Nexora Engine** is a modern 2D game engine for Python, built on **SDL3** and **SDL_GPU** and designed for **Python 3.13 free-threading / No-GIL**.
+[Getting Started](#getting-started) · [Features](#features) · [Examples](#examples) · [Contributing](#contributing)
 
-It combines a scene and node workflow with a data-oriented ECS, GPU-accelerated rendering, tilemaps, 2D physics, animation, audio, UI, asset management, save games, and a growing collection of runnable examples.
+</div>
+
+---
+
+Nexora is a 2D game engine for **Python 3.13+**, built around **SDL3** and **SDL_GPU**.
+
+It combines a scene and node workflow with a data-oriented ECS, GPU-accelerated rendering, orthogonal and isometric tilemaps, navigation, 2D physics, animation, audio, and a node-based UI framework.
+
+Nexora is designed for Python's **free-threaded runtime**, with worker threads and scheduling infrastructure for parallel game logic.
 
 > [!WARNING]
-> Nexora is in early development. Public APIs and internal structure may still change before the first stable release.
+> Nexora is in early development. APIs, serialization formats, and internal systems may change. Examples and individual subsystems are evolving alongside the engine.
 
----
+## Getting Started
 
-## Highlights
+### Requirements
 
-- **SDL3 + SDL_GPU** renderer with batched sprites, shapes, lines, rectangles, and GPU text
-- **Scene graph and ECS** that can be used together
-- **Parallel execution** designed around Python 3.13 free-threading
-- **2D physics** with bodies, collision shapes, areas, raycasts, layers/masks, and debug rendering
-- **Tilemaps** with layers, chunks, render caching, collision helpers, and node integration
-- **Node-based UI** with responsive layout, controls, scrolling, clipping, tooltips, and notifications
-- **Audio mixer** with buses, sources, music queueing, volume control, and caching
-- **Save manager** with quick/manual/automatic saves, integrity checks, and global notifications
-- **Examples, tests, benchmarks, Sphinx documentation, and a project CLI**
+- Python **3.13+**
+- A **free-threaded Python build** to run with `-Xgil=0`
+- SDL3 libraries accessible through PySDL3
+- A graphics environment compatible with SDL_GPU for rendering examples
 
----
+The current automated test workflow runs on **Windows with Python 3.13 free-threading**. It excludes GPU-marked tests.
 
-## Requirements
-
-- Python **3.13+**  
-  For free-threading, use a compatible free-threaded Python build.
-- SDL3 / PySDL3
-- A GPU backend supported by SDL_GPU
-
-Install Nexora for local development:
+### Install from source
 
 ```bash
-pip install -e .
-pip install -e ".[dev]"
+git clone https://github.com/Lainupcomputer/Nexora.git
+cd Nexora
+python -m venv .venv
 ```
 
-Optional documentation dependencies:
+Activate the virtual environment in Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Install the engine and development dependencies:
 
 ```bash
-pip install -e ".[docs]"
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
 
-Run an example with free-threading enabled:
+Create the virtual environment using your free-threaded interpreter if you intend to use No-GIL mode.
+
+### Run an example
+
+From the repository root:
 
 ```bash
-python -Xgil=0 examples/example.py
+python -Xgil=0 examples/basic/hello_world.py
 ```
 
-Verify the GIL state:
+Check whether the GIL is disabled:
 
 ```bash
 python -Xgil=0 -c "import sys; print(sys._is_gil_enabled())"
 ```
 
-Expected output on a compatible build:
+Expected output:
 
 ```text
 False
 ```
 
----
+### Minimal application
 
-## Core Runtime
+```python
+from nexora import Game
 
-Nexora provides the runtime systems required by a 2D game:
+game = Game(
+    title="My Nexora Game",
+    width=1280,
+    height=720,
+    target_fps=144,
+)
+
+game.run()
+```
+
+This creates a basic engine window. Explore the examples for scenes, sprites, input, UI, and gameplay systems.
+
+## Features
+
+### Core runtime
 
 - Fixed and variable timestep updates
-- Frame interpolation
-- Centralized time, unscaled time, time scaling, and frame counters
-- Engine lifecycle and clean shutdown
+- Frame timing and interpolation
+- Time scaling and unscaled time
+- Engine initialization and shutdown lifecycle
 - SDL3 event processing
 - Resizable windows
 - Windowed, borderless, and fullscreen modes
-- VSync control
-- Settings storage with defaults, reload, reset, and autosave
+- VSync and graphics settings
+- Persistent settings with reload and save workflows
 
----
-
-## Threading and ECS
-
-Nexora is designed to benefit from Python 3.13 free-threading while keeping ownership rules explicit.
-
-### Threading
+### Threading and ECS
 
 - Worker threads and task scheduling
-- Priorities, futures, callbacks, and cancellation
-- Worker identification and task statistics
-- Thread-safety checks
-- Main-thread-only execution paths
-- Parallel CPU workloads
-
-### Entity Component System
-
+- Task priorities, futures, and callbacks
+- Thread-context and ownership checks
+- Main-thread execution paths
 - Entities, components, systems, and worlds
-- Archetype and chunk-based storage
+- Archetype-based component storage
 - Queries and parallel queries
 - Command buffers for structural changes
-- Fixed-update and render systems
-- Priorities and explicit dependencies
-- Automatic read/write conflict detection
-- Parallel system execution
+- System dependencies and execution ordering
+- Read/write conflict detection
 
-The ECS can power data-heavy gameplay while nodes remain the ergonomic API for game code.
+Nodes provide a hierarchical gameplay API, while the ECS supports data-oriented systems.
 
----
+### Scenes and serialization
 
-## Scenes, Nodes, and Cameras
-
-The scene system supplies a hierarchical gameplay workflow:
-
-- Parent/child node trees
+- Hierarchical node trees
 - Local and world transforms
-- Position, rotation, scale, enabled state, and visibility
-- Recursive update, fixed update, render, and cleanup
-- Scene load, activate, unload, clear, pause, and resume lifecycle
-- Scene loading and transition examples
-- ECS/world integration
+- Scene activation, unloading, pausing, and resuming
+- Loading scenes and transition workflows
+- Scene serialization and reconstruction
+- Node type registration
+- Serialization migrations
+- Prefab saving and instantiation
+- Prefab root overrides
+- Serialized-scene integration with loading tasks
 
-Available camera workflows include gameplay, follow, fixed, free, and cinematic cameras.
+### Cameras
 
-Camera effects include shake, trauma shake, punch, fades, flashes, letterboxing, and scripted sequences.
+- Gameplay, follow, free, fixed, and cinematic camera workflows
+- Position, zoom, and camera bounds
+- Screen shake and trauma-based shake
+- Punch effects
+- Fades and flashes
+- Letterboxing
+- Scripted camera sequences
 
----
+### GPU rendering
 
-## GPU Rendering
-
-Nexora renders through **SDL_GPU** rather than a software renderer.
-
-### High-level rendering
-
-- `Renderer`
-- `SpriteBatch` and `BatchSprite`
-- Rectangle, shape, and line rendering
+- SDL_GPU rendering backend
+- Batched sprites
+- Rectangles, shapes, and lines
+- GPU text rendering and font atlases
 - World-space and screen-space rendering
 - Camera integration
-- Sprite caching and batching statistics
-
-### GPU layer
-
-- `GPUContext`
-- GPU textures, buffers, samplers, shaders, and graphics pipelines
-- Sprite, rectangle, shape, line, and text batches
-- GPU font atlases and glyph caching
+- GPU textures, buffers, samplers, and pipelines
+- Scissor clipping and nested UI clipping
 - Render snapshots
-- GPU scissor clipping for sprites and text
-- Nested clip rectangles for UI rendering
+- Post-processing framework and example effects
 
-### Post-processing
+Post-processing examples include grayscale, vignette, chromatic aberration, film grain, scanlines, pixelation, distortion, and color tinting.
 
-The post-processing framework already includes example effects for:
+### Tilemaps and world interaction
 
-- Grayscale
-- Vignette
-- Chromatic aberration
-- Film grain and scanlines
-- Pixelation
-- Distortion
-- Color tint
-- Low-health visual treatment
-
----
-
-## UI Framework
-
-The node-based UI framework integrates directly with scenes and the renderer.
-
-### Foundation
-
-- `UIRoot` and `UINode`
-- Anchors, pivots, sizing, positioning, visibility, and input states
-- Responsive measure/arrange layout
-- Mouse interaction, focus, hover, and text input
-- UI clipping and ScrollView culling
-
-### Controls
-
-- `Button`
-- `CheckBox`
-- `Dropdown`
-- `RadioButton` and `RadioButtonGroup`
-- `Slider`
-- `TextInput`
-- `Label`
-- `ProgressBar`
-
-### Containers and output
-
-- `Panel`
-- `BoxContainer`, `VBoxContainer`, and `HBoxContainer`
-- `ScrollView`
-- `ListView`
-- `Tooltip`
-- Animated `NotificationCenter` with info, success, warning, and error states
-
----
-
-## Input
-
-Input is action-based, so gameplay code does not need to depend directly on SDL events.
-
-```python
-input.bind("move_left", "A")
-input.bind("move_left", "LEFT")
-
-if input.is_down("move_left"):
-    ...
-```
-
-Supported input features include:
-
-- Keyboard and mouse buttons
-- Mouse position, delta, and wheel
-- Held, pressed, and released states
-- Multiple bindings per action
-- Window focus handling
-- SDL text input lifecycle
-
----
-
-## Animation
-
-The animation system keeps frame timing and state separate from rendering.
-
-- `AnimationFrame`
-- `AnimationClip`
-- `AnimationSet`
-- `Animator`
-- `AnimatedSprite`
-- Arbitrary frame counts
-- Per-frame durations
-- Looping and non-looping clips
-- Grid and row clip generation
-- Runtime clip switching
-- Frame-change callbacks
-
----
-
-## Tilemaps
-
-Nexora includes a tilemap system intended for larger 2D worlds.
-
+- Orthogonal and isometric projections
 - `TileMap`, `TileSet`, `TileLayer`, and `TileMapNode`
-- Multi-layer maps
-- Chunk-based storage
-- Chunk render caching and dirty tracking
-- Visible chunk bounds
-- Batched tile rendering
+- Multiple tile layers
+- Chunk-based storage and render caching
+- Visible chunk selection
+- Tile animations
 - Tile metadata, tags, and custom properties
-- Solid-tile queries and AABB movement helpers
-- Tile collision results for character movement
+- World-to-tile and tile-to-world coordinate conversion
+- Metadata queries at tile and world positions
+- Solid-tile queries and collision helpers
+- Tilemap serialization
+- Asset-backed tileset textures
+- Metadata-driven prefab spawning
+- Enter-only teleport triggers
+- Tracking and cleanup of spawned prefabs
 
----
+### Navigation
 
-## 2D Physics
+- A* pathfinding through `TileNavigation`
+- Walkability and traversal-cost queries
+- Optional diagonal movement
+- Dynamic blockers
+- Path caching and invalidation
+- Grid-space and world-space path queries
+- `NavigationAgent2D` for character path following
+- Target and waypoint tracking
+- Desired direction and velocity helpers
+- Path-changed, target-reached, and navigation-failed callbacks
 
-Nexora includes a node-oriented 2D physics layer.
+`NavigationAgent2D` provides path-following information for character movement. Gameplay code can use its desired velocity together with the character's movement and collision logic.
+
+### 2D physics
 
 - `Body2D`
 - `CharacterBody2D`
@@ -270,123 +208,224 @@ Nexora includes a node-oriented 2D physics layer.
 - `RayCast2D`
 - Collision layers and masks
 - `move_and_slide` and `move_and_collide`
-- Area overlap queries and entered/exited callbacks
-- Collision and raycast debug visualization
+- Area overlap queries and callbacks
+- Collision and raycast debug rendering
 
----
+### Animation
 
-## Audio
+- `AnimationFrame`, `AnimationClip`, and `AnimationSet`
+- `Animator` and `AnimatedSprite`
+- Arbitrary frame counts
+- Per-frame durations
+- Looping and non-looping clips
+- Grid and row clip generation
+- Runtime animation switching
+- Frame-change callbacks
 
-The audio subsystem is integrated into the engine lifecycle.
+### Input
+
+- Action-based keyboard and mouse input
+- Multiple bindings per action
+- Held, pressed, and released states
+- Mouse position, movement, and wheel input
+- Window focus handling
+- SDL text input integration
+
+### UI framework
+
+- `UIRoot` and `UINode`
+- Anchors, pivots, sizing, and positioning
+- Responsive measure/arrange layout
+- Mouse interaction, focus, and hover handling
+- Text input
+- Nested clipping and scroll-view culling
+
+**Controls**
+
+Buttons, checkboxes, radio buttons, dropdowns, sliders, text inputs, labels, and progress bars.
+
+**Containers and feedback**
+
+Panels, horizontal and vertical box containers, scroll views, list views, tooltips, and animated notifications.
+
+### Audio
 
 - Audio device and stream handling
-- `AudioBuffer` and cache management
-- Audio buses/channels and effective volume control
-- Sources and multi-source mixing
+- Audio buffers and caching
+- Buses and channels
+- Multiple sources and mixing
+- Master, channel, and source volume controls
 - Music playback and queueing
-- Looping, pause/resume, stop, and cleanup
+- Looping, pause, resume, and stop
 - Listener support
-- Music, SFX, ambient, voice, and master volume workflows
+- Music, SFX, ambient, and voice workflows
 
----
+### Assets, settings, and save games
 
-## Assets and Save Games
-
-### Assets
-
-- `AssetManager`
-- Loader registration
+- Asset manager and loader registration
 - Texture and font loading
-- Path resolution and normalized cache keys
-- Load status tracking
-- Asset lookup, unload, cache clearing, and shutdown
+- Asset caching, unloading, and reload workflows
+- Graphics and audio settings
+- Layered settings storage
+- Manual saves, quick saves, and autosaves
+- Save rotation
+- Integrity checks and version handling
+- Save/load events and notifications
 
-### Save games
+## Examples
 
-- `SaveManager`
-- Manual, quick, and automatic save/load operations
-- Save events and notifications
-- Integrity validation
-- Version and invalid-data errors
-- Restricted deserialization safeguards
+Run examples from the repository root so their asset paths resolve correctly.
 
----
+| Example | Purpose |
+| --- | --- |
+| `examples/basic/hello_world.py` | Minimal engine window |
+| `examples/basic/basic_game_structure.py` | Basic game organization |
+| `examples/basic/input_example.py` | Input handling |
+| `examples/basic/sprite_example.py` | Sprite rendering |
+| `examples/basic/animated_sprite_idle.py` | Sprite animation |
+| `examples/basic/isometric_tilemap_v2.py` | Isometric tilemap rendering |
+| `examples/basic/scene_loading.py` | Scene loading |
+| `examples/basic/scene_transition.py` | Scene transitions |
+| `examples/basic/resizable_window.py` | Window resizing |
+| `examples/basic/global_notifications.py` | Notifications |
 
-## Project Creation
+Browse [`examples/`](examples/) for additional rendering, UI, audio, physics, and camera examples.
 
-Create a starter project with the CLI:
+Some examples require specific assets or a working graphics/audio environment.
 
-```bash
-nexora new MyGame
-```
+## Project Generator
 
-The generator is still evolving, but provides the initial project structure for a Nexora game.
-
----
-
-## Tests and Examples
-
-Run the standard test suite:
-
-```bash
-pytest
-```
-
-GPU tests are excluded by default:
+Create a project directory:
 
 ```bash
-pytest -m gpu
+nexora create MyNewGame
 ```
 
-Run all tests:
+Choose a parent directory:
 
 ```bash
-pytest -m ""
+nexora create MyNewGame --path ./projects
 ```
 
-The `examples/` directory demonstrates rendering, UI, audio, animation, tilemaps, scene loading, save games, camera effects, post-processing, physics, raycasts, and debugging.
+The generator creates:
 
----
+- `main.py`
+- `README.md`
+- `.gitignore`
+- `assets/sprites/`
+- `assets/audio/`
+- `assets/fonts/`
+- `scenes/`
+- `scripts/`
+
+> [!NOTE]
+> The current generated `main.py` contains a placeholder.
+> Replace it with the minimal application shown above before running the project.
+
+## Tests and Continuous Integration
+
+Run the default test suite:
+
+```bash
+python -Xgil=0 -m pytest
+```
+
+GPU-marked tests are excluded by the project's pytest configuration.
+
+Run only GPU tests:
+
+```bash
+python -Xgil=0 -m pytest -m gpu
+```
+
+Run all tests, including GPU tests:
+
+```bash
+python -Xgil=0 -m pytest -m ""
+```
+
+GPU tests require a suitable graphics environment.
+
+### GitHub Actions
+
+The [Tests workflow](https://github.com/Lainupcomputer/Nexora/actions/workflows/tests.yml):
+
+- Runs on pushes and pull requests
+- Supports manual execution
+- Uses a Windows runner
+- Installs Python 3.13 free-threading
+- Checks that No-GIL mode is active
+- Runs tests excluding the `gpu` marker
+
+The README test badge displays the workflow status for `main`. It does not represent GPU-test coverage or certification of every platform.
 
 ## Documentation
 
-Nexora uses **Sphinx** for API documentation. Build the docs locally using the repository's Sphinx configuration after installing the `docs` extras.
+API documentation uses **Sphinx** with the **Furo** theme.
 
----
+Install documentation dependencies:
 
-## Roadmap
+```bash
+python -m pip install -e ".[docs]"
+```
 
-The core feature set is in place. Current work is focused on making it easier to build complete games with Nexora:
+Build the HTML documentation from the repository root:
 
-- Scene/prefab serialization and reusable game-object workflows
-- Asset import pipeline for game resources
-- Tilemap tooling and external map workflow
-- Expanded gameplay examples and a complete vertical-slice demo
-- Gamepad support and input rebinding
-- Further physics shapes and gameplay-specific collision helpers
-- Stable public API boundaries
-- Automated CI, packaging, releases, and a future PyPI workflow
+```bash
+python -m sphinx -b html docs/source docs/build/html
+```
 
----
+Open `docs/build/html/index.html` in your browser.
 
-## Design Goals
+Documentation sources are available in [`docs/source/`](docs/source/).
 
-- **Pythonic API:** readable game code with low boilerplate
-- **Performance:** GPU batching, data-oriented ECS, and parallel execution
-- **Free-threading:** designed for modern Python without assuming the GIL
-- **Modularity:** rendering, ECS, scenes, UI, audio, animation, input, physics, and tilemaps remain separable
-- **Escape hatches:** advanced users can access lower-level systems when needed
+## Development Direction
 
----
+Current development focuses on making Nexora easier to use for complete games:
+
+- Stabilizing public APIs and subsystem integration
+- Improving project templates and onboarding
+- Expanding practical gameplay examples
+- Refining tilemap, navigation, and prefab workflows
+- Improving asset and map authoring tools
+- Keeping documentation aligned with implementation
+- Extending automated validation
+- Building a complete playable demonstration
+
+Existing systems remain under active development; their presence does not imply a finalized API.
 
 ## Contributing
 
-Nexora is under active development. Bug reports, tests, examples, documentation improvements, and implementation feedback are welcome.
+Nexora is developed by **Sandro**, who currently works full-time on the engine.
 
-Because the API is still evolving, please discuss larger architectural changes before implementation.
+Contributions are welcome in areas such as:
 
----
+- Engine and gameplay programming
+- Bug reports and reproducible test cases
+- Tests and regression coverage
+- Documentation and tutorials
+- Example projects
+- Tooling and developer experience
+- Pixel art, animation, and UI assets for demos
+
+You do not need to contribute full-time.
+
+For substantial architectural changes, open an issue first so the approach can be discussed before implementation.
+
+### Help build a game with Nexora
+
+Alongside engine development, collaborators are welcome to help create a game using Nexora.
+
+Pixel-art and 2D artists are especially welcome, including environment artists, character animators, and UI artists.
+
+The proposed game collaboration uses a future revenue-sharing model. There is no fixed upfront payment or guaranteed revenue. Responsibilities and participation terms must be agreed separately before work begins.
+
+Engine contributions and participation in the game's revenue-sharing arrangement are separate.
+
+Interested? [Open an issue](https://github.com/Lainupcomputer/Nexora/issues) with your area of interest and links to relevant work.
 
 ## License
 
-See [LICENSE](LICENSE) for license information.
+The repository's `LICENSE` file is currently a placeholder. Licensing terms have not yet been specified in that file.
+
+Third-party dependencies and bundled assets may have their own licenses.

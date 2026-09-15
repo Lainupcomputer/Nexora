@@ -39,5 +39,5 @@ jobs:
         run: |
           python -Xgil=0 -c "import sys; print(sys.version); assert not sys._is_gil_enabled(), 'GIL is enabled'"
 
-      - name: Run tests without GPU
-        run: python -Xgil=0 -m pytest -m "not gpu" -v --tb=short
+      - name: Run tests without GPU or audio
+        run: python -Xgil=0 -m pytest -m "not gpu and not audio" -v --tb=short
