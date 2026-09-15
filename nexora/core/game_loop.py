@@ -329,6 +329,46 @@ class GameLoop:
                     )
 
                 # --------------------------------------------------
+                # Timers
+                # --------------------------------------------------
+                # Timers run before game logic for the same reason as
+                # tweens: callbacks scheduled for this frame are visible
+                # to the current Game/Scene update. Lightweight test
+                # engines may omit the service entirely.
+
+                timers = getattr(
+                    self.engine,
+                    "timers",
+                    None,
+                )
+
+                if timers is not None:
+                    timers.update(
+                        self.time.delta_time,
+                        self.time.unscaled_delta_time,
+                    )
+
+                # --------------------------------------------------
+                # Coroutine tasks
+                # --------------------------------------------------
+                # Tasks run after Tweens and Timers so wait_tween() and
+                # wait_timer() observe completions from this frame before
+                # normal Game / Scene logic runs. The service remains
+                # optional for lightweight test engines.
+
+                tasks = getattr(
+                    self.engine,
+                    "tasks",
+                    None,
+                )
+
+                if tasks is not None:
+                    tasks.update(
+                        self.time.delta_time,
+                        self.time.unscaled_delta_time,
+                    )
+
+                # --------------------------------------------------
                 # Variable update
                 # --------------------------------------------------
 

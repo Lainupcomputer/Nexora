@@ -59,6 +59,14 @@ from nexora.threading.context import (
 from nexora.tween import (
     TweenManager,
 )
+
+from nexora.timer import (
+    TimerManager,
+)
+
+from nexora.tasks import (
+    TaskManager,
+)
 from nexora.core.paths import (
     ProjectPaths,
 )
@@ -635,6 +643,22 @@ class Engine:
         )
 
         # ======================================================
+        # Timer system
+        # ======================================================
+
+        self.timers = (
+            TimerManager()
+        )
+
+        # ======================================================
+        # Task / coroutine system
+        # ======================================================
+
+        self.tasks = (
+            TaskManager()
+        )
+
+        # ======================================================
         # Game
         # ======================================================
 
@@ -660,6 +684,14 @@ class Engine:
 
         self.game.tweens = (
             self.tweens
+        )
+
+        self.game.timers = (
+            self.timers
+        )
+
+        self.game.tasks = (
+            self.tasks
         )
 
         # ======================================================

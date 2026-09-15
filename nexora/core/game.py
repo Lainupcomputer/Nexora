@@ -137,6 +137,8 @@ class Game:
         self.graphics = None
         self.console = None
         self.tweens = None
+        self.timers = None
+        self.tasks = None
 
         # ======================================================
         # Project

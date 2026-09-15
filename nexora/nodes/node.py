@@ -85,6 +85,23 @@ class Node:
 
         self._owned_tweens: set = set()
 
+        # ======================================================
+        # Timers
+        # ======================================================
+        # Runtime timers can use a Node as owner. Destroying the
+        # owner cancels them before the ECS entity disappears.
+
+        self._owned_timers: set = set()
+
+        # ======================================================
+        # Coroutine tasks
+        # ======================================================
+        # Generator tasks can use a Node as owner. They are cancelled
+        # before the ECS entity is destroyed so no suspended routine can
+        # resume against a dead Node.
+
+        self._owned_tasks: set = set()
+
     # ==============================================================
     # World transform
     # ==============================================================
@@ -572,12 +589,88 @@ class Node:
         self._owned_tweens.clear()
 
     # ==============================================================
+    # Timers
+    # ==============================================================
+
+    def _track_timer(
+        self,
+        timer,
+    ) -> None:
+        self._owned_timers.add(
+            timer
+        )
+
+    def _untrack_timer(
+        self,
+        timer,
+    ) -> None:
+        self._owned_timers.discard(
+            timer
+        )
+
+    def _cancel_timers(
+        self,
+    ) -> None:
+        for timer in tuple(
+            self._owned_timers
+        ):
+            cancel = getattr(
+                timer,
+                "cancel",
+                None,
+            )
+
+            if cancel is not None:
+                cancel()
+
+        self._owned_timers.clear()
+
+    # ==============================================================
+    # Coroutine tasks
+    # ==============================================================
+
+    def _track_task(
+        self,
+        task,
+    ) -> None:
+        self._owned_tasks.add(
+            task
+        )
+
+    def _untrack_task(
+        self,
+        task,
+    ) -> None:
+        self._owned_tasks.discard(
+            task
+        )
+
+    def _cancel_tasks(
+        self,
+    ) -> None:
+        for task in tuple(
+            self._owned_tasks
+        ):
+            cancel = getattr(
+                task,
+                "cancel",
+                None,
+            )
+
+            if cancel is not None:
+                cancel()
+
+        self._owned_tasks.clear()
+
+    # ==============================================================
     # Destroy
     # ==============================================================
 
     def destroy(
         self,
     ) -> None:
+        self._cancel_tasks()
+        self._cancel_timers()
         self._cancel_tweens()
         self._disconnect_signals()
 
