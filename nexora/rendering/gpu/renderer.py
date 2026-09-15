@@ -201,6 +201,14 @@ class GPURenderer:
             self.text_renderer = GPUTextRenderer(
                 context,
                 font,
+                vertex_shader_path=(
+                    shader_dir
+                    / "text.vert.spv"
+                ),
+                fragment_shader_path=(
+                    shader_dir
+                    / "text.frag.spv"
+                ),
             )
 
         # ======================================================
@@ -208,7 +216,8 @@ class GPURenderer:
         # ======================================================
 
         self.post_processor = PostProcess(
-            context
+            context,
+            shader_dir=shader_dir,
         )
 
         # ======================================================

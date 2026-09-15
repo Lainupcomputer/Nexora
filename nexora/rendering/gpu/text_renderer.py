@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import ctypes
@@ -31,6 +32,9 @@ class GPUTextRenderer:
     GPUFontAtlas stores the resulting glyph images in one GPU texture.
 
     Each character is rendered as one instance of a static quad.
+
+    Shader paths are supplied by the owning GPURenderer so the
+    renderer does not depend on a hard-coded engine shader path.
     """
 
     def __init__(
@@ -38,6 +42,8 @@ class GPUTextRenderer:
         context,
         font: Font,
         *,
+        vertex_shader_path: str | Path,
+        fragment_shader_path: str | Path,
         atlas_width: int = 1024,
         atlas_height: int = 1024,
         atlas_padding: int = 2,
@@ -48,12 +54,46 @@ class GPUTextRenderer:
         self.device = context.device
         self.font = font
 
-        self.max_glyphs = int(max_glyphs)
+        # ======================================================
+        # Limits
+        # ======================================================
+
+        self.max_glyphs = int(
+            max_glyphs
+        )
 
         if self.max_glyphs <= 0:
             raise ValueError(
                 "max_glyphs must be greater than zero."
             )
+
+        # ======================================================
+        # Shader paths
+        # ======================================================
+
+        self.vertex_shader_path = Path(
+            vertex_shader_path
+        )
+
+        self.fragment_shader_path = Path(
+            fragment_shader_path
+        )
+
+        if not self.vertex_shader_path.is_file():
+            raise FileNotFoundError(
+                "Text vertex shader not found: "
+                f"{self.vertex_shader_path}"
+            )
+
+        if not self.fragment_shader_path.is_file():
+            raise FileNotFoundError(
+                "Text fragment shader not found: "
+                f"{self.fragment_shader_path}"
+            )
+
+        # ======================================================
+        # Font atlas
+        # ======================================================
 
         self.atlas = GPUFontAtlas(
             self.device,
@@ -64,52 +104,46 @@ class GPUTextRenderer:
             charset=charset,
         )
 
-        shader_directory = (
-            Path(__file__).resolve().parent.parent / "shaders"
-        )
-
-        vertex_shader_path = (
-            shader_directory / "text.vert.spv"
-        )
-
-        fragment_shader_path = (
-            shader_directory / "text.frag.spv"
-        )
-
-        if not vertex_shader_path.is_file():
-            raise FileNotFoundError(
-                "Text vertex shader not found: "
-                f"{vertex_shader_path}"
-            )
-
-        if not fragment_shader_path.is_file():
-            raise FileNotFoundError(
-                "Text fragment shader not found: "
-                f"{fragment_shader_path}"
-            )
+        # ======================================================
+        # Shaders
+        # ======================================================
 
         self._vertex_shader = GPUShader(
             self.device,
-            vertex_shader_path,
+            self.vertex_shader_path,
             sdl3.SDL_GPU_SHADERSTAGE_VERTEX,
-            shader_format=sdl3.SDL_GPU_SHADERFORMAT_SPIRV,
+            shader_format=(
+                sdl3.SDL_GPU_SHADERFORMAT_SPIRV
+            ),
             num_uniform_buffers=1,
         )
 
         self._fragment_shader = GPUShader(
             self.device,
-            fragment_shader_path,
+            self.fragment_shader_path,
             sdl3.SDL_GPU_SHADERSTAGE_FRAGMENT,
-            shader_format=sdl3.SDL_GPU_SHADERFORMAT_SPIRV,
+            shader_format=(
+                sdl3.SDL_GPU_SHADERFORMAT_SPIRV
+            ),
             num_samplers=1,
             num_uniform_buffers=1,
         )
 
+        # ======================================================
+        # Sampler
+        # ======================================================
+
         self._sampler = GPUSampler(
             self.device,
-            min_filter=sdl3.SDL_GPU_FILTER_NEAREST,
-            mag_filter=sdl3.SDL_GPU_FILTER_NEAREST,
-            mipmap_mode=sdl3.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+            min_filter=(
+                sdl3.SDL_GPU_FILTER_NEAREST
+            ),
+            mag_filter=(
+                sdl3.SDL_GPU_FILTER_NEAREST
+            ),
+            mipmap_mode=(
+                sdl3.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST
+            ),
             address_mode_u=(
                 sdl3.SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE
             ),
@@ -121,29 +155,57 @@ class GPUTextRenderer:
             ),
         )
 
+        # ======================================================
+        # Buffers
+        # ======================================================
+
         self._vertex_buffer = (
             self._create_quad_buffer()
         )
 
         self._instance_buffer = GPUBuffer(
             self.device,
-            self.max_glyphs * INSTANCE_STRIDE,
+            self.max_glyphs
+            * INSTANCE_STRIDE,
             sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
             dynamic=True,
-            frames_in_flight=context.frames_in_flight,
+            frames_in_flight=(
+                context.frames_in_flight
+            ),
         )
 
-        self._pipeline = self._create_pipeline()
+        # ======================================================
+        # Pipeline
+        # ======================================================
+
+        self._pipeline = (
+            self._create_pipeline()
+        )
+
+        # ======================================================
+        # CPU instance data
+        # ======================================================
 
         self._instances = bytearray(
-            self.max_glyphs * INSTANCE_STRIDE
+            self.max_glyphs
+            * INSTANCE_STRIDE
         )
 
         self._glyph_count = 0
 
         self._clip_rects: list[
-            tuple[float, float, float, float] | None
+            tuple[
+                float,
+                float,
+                float,
+                float,
+            ]
+            | None
         ] = []
+
+        # ======================================================
+        # Text state
+        # ======================================================
 
         self._text_color = (
             1.0,
@@ -162,7 +224,10 @@ class GPUTextRenderer:
     def _error() -> str:
         error = sdl3.SDL_GetError()
 
-        if isinstance(error, bytes):
+        if isinstance(
+            error,
+            bytes,
+        ):
             return error.decode(
                 "utf-8",
                 errors="replace",
@@ -171,13 +236,17 @@ class GPUTextRenderer:
         if error is None:
             return "<unknown SDL error>"
 
-        return str(error)
+        return str(
+            error
+        )
 
     # ==============================================================
     # Quad
     # ==============================================================
 
-    def _create_quad_buffer(self):
+    def _create_quad_buffer(
+        self,
+    ):
         """
         Creates a static quad.
 
@@ -191,19 +260,43 @@ class GPUTextRenderer:
             "<24f",
 
             # Triangle 1
-            -0.5, -0.5, 0.0, 0.0,
-             0.5, -0.5, 1.0, 0.0,
-             0.5,  0.5, 1.0, 1.0,
+            -0.5,
+            -0.5,
+            0.0,
+            0.0,
+
+            0.5,
+            -0.5,
+            1.0,
+            0.0,
+
+            0.5,
+            0.5,
+            1.0,
+            1.0,
 
             # Triangle 2
-            -0.5, -0.5, 0.0, 0.0,
-             0.5,  0.5, 1.0, 1.0,
-            -0.5,  0.5, 0.0, 1.0,
+            -0.5,
+            -0.5,
+            0.0,
+            0.0,
+
+            0.5,
+            0.5,
+            1.0,
+            1.0,
+
+            -0.5,
+            0.5,
+            0.0,
+            1.0,
         )
 
         return GPUBuffer(
             self.device,
-            len(vertices),
+            len(
+                vertices
+            ),
             sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
             initial_data=vertices,
             dynamic=False,
@@ -224,14 +317,25 @@ class GPUTextRenderer:
             sdl3.SDL_GPUVertexAttribute()
         )
 
-        attribute.location = int(location)
-        attribute.buffer_slot = int(slot)
+        attribute.location = int(
+            location
+        )
+
+        attribute.buffer_slot = int(
+            slot
+        )
+
         attribute.format = fmt
-        attribute.offset = int(offset)
+
+        attribute.offset = int(
+            offset
+        )
 
         return attribute
 
-    def _create_pipeline(self):
+    def _create_pipeline(
+        self,
+    ):
         # ----------------------------------------------------------
         # Vertex buffer descriptions
         # ----------------------------------------------------------
@@ -241,10 +345,13 @@ class GPUTextRenderer:
         )
 
         vertex_input.slot = 0
+
         vertex_input.pitch = 16
+
         vertex_input.input_rate = (
             sdl3.SDL_GPU_VERTEXINPUTRATE_VERTEX
         )
+
         vertex_input.instance_step_rate = 0
 
         instance_input = (
@@ -252,25 +359,37 @@ class GPUTextRenderer:
         )
 
         instance_input.slot = 1
-        instance_input.pitch = INSTANCE_STRIDE
+
+        instance_input.pitch = (
+            INSTANCE_STRIDE
+        )
+
         instance_input.input_rate = (
             sdl3.SDL_GPU_VERTEXINPUTRATE_INSTANCE
         )
+
         instance_input.instance_step_rate = 0
 
         vertex_buffers = (
-            sdl3.SDL_GPUVertexBufferDescription * 2
+            sdl3.SDL_GPUVertexBufferDescription
+            * 2
         )()
 
-        vertex_buffers[0] = vertex_input
-        vertex_buffers[1] = instance_input
+        vertex_buffers[0] = (
+            vertex_input
+        )
+
+        vertex_buffers[1] = (
+            instance_input
+        )
 
         # ----------------------------------------------------------
         # Vertex attributes
         # ----------------------------------------------------------
 
         attributes = (
-            sdl3.SDL_GPUVertexAttribute * 11
+            sdl3.SDL_GPUVertexAttribute
+            * 11
         )()
 
         # Static quad position
@@ -515,13 +634,18 @@ class GPUTextRenderer:
             | sdl3.SDL_GPU_COLORCOMPONENT_A
         )
 
-        color_target.blend_state = blend
+        color_target.blend_state = (
+            blend
+        )
 
         color_targets = (
-            sdl3.SDL_GPUColorTargetDescription * 1
+            sdl3.SDL_GPUColorTargetDescription
+            * 1
         )()
 
-        color_targets[0] = color_target
+        color_targets[0] = (
+            color_target
+        )
 
         pipeline_info.target_info = (
             sdl3.SDL_GPUGraphicsPipelineTargetInfo()
@@ -556,12 +680,17 @@ class GPUTextRenderer:
     # Batch management
     # ==============================================================
 
-    def clear(self) -> None:
+    def clear(
+        self,
+    ) -> None:
         self._glyph_count = 0
+
         self._clip_rects.clear()
 
     @property
-    def glyph_count(self) -> int:
+    def glyph_count(
+        self,
+    ) -> int:
         return self._glyph_count
 
     # ==============================================================
@@ -583,7 +712,9 @@ class GPUTextRenderer:
         )
 
     @property
-    def color(self):
+    def color(
+        self,
+    ):
         return self._text_color
 
     # ==============================================================
@@ -595,17 +726,15 @@ class GPUTextRenderer:
         text: str,
         *,
         scale: float = 1.0,
-    ) -> tuple[float, float]:
+    ) -> tuple[
+        float,
+        float,
+    ]:
         """
         Measure the rendered size of a text string.
 
         Returns:
             (width, height)
-
-        Width is based on glyph advance values.
-        Height is based on the font line height / line skip.
-
-        The result uses the same metrics as draw().
         """
 
         if scale <= 0:
@@ -614,7 +743,10 @@ class GPUTextRenderer:
             )
 
         if not text:
-            return 0.0, 0.0
+            return (
+                0.0,
+                0.0,
+            )
 
         current_width = 0.0
         max_width = 0.0
@@ -633,7 +765,9 @@ class GPUTextRenderer:
                 continue
 
             glyph = self.font.glyph(
-                ord(character)
+                ord(
+                    character
+                )
             )
 
             current_width += (
@@ -678,17 +812,9 @@ class GPUTextRenderer:
         ] | None = None,
     ) -> None:
         """
-        Adds text to the current batch.
+        Add text to the current batch.
 
         x/y represent the text baseline.
-
-        Example:
-
-            renderer.draw(
-                "Hello Nexora",
-                100,
-                200,
-            )
         """
 
         if not text:
@@ -699,18 +825,25 @@ class GPUTextRenderer:
                 "scale must be greater than zero."
             )
 
-        cursor_x = float(x)
-        baseline_y = float(y)
+        cursor_x = float(
+            x
+        )
+
+        baseline_y = float(
+            y
+        )
 
         line_start_x = cursor_x
 
         for character in text:
-            # ------------------------------------------------------
+            # --------------------------------------------------
             # New line
-            # ------------------------------------------------------
+            # --------------------------------------------------
 
             if character == "\n":
-                cursor_x = line_start_x
+                cursor_x = (
+                    line_start_x
+                )
 
                 baseline_y += (
                     self.font.line_skip
@@ -719,14 +852,18 @@ class GPUTextRenderer:
 
                 continue
 
-            codepoint = ord(character)
+            codepoint = ord(
+                character
+            )
 
             glyph = self.font.glyph(
                 codepoint
             )
 
-            atlas_glyph = self.atlas.get_glyph(
-                codepoint
+            atlas_glyph = (
+                self.atlas.get_glyph(
+                    codepoint
+                )
             )
 
             if atlas_glyph is None:
@@ -734,18 +871,22 @@ class GPUTextRenderer:
                     glyph.advance
                     * scale
                 )
+
                 continue
 
-            if self._glyph_count >= self.max_glyphs:
+            if (
+                self._glyph_count
+                >= self.max_glyphs
+            ):
                 raise RuntimeError(
                     "GPUTextRenderer instance buffer "
                     "is full. Maximum glyphs: "
                     f"{self.max_glyphs}"
                 )
 
-            # ------------------------------------------------------
+            # --------------------------------------------------
             # Glyph dimensions
-            # ------------------------------------------------------
+            # --------------------------------------------------
 
             glyph_width = (
                 atlas_glyph.width
@@ -757,9 +898,9 @@ class GPUTextRenderer:
                 * scale
             )
 
-            # ------------------------------------------------------
+            # --------------------------------------------------
             # Glyph position
-            # ------------------------------------------------------
+            # --------------------------------------------------
 
             glyph_x = (
                 cursor_x
@@ -775,17 +916,19 @@ class GPUTextRenderer:
 
             instance_x = (
                 glyph_x
-                + glyph_width * 0.5
+                + glyph_width
+                * 0.5
             )
 
             instance_y = (
                 glyph_y
-                + glyph_height * 0.5
+                + glyph_height
+                * 0.5
             )
 
-            # ------------------------------------------------------
+            # --------------------------------------------------
             # Instance
-            # ------------------------------------------------------
+            # --------------------------------------------------
 
             offset = (
                 self._glyph_count
@@ -797,55 +940,82 @@ class GPUTextRenderer:
                 self._instances,
                 offset,
 
-                # 0-1: position
+                # position
                 instance_x,
                 instance_y,
 
-                # 2-3: size
+                # size
                 glyph_width,
                 glyph_height,
 
-                # 4: rotation
-                float(rotation),
+                # rotation
+                float(
+                    rotation
+                ),
 
-                # 5-6: origin
+                # origin
                 0.5,
                 0.5,
 
-                # 7: alpha
-                float(alpha),
+                # alpha
+                float(
+                    alpha
+                ),
 
-                # 8-9: flip x/y
+                # flip x/y
                 0.0,
                 0.0,
 
-                # 10-11: atlas UV
+                # atlas UV
                 atlas_glyph.u,
                 atlas_glyph.v,
 
-                # 12-13: atlas UV size
+                # atlas UV size
                 atlas_glyph.u_size,
                 atlas_glyph.v_size,
             )
 
             if clip_rect is None:
-                self._clip_rects.append(None)
+                self._clip_rects.append(
+                    None
+                )
+
             else:
-                clip_x, clip_y, clip_width, clip_height = clip_rect
+                (
+                    clip_x,
+                    clip_y,
+                    clip_width,
+                    clip_height,
+                ) = clip_rect
+
                 self._clip_rects.append(
                     (
-                        float(clip_x),
-                        float(clip_y),
-                        max(float(clip_width), 0.0),
-                        max(float(clip_height), 0.0),
+                        float(
+                            clip_x
+                        ),
+                        float(
+                            clip_y
+                        ),
+                        max(
+                            float(
+                                clip_width
+                            ),
+                            0.0,
+                        ),
+                        max(
+                            float(
+                                clip_height
+                            ),
+                            0.0,
+                        ),
                     )
                 )
 
             self._glyph_count += 1
 
-            # ------------------------------------------------------
+            # --------------------------------------------------
             # Advance cursor
-            # ------------------------------------------------------
+            # --------------------------------------------------
 
             cursor_x += (
                 glyph.advance
@@ -861,9 +1031,7 @@ class GPUTextRenderer:
         command_buffer,
     ) -> None:
         """
-        Uploads the current instance data to the GPU.
-
-        Must be called while a GPU frame is active.
+        Upload current instance data to the GPU.
         """
 
         if self._glyph_count <= 0:
@@ -897,46 +1065,130 @@ class GPUTextRenderer:
         """
         Convert a Nexora screen-space clip rectangle to SDL_Rect.
 
-        Nexora uses the screen center as (0, 0). SDL scissor
-        rectangles use the framebuffer top-left as (0, 0).
+        Nexora uses the screen center as (0, 0).
+        SDL scissor rectangles use the framebuffer top-left
+        as (0, 0).
         """
 
         viewport_width = max(
-            int(self.context.swapchain_width),
+            int(
+                self.context.swapchain_width
+            ),
             0,
         )
 
         viewport_height = max(
-            int(self.context.swapchain_height),
+            int(
+                self.context.swapchain_height
+            ),
             0,
         )
 
         if clip_rect is None:
             left = 0
             top = 0
-            right = viewport_width
-            bottom = viewport_height
+
+            right = (
+                viewport_width
+            )
+
+            bottom = (
+                viewport_height
+            )
+
         else:
-            x, y, width, height = clip_rect
+            (
+                x,
+                y,
+                width,
+                height,
+            ) = clip_rect
 
-            half_width = viewport_width * 0.5
-            half_height = viewport_height * 0.5
+            half_width = (
+                viewport_width
+                * 0.5
+            )
 
-            left = math.floor(x + half_width)
-            top = math.floor(y + half_height)
-            right = math.ceil(x + width + half_width)
-            bottom = math.ceil(y + height + half_height)
+            half_height = (
+                viewport_height
+                * 0.5
+            )
 
-            left = max(0, min(left, viewport_width))
-            top = max(0, min(top, viewport_height))
-            right = max(left, min(right, viewport_width))
-            bottom = max(top, min(bottom, viewport_height))
+            left = math.floor(
+                x
+                + half_width
+            )
 
-        rect = sdl3.SDL_Rect()
-        rect.x = int(left)
-        rect.y = int(top)
-        rect.w = int(right - left)
-        rect.h = int(bottom - top)
+            top = math.floor(
+                y
+                + half_height
+            )
+
+            right = math.ceil(
+                x
+                + width
+                + half_width
+            )
+
+            bottom = math.ceil(
+                y
+                + height
+                + half_height
+            )
+
+            left = max(
+                0,
+                min(
+                    left,
+                    viewport_width,
+                ),
+            )
+
+            top = max(
+                0,
+                min(
+                    top,
+                    viewport_height,
+                ),
+            )
+
+            right = max(
+                left,
+                min(
+                    right,
+                    viewport_width,
+                ),
+            )
+
+            bottom = max(
+                top,
+                min(
+                    bottom,
+                    viewport_height,
+                ),
+            )
+
+        rect = (
+            sdl3.SDL_Rect()
+        )
+
+        rect.x = int(
+            left
+        )
+
+        rect.y = int(
+            top
+        )
+
+        rect.w = int(
+            right
+            - left
+        )
+
+        rect.h = int(
+            bottom
+            - top
+        )
 
         return rect
 
@@ -949,7 +1201,7 @@ class GPUTextRenderer:
         render_pass,
     ) -> None:
         """
-        Draws the current text batch.
+        Draw the current text batch.
 
         Must be called inside an active GPU render pass.
         """
@@ -1000,7 +1252,9 @@ class GPUTextRenderer:
             command_buffer,
             0,
             camera_data,
-            len(camera_data),
+            len(
+                camera_data
+            ),
         )
 
         # ----------------------------------------------------------
@@ -1016,7 +1270,9 @@ class GPUTextRenderer:
             command_buffer,
             0,
             color_data,
-            len(color_data),
+            len(
+                color_data
+            ),
         )
 
         # ----------------------------------------------------------
@@ -1033,17 +1289,20 @@ class GPUTextRenderer:
         # ----------------------------------------------------------
 
         vertex_bindings = (
-            sdl3.SDL_GPUBufferBinding * 2
+            sdl3.SDL_GPUBufferBinding
+            * 2
         )()
 
         vertex_bindings[0].buffer = (
-            self._vertex_buffer.current_buffer
+            self._vertex_buffer
+            .current_buffer
         )
 
         vertex_bindings[0].offset = 0
 
         vertex_bindings[1].buffer = (
-            self._instance_buffer.current_buffer
+            self._instance_buffer
+            .current_buffer
         )
 
         vertex_bindings[1].offset = 0
@@ -1064,7 +1323,9 @@ class GPUTextRenderer:
         )
 
         texture_binding.texture = (
-            self.atlas.texture.texture
+            self.atlas
+            .texture
+            .texture
         )
 
         texture_binding.sampler = (
@@ -1072,7 +1333,8 @@ class GPUTextRenderer:
         )
 
         texture_bindings = (
-            sdl3.SDL_GPUTextureSamplerBinding * 1
+            sdl3.SDL_GPUTextureSamplerBinding
+            * 1
         )()
 
         texture_bindings[0] = (
@@ -1092,40 +1354,76 @@ class GPUTextRenderer:
 
         run_start = 0
 
-        while run_start < self._glyph_count:
-            clip_rect = self._clip_rects[run_start]
-            run_end = run_start + 1
+        while (
+            run_start
+            < self._glyph_count
+        ):
+            clip_rect = (
+                self._clip_rects[
+                    run_start
+                ]
+            )
+
+            run_end = (
+                run_start
+                + 1
+            )
 
             while (
-                run_end < self._glyph_count
-                and self._clip_rects[run_end] == clip_rect
+                run_end
+                < self._glyph_count
+                and self._clip_rects[
+                    run_end
+                ]
+                == clip_rect
             ):
                 run_end += 1
 
-            scissor = self._make_scissor_rect(clip_rect)
+            scissor = (
+                self._make_scissor_rect(
+                    clip_rect
+                )
+            )
 
-            if scissor.w > 0 and scissor.h > 0:
+            if (
+                scissor.w > 0
+                and scissor.h > 0
+            ):
                 sdl3.SDL_SetGPUScissor(
                     render_pass,
-                    ctypes.byref(scissor),
+                    ctypes.byref(
+                        scissor
+                    ),
                 )
 
                 sdl3.SDL_DrawGPUPrimitives(
                     render_pass,
                     6,
-                    run_end - run_start,
+                    run_end
+                    - run_start,
                     0,
                     run_start,
                 )
 
-            run_start = run_end
+            run_start = (
+                run_end
+            )
 
-        # Restore effectively-unclipped state for following batches.
-        full_scissor = self._make_scissor_rect(None)
+        # ----------------------------------------------------------
+        # Restore unclipped state
+        # ----------------------------------------------------------
+
+        full_scissor = (
+            self._make_scissor_rect(
+                None
+            )
+        )
 
         sdl3.SDL_SetGPUScissor(
             render_pass,
-            ctypes.byref(full_scissor),
+            ctypes.byref(
+                full_scissor
+            ),
         )
 
     # ==============================================================
@@ -1153,6 +1451,7 @@ class GPUTextRenderer:
 
         if not self.context.begin_frame():
             self.clear()
+
             return
 
         try:
@@ -1174,6 +1473,7 @@ class GPUTextRenderer:
                 self.draw_into(
                     render_pass
                 )
+
             finally:
                 self.context.end_render_pass(
                     render_pass
@@ -1183,6 +1483,7 @@ class GPUTextRenderer:
 
         except Exception:
             self.context.cancel_frame()
+
             raise
 
         finally:
@@ -1193,7 +1494,9 @@ class GPUTextRenderer:
     # ==============================================================
 
     @property
-    def atlas_texture(self):
+    def atlas_texture(
+        self,
+    ):
         if self.atlas is None:
             return None
 
@@ -1203,7 +1506,9 @@ class GPUTextRenderer:
     # Cleanup
     # ==============================================================
 
-    def destroy(self) -> None:
+    def destroy(
+        self,
+    ) -> None:
         if self._destroyed:
             return
 
@@ -1227,6 +1532,7 @@ class GPUTextRenderer:
 
         if self._instance_buffer is not None:
             self._instance_buffer.destroy()
+
             self._instance_buffer = None
 
         # ----------------------------------------------------------
@@ -1235,6 +1541,7 @@ class GPUTextRenderer:
 
         if self._vertex_buffer is not None:
             self._vertex_buffer.destroy()
+
             self._vertex_buffer = None
 
         # ----------------------------------------------------------
@@ -1243,6 +1550,7 @@ class GPUTextRenderer:
 
         if self._sampler is not None:
             self._sampler.destroy()
+
             self._sampler = None
 
         # ----------------------------------------------------------
@@ -1251,10 +1559,12 @@ class GPUTextRenderer:
 
         if self._vertex_shader is not None:
             self._vertex_shader.destroy()
+
             self._vertex_shader = None
 
         if self._fragment_shader is not None:
             self._fragment_shader.destroy()
+
             self._fragment_shader = None
 
         # ----------------------------------------------------------
@@ -1263,16 +1573,20 @@ class GPUTextRenderer:
 
         if self.atlas is not None:
             self.atlas.destroy()
+
             self.atlas = None
 
         self._clip_rects.clear()
+
         self._destroyed = True
 
     # ==============================================================
     # Context manager
     # ==============================================================
 
-    def __enter__(self):
+    def __enter__(
+        self,
+    ):
         return self
 
     def __exit__(

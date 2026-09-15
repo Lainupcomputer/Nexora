@@ -14,6 +14,7 @@ from nexora.rendering.postprocessing.effects import (
     PostProcessEffects,
 )
 
+
 class PostProcess:
     """
     Nexora fullscreen post-processing pass.
@@ -41,12 +42,30 @@ class PostProcess:
     def __init__(
         self,
         context,
+        *,
+        shader_dir: str | Path,
     ) -> None:
         self.context = context
 
         self.device = (
             context.device
         )
+
+        # ======================================================
+        # Shader directory
+        # ======================================================
+
+        self.shader_dir = (
+            Path(shader_dir)
+            .expanduser()
+            .resolve()
+        )
+
+        if not self.shader_dir.is_dir():
+            raise FileNotFoundError(
+                "Post-processing shader directory "
+                f"not found: {self.shader_dir}"
+            )
 
         # ======================================================
         # State
@@ -164,6 +183,7 @@ class PostProcess:
         self.pipeline = None
 
         self.sampler = None
+
         self.effects = PostProcessEffects(
             self
         )
@@ -249,20 +269,44 @@ class PostProcess:
         if self.initialized:
             return
 
-        shader_dir = (
-            Path(__file__)
-            .resolve()
-            .parent
-            .parent
-            / "shaders"
-            / "bin"
+        # ------------------------------------------------------
+        # Resolve shader paths
+        # ------------------------------------------------------
+
+        vertex_shader_path = (
+            self.shader_dir
+            / "post_process.vert.spv"
         )
+
+        fragment_shader_path = (
+            self.shader_dir
+            / "post_process.frag.spv"
+        )
+
+        # ------------------------------------------------------
+        # Validate shaders
+        # ------------------------------------------------------
+
+        if not vertex_shader_path.is_file():
+            raise FileNotFoundError(
+                "Post-process vertex shader "
+                f"not found: {vertex_shader_path}"
+            )
+
+        if not fragment_shader_path.is_file():
+            raise FileNotFoundError(
+                "Post-process fragment shader "
+                f"not found: {fragment_shader_path}"
+            )
+
+        # ------------------------------------------------------
+        # Create GPU resources
+        # ------------------------------------------------------
 
         try:
             self.vertex_shader = GPUShader(
                 self.device,
-                shader_dir
-                / "post_process.vert.spv",
+                vertex_shader_path,
                 sdl3.SDL_GPU_SHADERSTAGE_VERTEX,
                 sdl3.SDL_GPU_SHADERFORMAT_SPIRV,
                 entrypoint="main",
@@ -270,8 +314,7 @@ class PostProcess:
 
             self.fragment_shader = GPUShader(
                 self.device,
-                shader_dir
-                / "post_process.frag.spv",
+                fragment_shader_path,
                 sdl3.SDL_GPU_SHADERSTAGE_FRAGMENT,
                 sdl3.SDL_GPU_SHADERFORMAT_SPIRV,
                 entrypoint="main",
