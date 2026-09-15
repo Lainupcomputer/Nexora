@@ -396,7 +396,7 @@ Existing systems remain under active development; their presence does not imply 
 
 ## Contributing
 
-Nexora is developed by **Sandro**, who currently works full-time on the engine.
+Nexora is developed by **Me**, who currently works full-time on the engine.
 
 Contributions are welcome in areas such as:
 
@@ -412,13 +412,7 @@ You do not need to contribute full-time.
 
 For substantial architectural changes, open an issue first so the approach can be discussed before implementation.
 
-### Help build a game with Nexora
 
-Alongside engine development, collaborators are welcome to help create a game using Nexora.
-
-Pixel-art and 2D artists are especially welcome, including environment artists, character animators, and UI artists.
-
-The proposed game collaboration uses a future revenue-sharing model. There is no fixed upfront payment or guaranteed revenue. Responsibilities and participation terms must be agreed separately before work begins.
 
 Engine contributions and participation in the game's revenue-sharing arrangement are separate.
 

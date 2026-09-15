@@ -66,12 +66,13 @@ python_functions = [
 addopts = [
     "-ra",
     "-m",
-    "not gpu",
+    "not gpu and not audio",
 ]
 
 markers = [
     "gpu: tests requiring SDL3 and a GPU",
     "slow: slow integration tests",
+    "audio: tests requiring SDL3 audio",
 ]
 
 
