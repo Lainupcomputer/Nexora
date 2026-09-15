@@ -531,7 +531,7 @@ walk = AnimationClip.from_row(
     rows=4,
     fps=10,
 )
-animations = AnimationSet()
+animations = AnimationSet(columns=6, rows=4)
 animations.add(walk)
 
 animator = Animator()
