@@ -262,7 +262,7 @@ class Player(Node):
     def update(self, delta_time: float) -> None:
         pass
 
-player = Player("Player")
+player = Player("Player", scene.world)
 scene.add_node(player)
 ~~~
 
@@ -469,7 +469,8 @@ entity = world.create_entity()
 world.add_component(entity, Transform())
 
 for entity, transform in world.query(Transform):
-    transform.position = (0.0, 0.0)
+    transform.x = 0.0
+    transform.y = 0.0
 ~~~
 
 `World` provides `create_entity()`, `destroy_entity()`, `is_alive()`,
