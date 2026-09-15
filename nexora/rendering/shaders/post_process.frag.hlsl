@@ -35,6 +35,23 @@ cbuffer PostProcessBuffer
     // xyz = tint / color grading
     // w = distortion speed
     float4 tint_settings;
+
+    // xyz = ambient light color
+    // w = ambient intensity
+    float4 ambient_settings;
+
+    // x = active light count
+    // y = lighting enabled (0/1)
+    float4 lighting_settings;
+
+    // xy = screen-space position in pixels
+    // z = radius in pixels
+    // w = intensity
+    float4 light_position_radius_intensity[32];
+
+    // xyz = light color
+    // w = falloff exponent
+    float4 light_color_falloff[32];
 };
 
 
@@ -149,6 +166,60 @@ float4 sample_chromatic(
         blue,
         alpha
     );
+}
+
+
+float3 apply_lighting(
+    float3 base_color,
+    float2 uv,
+    float screen_width,
+    float screen_height
+)
+{
+    if (lighting_settings.y < 0.5)
+    {
+        return base_color;
+    }
+
+    float3 light_factor =
+        ambient_settings.xyz
+        * max(ambient_settings.w, 0.0);
+
+    float2 pixel_position =
+        uv * float2(screen_width, screen_height);
+
+    int light_count =
+        min((int)lighting_settings.x, 32);
+
+    [loop]
+    for (int index = 0; index < light_count; ++index)
+    {
+        float4 position_data =
+            light_position_radius_intensity[index];
+
+        float4 color_data =
+            light_color_falloff[index];
+
+        float radius = max(position_data.z, 0.0001);
+        float distance_to_light =
+            length(pixel_position - position_data.xy);
+
+        float attenuation = saturate(
+            1.0 - distance_to_light / radius
+        );
+
+        attenuation = pow(
+            attenuation,
+            max(color_data.w, 0.01)
+        );
+
+        light_factor +=
+            color_data.xyz
+            * max(position_data.w, 0.0)
+            * attenuation;
+    }
+
+    return base_color * max(light_factor, 0.0);
 }
 
 
@@ -374,6 +445,17 @@ float4 main(
 
     color.rgb *=
         tint;
+
+    // ----------------------------------------------------------
+    // 2D lighting
+    // ----------------------------------------------------------
+
+    color.rgb = apply_lighting(
+        color.rgb,
+        input.uv,
+        screen_width,
+        screen_height
+    );
 
     // ----------------------------------------------------------
     // Vignette

@@ -162,6 +162,16 @@ class PostProcess:
         self.damage_pulse: float = 0.0
 
         # ======================================================
+        # 2D lighting
+        # ======================================================
+
+        self.lighting_enabled: bool = False
+        self.ambient_color: tuple[float, float, float] = (1.0, 1.0, 1.0)
+        self.ambient_intensity: float = 1.0
+        self.lights: tuple = ()
+        self.max_lights: int = 32
+
+        # ======================================================
         # Render target
         # ======================================================
 
@@ -245,6 +255,23 @@ class PostProcess:
             0.0,
             1.0,
         )
+
+    # ==========================================================
+    # 2D lighting
+    # ==========================================================
+
+    def set_lighting(
+        self,
+        *,
+        enabled: bool,
+        ambient_color: tuple[float, float, float],
+        ambient_intensity: float,
+        lights,
+    ) -> None:
+        self.lighting_enabled = bool(enabled)
+        self.ambient_color = tuple(float(v) for v in ambient_color[:3])
+        self.ambient_intensity = max(0.0, float(ambient_intensity))
+        self.lights = tuple(lights)[: self.max_lights]
 
     # ==========================================================
     # Pixelation
@@ -455,108 +482,73 @@ class PostProcess:
             - self._start_time
         )
 
-        data = struct.pack(
-            "<20f",
-
-            # --------------------------------------------------
+        values: list[float] = [
             # color_settings
-            # --------------------------------------------------
-
-            float(
-                self.grayscale
-            ),
-
-            float(
-                self.vignette
-            ),
-
-            float(
-                self.brightness
-            ),
-
-            float(
-                self.contrast
-            ),
-
-            # --------------------------------------------------
+            float(self.grayscale),
+            float(self.vignette),
+            float(self.brightness),
+            float(self.contrast),
             # effect_settings
-            # --------------------------------------------------
-
-            float(
-                self.saturation
-            ),
-
-            float(
-                self.chromatic_aberration
-            ),
-
-            float(
-                self.film_grain
-            ),
-
-            float(
-                self.scanlines
-            ),
-
-            # --------------------------------------------------
+            float(self.saturation),
+            float(self.chromatic_aberration),
+            float(self.film_grain),
+            float(self.scanlines),
             # dynamic_settings
-            # --------------------------------------------------
-
-            float(
-                self.pixel_size
-            ),
-
-            float(
-                self.distortion
-            ),
-
-            float(
-                elapsed_time
-            ),
-
-            float(
-                self.health
-            ),
-
-            # --------------------------------------------------
+            float(self.pixel_size),
+            float(self.distortion),
+            float(elapsed_time),
+            float(self.health),
             # screen_settings
-            # --------------------------------------------------
-
-            float(
-                self.damage_pulse
-            ),
-
-            float(
-                self.scanline_frequency
-            ),
-
-            float(
-                self._width
-            ),
-
-            float(
-                self._height
-            ),
-
-            # --------------------------------------------------
+            float(self.damage_pulse),
+            float(self.scanline_frequency),
+            float(self._width),
+            float(self._height),
             # tint_settings
-            # --------------------------------------------------
+            float(self.tint[0]),
+            float(self.tint[1]),
+            float(self.tint[2]),
+            float(self.distortion_speed),
+            # ambient_settings
+            float(self.ambient_color[0]),
+            float(self.ambient_color[1]),
+            float(self.ambient_color[2]),
+            float(self.ambient_intensity),
+            # lighting_settings
+            float(len(self.lights)),
+            1.0 if self.lighting_enabled else 0.0,
+            0.0,
+            0.0,
+        ]
 
-            float(
-                self.tint[0]
-            ),
+        # Each light occupies two float4 entries. Fixed-size arrays keep the
+        # HLSL constant-buffer layout stable regardless of active light count.
+        for index in range(self.max_lights):
+            if index < len(self.lights):
+                light = self.lights[index]
+                values.extend((
+                    float(light.x),
+                    float(light.y),
+                    float(light.radius),
+                    float(light.intensity),
+                ))
+            else:
+                values.extend((0.0, 0.0, 0.0, 0.0))
 
-            float(
-                self.tint[1]
-            ),
+        for index in range(self.max_lights):
+            if index < len(self.lights):
+                light = self.lights[index]
+                values.extend((
+                    float(light.color[0]),
+                    float(light.color[1]),
+                    float(light.color[2]),
+                    float(light.falloff),
+                ))
+            else:
+                values.extend((0.0, 0.0, 0.0, 1.0))
 
-            float(
-                self.tint[2]
-            ),
-
-            float(
-                self.distortion_speed
-            ),
+        data = struct.pack(
+            f"<{len(values)}f",
+            *values,
         )
 
         sdl3.SDL_PushGPUFragmentUniformData(
@@ -678,6 +670,11 @@ class PostProcess:
         self.health = 1.0
 
         self.damage_pulse = 0.0
+
+        self.lighting_enabled = False
+        self.ambient_color = (1.0, 1.0, 1.0)
+        self.ambient_intensity = 1.0
+        self.lights = ()
 
     # ==========================================================
     # Resource cleanup

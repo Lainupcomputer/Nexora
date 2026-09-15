@@ -4,6 +4,7 @@ from pathlib import Path
 
 from nexora.rendering.camera import Camera
 from nexora.rendering.gpu.renderer import GPURenderer
+from nexora.lighting import LightingSystem
 
 
 class Renderer:
@@ -64,6 +65,12 @@ class Renderer:
             camera=camera,
             font=font,
         )
+
+        # ======================================================
+        # 2D lighting
+        # ======================================================
+
+        self.lighting = LightingSystem()
 
     # ==========================================================
     # Properties
@@ -174,11 +181,18 @@ class Renderer:
     def begin_frame(
         self,
     ) -> bool:
+        self.lighting.begin_frame()
         return self.gpu.begin_frame()
 
     def end_frame(
         self,
     ) -> bool:
+        self.lighting.apply(
+            self.gpu.post_processor,
+            self.camera,
+            self.width,
+            self.height,
+        )
         return self.gpu.end_frame()
 
     # ==========================================================

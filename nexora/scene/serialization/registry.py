@@ -15,7 +15,7 @@ from nexora.nodes.navigation.navigation_agent_2d import NavigationAgent2D
 from nexora.nodes.navigation.navigation_obstacle_2d import NavigationObstacle2D
 from nexora.tilemap import TileMap, TileSet
 from nexora.animation import AnimationClip, AnimationEvent, AnimationFrame, AnimationPlayer
-from nexora.nodes.effects import ParticleEmitter2D
+from nexora.nodes.effects import ParticleEmitter2D, Light2D
 from nexora.particles import ParticleConfig
 
 from .errors import UnregisteredNodeTypeError
@@ -431,6 +431,53 @@ class NodeFactoryRegistry:
             ParticleEmitter2D,
             dump_state=dump_particle_emitter,
             load_state=load_particle_emitter,
+        )
+
+        def dump_light_2d(node: Light2D) -> dict[str, Any]:
+            return {
+                "color": list(node.color),
+                "radius": float(node.radius),
+                "intensity": float(node.intensity),
+                "falloff": float(node.falloff),
+                "light_enabled": bool(node.light_enabled),
+                "light_mask": int(node.light_mask),
+                "flicker_enabled": bool(node.flicker_enabled),
+                "flicker_strength": float(node.flicker_strength),
+                "flicker_speed": float(node.flicker_speed),
+                "pulse_enabled": bool(node.pulse_enabled),
+                "pulse_amount": float(node.pulse_amount),
+                "pulse_speed": float(node.pulse_speed),
+                "debug_draw": bool(node.debug_draw),
+                "debug_layer": int(node.debug_layer),
+            }
+
+        def load_light_2d(
+            node: Light2D,
+            state: dict[str, Any],
+            context: dict[str, Any],
+        ) -> None:
+            del context
+            color = state.get("color", (1.0, 0.85, 0.60))
+            node.color = tuple(float(v) for v in color[:3])
+            node.radius = float(state.get("radius", 180.0))
+            node.intensity = float(state.get("intensity", 1.0))
+            node.falloff = float(state.get("falloff", 2.0))
+            node.light_enabled = bool(state.get("light_enabled", True))
+            node.light_mask = int(state.get("light_mask", 0xFFFFFFFF))
+            node.flicker_enabled = bool(state.get("flicker_enabled", False))
+            node.flicker_strength = float(state.get("flicker_strength", 0.12))
+            node.flicker_speed = float(state.get("flicker_speed", 17.0))
+            node.pulse_enabled = bool(state.get("pulse_enabled", False))
+            node.pulse_amount = float(state.get("pulse_amount", 0.15))
+            node.pulse_speed = float(state.get("pulse_speed", 2.0))
+            node.debug_draw = bool(state.get("debug_draw", False))
+            node.debug_layer = int(state.get("debug_layer", 100_000))
+
+        self.register(
+            "Light2D",
+            Light2D,
+            dump_state=dump_light_2d,
+            load_state=load_light_2d,
         )
 
         def dump_tilemap_node(node: TileMapNode) -> dict[str, Any]:
