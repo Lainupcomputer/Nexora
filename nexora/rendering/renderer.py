@@ -196,6 +196,23 @@ class Renderer:
         return self.gpu.end_frame()
 
     # ==========================================================
+    # Render phases
+    # ==========================================================
+
+    @property
+    def render_phase(self) -> str:
+        return self.gpu.render_phase
+
+    def set_render_phase(self, phase: str) -> None:
+        self.gpu.set_render_phase(phase)
+
+    def overlay_scope(self):
+        return self.gpu.overlay_scope()
+
+    def world_scope(self):
+        return self.gpu.world_scope()
+
+    # ==========================================================
     # Clipping
     # ==========================================================
 

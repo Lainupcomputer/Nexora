@@ -74,13 +74,14 @@ class LightOccluder2D(Node):
         if not self.debug_draw:
             return
 
-        for (ax, ay), (bx, by) in snapshot.segments():
-            renderer.line(
-                ax,
-                ay,
-                bx,
-                by,
-                width=3.0,
-                color=(1.0, 0.2, 0.8, 0.9),
-                layer=int(self.debug_layer),
-            )
+        with renderer.overlay_scope():
+            for (ax, ay), (bx, by) in snapshot.segments():
+                renderer.line(
+                    ax,
+                    ay,
+                    bx,
+                    by,
+                    width=3.0,
+                    color=(1.0, 0.2, 0.8, 0.9),
+                    layer=int(self.debug_layer),
+                )

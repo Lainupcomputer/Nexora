@@ -103,27 +103,28 @@ class Light2D(Node):
         renderer.lighting.submit(snapshot)
 
         if self.debug_draw:
-            renderer.circle(
-                snapshot.x,
-                snapshot.y,
-                snapshot.radius * 2.0,
-                color=(
-                    snapshot.color[0],
-                    snapshot.color[1],
-                    snapshot.color[2],
-                    0.08,
-                ),
-                layer=int(self.debug_layer),
-            )
-            renderer.circle(
-                snapshot.x,
-                snapshot.y,
-                8.0,
-                color=(
-                    snapshot.color[0],
-                    snapshot.color[1],
-                    snapshot.color[2],
-                    0.9,
-                ),
-                layer=int(self.debug_layer) + 1,
-            )
+            with renderer.overlay_scope():
+                renderer.circle(
+                    snapshot.x,
+                    snapshot.y,
+                    snapshot.radius * 2.0,
+                    color=(
+                        snapshot.color[0],
+                        snapshot.color[1],
+                        snapshot.color[2],
+                        0.08,
+                    ),
+                    layer=int(self.debug_layer),
+                )
+                renderer.circle(
+                    snapshot.x,
+                    snapshot.y,
+                    8.0,
+                    color=(
+                        snapshot.color[0],
+                        snapshot.color[1],
+                        snapshot.color[2],
+                        0.9,
+                    ),
+                    layer=int(self.debug_layer) + 1,
+                )

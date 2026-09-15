@@ -875,18 +875,22 @@ class Game:
                 self.renderer.height,
             )
 
-            overlay.render(
-                interpolation
-            )
+            # Persistent notifications and other global overlay content are
+            # screen-space UI and must not be affected by world lighting or
+            # post-processing.
+            with self.renderer.overlay_scope():
+                overlay.render(
+                    interpolation
+                )
 
-            overlay.render_nodes(
-                self.renderer,
-                interpolation,
-            )
+                overlay.render_nodes(
+                    self.renderer,
+                    interpolation,
+                )
 
-            overlay.ui.render(
-                self.renderer
-            )
+                overlay.ui.render(
+                    self.renderer
+                )
 
     # ==========================================================
     # SCENE RENDERING
@@ -937,9 +941,12 @@ class Game:
             interpolation,
         )
 
-        scene.ui.render(
-            self.renderer
-        )
+        # Scene UI is screen-space content. Queue it into the overlay phase so
+        # fullscreen lighting/post effects only touch world rendering.
+        with self.renderer.overlay_scope():
+            scene.ui.render(
+                self.renderer
+            )
 
     # ==========================================================
     # WINDOW

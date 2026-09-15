@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import contextmanager
 
 from nexora.rendering.camera import Camera
 from nexora.rendering.gpu.render_snapshot import RenderSnapshot
@@ -276,6 +277,8 @@ class GPURenderer:
         ] = []
 
         self._submission_index = 0
+        self._render_command_phases: list[str] = []
+        self._render_phase = "world"
 
         # ======================================================
         # Clipping
@@ -329,6 +332,35 @@ class GPURenderer:
         self,
     ) -> PostProcess:
         return self.post_processor
+
+    # ==========================================================
+    # Render phases
+    # ==========================================================
+
+    @property
+    def render_phase(self) -> str:
+        return getattr(self, "_render_phase", "world")
+
+    def set_render_phase(self, phase: str) -> None:
+        phase = str(phase).strip().lower()
+        if phase not in {"world", "overlay"}:
+            raise ValueError("render phase must be 'world' or 'overlay'")
+        self._render_phase = phase
+
+    @contextmanager
+    def render_phase_scope(self, phase: str):
+        previous = self.render_phase
+        self.set_render_phase(phase)
+        try:
+            yield self
+        finally:
+            self.set_render_phase(previous)
+
+    def overlay_scope(self):
+        return self.render_phase_scope("overlay")
+
+    def world_scope(self):
+        return self.render_phase_scope("world")
 
     # ==========================================================
     # Clipping
@@ -523,7 +555,9 @@ class GPURenderer:
         self._clip_stack.clear()
 
         self._render_commands.clear()
+        self._render_command_phases.clear()
         self._submission_index = 0
+        self._render_phase = "world"
 
         # ------------------------------------------------------
         # Begin batches
@@ -651,7 +685,12 @@ class GPURenderer:
 
         try:
             self._draw_scene(
-                render_pass
+                render_pass,
+                phase="world",
+            )
+            self._draw_scene(
+                render_pass,
+                phase="overlay",
             )
 
         finally:
@@ -713,7 +752,8 @@ class GPURenderer:
 
         try:
             self._draw_scene(
-                scene_pass
+                scene_pass,
+                phase="world",
             )
 
         finally:
@@ -742,6 +782,14 @@ class GPURenderer:
             self.post_processor.draw(
                 post_pass,
                 command_buffer,
+            )
+
+            # UI/debug/console are intentionally rendered AFTER the
+            # fullscreen post-process pass so lighting, shadows and other
+            # world effects never modify screen-space overlays.
+            self._draw_scene(
+                post_pass,
+                phase="overlay",
             )
 
         finally:
@@ -776,6 +824,15 @@ class GPURenderer:
             )
         )
 
+        # Keep phase data parallel to _render_commands so the public/internal
+        # command tuple layout stays backwards-compatible with existing tests
+        # and tooling.
+        phases = getattr(self, "_render_command_phases", None)
+        if phases is None:
+            phases = []
+            self._render_command_phases = phases
+        phases.append(getattr(self, "_render_phase", "world"))
+
         self._submission_index += 1
 
     # ==========================================================
@@ -785,6 +842,8 @@ class GPURenderer:
     def _draw_scene(
         self,
         render_pass,
+        *,
+        phase: str | None = None,
     ) -> None:
         """
         Draw all ordered render commands.
@@ -795,19 +854,31 @@ class GPURenderer:
             2. original submission order
         """
 
-        for (
-            _layer,
-            _submission_index,
-            kind,
-            start,
-            count,
-        ) in sorted(
-            self._render_commands,
-            key=lambda command: (
-                command[0],
-                command[1],
+        commands = list(self._render_commands)
+        phases = list(getattr(self, "_render_command_phases", ()))
+        if len(phases) != len(commands):
+            phases = ["world"] * len(commands)
+
+        ordered = sorted(
+            zip(commands, phases),
+            key=lambda item: (
+                item[0][0],
+                item[0][1],
             ),
-        ):
+        )
+
+        for (
+            (
+                _layer,
+                _submission_index,
+                kind,
+                start,
+                count,
+            ),
+            command_phase,
+        ) in ordered:
+            if phase is not None and command_phase != phase:
+                continue
             if kind == "sprite":
                 self.sprite_batch.draw_range(
                     render_pass,
@@ -882,7 +953,9 @@ class GPURenderer:
         self._clip_stack.clear()
 
         self._render_commands.clear()
+        self._render_command_phases.clear()
         self._submission_index = 0
+        self._render_phase = "world"
 
         # ------------------------------------------------------
         # Sprite batch

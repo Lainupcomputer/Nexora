@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import time
 
 import sdl3
@@ -125,8 +126,6 @@ class GameLoop:
 
         self.running = True
 
-        # Reset timing here so time spent between creating the
-        # engine and actually starting the loop is ignored.
         self.time.reset()
 
         try:
@@ -142,15 +141,13 @@ class GameLoop:
                 self.time.begin_frame()
 
                 # --------------------------------------------------
-                # SDL3 events
+                # SDL events
                 # --------------------------------------------------
 
                 events = list(
                     self.gpu_context.poll_events()
                 )
 
-                # InputManager receives the full SDL event stream
-                # before game logic is updated.
                 self.input.begin_frame(
                     events
                 )
@@ -178,14 +175,29 @@ class GameLoop:
                 )
 
                 # --------------------------------------------------
-                # Global engine input
+                # Render scope helper
                 # --------------------------------------------------
                 #
-                # This runs ONCE per frame.
+                # Real Renderer has overlay_scope().
                 #
-                # Do not place this inside the SDL event loop,
-                # otherwise debug actions may toggle multiple times
-                # in one frame when multiple events are received.
+                # Lightweight test renderers may not implement it.
+                # In that case nullcontext() keeps the old behavior.
+                # --------------------------------------------------
+
+                def overlay_scope():
+                    factory = getattr(
+                        self.renderer,
+                        "overlay_scope",
+                        None,
+                    )
+
+                    if factory is None:
+                        return nullcontext()
+
+                    return factory()
+
+                # --------------------------------------------------
+                # Global engine input
                 # --------------------------------------------------
 
                 if (
@@ -228,13 +240,6 @@ class GameLoop:
                 # --------------------------------------------------
                 # Debug console update
                 # --------------------------------------------------
-                #
-                # Console editing/navigation is processed once per
-                # frame after global actions.
-                #
-                # The console is optional here so lightweight engine
-                # test doubles do not need to implement it.
-                # --------------------------------------------------
 
                 if console is not None:
                     console.update(
@@ -242,11 +247,7 @@ class GameLoop:
                     )
 
                 # --------------------------------------------------
-                # Debug metrics
-                # --------------------------------------------------
-                #
-                # Use unscaled time so debug metrics continue to
-                # update correctly even when time_scale is 0.
+                # Debug overlay update
                 # --------------------------------------------------
 
                 if debug_overlay is not None:
@@ -342,28 +343,22 @@ class GameLoop:
                         # ------------------------------------------
                         # Global debug overlay
                         # ------------------------------------------
-                        #
-                        # Render after the game so debug information
-                        # stays above Scene and UI content.
-                        # ------------------------------------------
 
                         if debug_overlay is not None:
-                            debug_overlay.render(
-                                self.renderer
-                            )
+                            with overlay_scope():
+                                debug_overlay.render(
+                                    self.renderer
+                                )
 
                         # ------------------------------------------
                         # Global debug console
                         # ------------------------------------------
-                        #
-                        # Render last so the console always remains
-                        # above scenes, UI and the debug overlay.
-                        # ------------------------------------------
 
                         if console is not None:
-                            console.render(
-                                self.renderer
-                            )
+                            with overlay_scope():
+                                console.render(
+                                    self.renderer
+                                )
 
                     finally:
                         self.renderer.end_frame()
