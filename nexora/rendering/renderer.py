@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from nexora.rendering.camera import Camera
 from nexora.rendering.gpu.renderer import GPURenderer
 
@@ -21,12 +23,16 @@ class Renderer:
         - camera
         - post-processing
         - GPU frame submission
+
+    Shader binaries are loaded from the shader directory
+    supplied by the engine.
     """
 
     def __init__(
         self,
         context,
         *,
+        shader_dir: str | Path,
         max_sprites: int = 10000,
         max_shapes: int | None = None,
         max_lines: int | None = None,
@@ -36,8 +42,21 @@ class Renderer:
     ) -> None:
         self.context = context
 
+        # ======================================================
+        # Shader directory
+        # ======================================================
+
+        self.shader_dir = Path(
+            shader_dir
+        ).expanduser().resolve()
+
+        # ======================================================
+        # GPU renderer
+        # ======================================================
+
         self.gpu = GPURenderer(
             context,
+            shader_dir=self.shader_dir,
             max_sprites=max_sprites,
             max_shapes=max_shapes,
             max_lines=max_lines,

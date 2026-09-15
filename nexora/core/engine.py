@@ -166,6 +166,12 @@ class Engine:
         self.paths.ensure()
 
         # ======================================================
+        # Deploy compiled shaders
+        # ======================================================
+
+        self.paths.deploy_shaders()
+
+        # ======================================================
         # Core services
         # ======================================================
 
@@ -433,11 +439,17 @@ class Engine:
         self.renderer = (
             Renderer(
                 self.gpu_context,
+
+                shader_dir=(
+                    self.paths.shader_bin
+                ),
+
                 font=(
                     self.default_font
                 ),
             )
         )
+
 
         # ======================================================
         # Post processing

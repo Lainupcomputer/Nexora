@@ -36,6 +36,9 @@ class GPURenderer:
         - frame rendering
         - camera reference
 
+    Shader binaries are loaded from the shader directory
+    supplied by the engine.
+
     Public drawing API:
         - sprite()
         - sprites()
@@ -63,6 +66,7 @@ class GPURenderer:
         self,
         context,
         *,
+        shader_dir: str | Path,
         max_sprites: int = 10000,
         max_shapes: int | None = None,
         max_lines: int | None = None,
@@ -71,6 +75,20 @@ class GPURenderer:
         font=None,
     ) -> None:
         self.context = context
+
+        # ======================================================
+        # Shader directory
+        # ======================================================
+
+        self.shader_dir = Path(
+            shader_dir
+        ).expanduser().resolve()
+
+        if not self.shader_dir.is_dir():
+            raise FileNotFoundError(
+                "Shader directory does not exist: "
+                f"{self.shader_dir}"
+            )
 
         # ======================================================
         # Camera
@@ -93,16 +111,6 @@ class GPURenderer:
             max_lines = max_sprites
 
         # ======================================================
-        # Shader directory
-        # ======================================================
-
-        shader_dir = (
-            Path(__file__).resolve().parent.parent
-            / "shaders"
-            / "bin"
-        )
-
-        # ======================================================
         # SPRITES
         # ======================================================
 
@@ -110,11 +118,11 @@ class GPURenderer:
             context,
             max_sprites=max_sprites,
             vertex_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "sprite.vert.spv"
             ),
             fragment_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "sprite.frag.spv"
             ),
             camera=self.camera,
@@ -129,11 +137,11 @@ class GPURenderer:
             context,
             max_rects=max_sprites,
             vertex_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "rect.vert.spv"
             ),
             fragment_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "rect.frag.spv"
             ),
             camera=self.camera,
@@ -147,11 +155,11 @@ class GPURenderer:
             context,
             max_lines=max_lines,
             vertex_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "line.vert.spv"
             ),
             fragment_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "line.frag.spv"
             ),
             camera=self.camera,
@@ -165,19 +173,19 @@ class GPURenderer:
             context,
             max_shapes=max_shapes,
             vertex_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "shape.vert.spv"
             ),
             fragment_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "shape.frag.spv"
             ),
             geometry_vertex_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "geometry.vert.spv"
             ),
             geometry_fragment_shader_path=(
-                shader_dir
+                self.shader_dir
                 / "geometry.frag.spv"
             ),
             camera=self.camera,
