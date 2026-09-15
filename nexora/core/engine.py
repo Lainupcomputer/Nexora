@@ -33,6 +33,10 @@ from nexora.rendering import (
     Renderer,
 )
 
+from nexora.rendering.shaders import (
+    ShaderCompiler,
+)
+
 from nexora.rendering.gpu import (
     GPUContext,
     WindowMode,
@@ -170,18 +174,40 @@ class Engine:
         self.paths.ensure()
 
         # ======================================================
-        # Deploy compiled shaders
-        # ======================================================
-
-        self.paths.deploy_shaders()
-
-        # ======================================================
         # Core services
         # ======================================================
 
         self.logger = (
             Logger()
         )
+
+        # ======================================================
+        # Shader compilation
+        # ======================================================
+        #
+        # HLSL sources live inside Nexora, but SPIR-V binaries are
+        # compiled directly into this project's Documents runtime
+        # directory. No nexora/shaders/bin -> Documents copy step.
+        # ======================================================
+
+        shader_build = ShaderCompiler(
+            source_dir=(
+                self.paths.shader_source_dir
+            ),
+            output_dir=(
+                self.paths.shader_bin
+            ),
+            dxc_path=(
+                self.paths.shader_compiler
+            ),
+        ).compile_all()
+
+        if shader_build.built_count:
+            self.logger.info(
+                "Compiled "
+                f"{shader_build.built_count} shader(s) "
+                f"to {self.paths.shader_bin}"
+            )
 
         self.assets = (
             AssetManager()

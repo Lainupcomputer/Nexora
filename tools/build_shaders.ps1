@@ -1,4 +1,6 @@
 param(
+    [Parameter(Mandatory=$true)]
+    [string]$ProjectName,
     [switch]$Clean,
     [switch]$Force
 )
@@ -17,9 +19,13 @@ $ShaderDir = Join-Path `
     $Root `
     "nexora\rendering\shaders"
 
+$Documents = [Environment]::GetFolderPath(
+    [Environment+SpecialFolder]::MyDocuments
+)
+
 $OutputDir = Join-Path `
-    $ShaderDir `
-    "bin"
+    $Documents `
+    "$ProjectName\shaders\bin"
 
 $DXC = Join-Path `
     $Root `
@@ -42,6 +48,10 @@ Write-Host ""
 
 Write-Host "Shader source:"
 Write-Host "  $ShaderDir"
+Write-Host ""
+
+Write-Host "Project name:"
+Write-Host "  $ProjectName"
 Write-Host ""
 
 Write-Host "Shader output:"
