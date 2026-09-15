@@ -156,38 +156,90 @@ class GameLoop:
                 )
 
                 # --------------------------------------------------
+                # Optional engine services
+                # --------------------------------------------------
+
+                console = getattr(
+                    self.engine,
+                    "console",
+                    None,
+                )
+
+                debug_overlay = getattr(
+                    self.engine,
+                    "debug_overlay",
+                    None,
+                )
+
+                action_pressed = getattr(
+                    self.input,
+                    "action_pressed",
+                    None,
+                )
+
+                # --------------------------------------------------
                 # Global engine input
                 # --------------------------------------------------
                 #
                 # This runs ONCE per frame.
                 #
                 # Do not place this inside the SDL event loop,
-                # otherwise F3 may toggle multiple times in one
-                # frame when multiple events are received.
+                # otherwise debug actions may toggle multiple times
+                # in one frame when multiple events are received.
                 # --------------------------------------------------
 
                 if (
-                    self.input.action_pressed.debug_console
+                    console is not None
+                    and getattr(
+                        action_pressed,
+                        "debug_console",
+                        False,
+                    )
                 ):
-                    self.engine.console.toggle()
+                    console.toggle()
 
                 if (
-                    self.input.action_pressed.debug_overlay
+                    debug_overlay is not None
+                    and getattr(
+                        action_pressed,
+                        "debug_overlay",
+                        False,
+                    )
                 ):
-                    self.engine.debug_overlay.toggle()
+                    debug_overlay.toggle()
 
                 if (
-                    self.input.action_pressed.physics_debug
+                    debug_overlay is not None
+                    and getattr(
+                        action_pressed,
+                        "physics_debug",
+                        False,
+                    )
                 ):
-                    self.engine.debug_overlay.physics.toggle()
+                    physics_debug = getattr(
+                        debug_overlay,
+                        "physics",
+                        None,
+                    )
 
-                # Debug console editing/navigation is processed once
-                # per frame after global actions. This keeps the open
-                # action configurable while console-internal keys stay
-                # fixed.
-                self.engine.console.update(
-                    self.time.unscaled_delta_time
-                )
+                    if physics_debug is not None:
+                        physics_debug.toggle()
+
+                # --------------------------------------------------
+                # Debug console update
+                # --------------------------------------------------
+                #
+                # Console editing/navigation is processed once per
+                # frame after global actions.
+                #
+                # The console is optional here so lightweight engine
+                # test doubles do not need to implement it.
+                # --------------------------------------------------
+
+                if console is not None:
+                    console.update(
+                        self.time.unscaled_delta_time
+                    )
 
                 # --------------------------------------------------
                 # Debug metrics
@@ -197,9 +249,10 @@ class GameLoop:
                 # update correctly even when time_scale is 0.
                 # --------------------------------------------------
 
-                self.engine.debug_overlay.update(
-                    self.time.unscaled_delta_time
-                )
+                if debug_overlay is not None:
+                    debug_overlay.update(
+                        self.time.unscaled_delta_time
+                    )
 
                 # --------------------------------------------------
                 # Engine + game event handling
@@ -214,8 +267,11 @@ class GameLoop:
                     if not self.running:
                         break
 
-                    if self.engine.console.consumes_event(
-                        event
+                    if (
+                        console is not None
+                        and console.consumes_event(
+                            event
+                        )
                     ):
                         continue
 
@@ -228,7 +284,9 @@ class GameLoop:
                 # --------------------------------------------------
 
                 if not self.running:
-                    self.engine.console.end_frame()
+                    if console is not None:
+                        console.end_frame()
+
                     self.input.end_frame()
                     break
 
@@ -255,7 +313,9 @@ class GameLoop:
                         break
 
                 if not self.running:
-                    self.engine.console.end_frame()
+                    if console is not None:
+                        console.end_frame()
+
                     self.input.end_frame()
                     break
 
@@ -283,25 +343,27 @@ class GameLoop:
                         # Global debug overlay
                         # ------------------------------------------
                         #
-                        # Render last so the debug information is
-                        # always above Scene and UI content.
+                        # Render after the game so debug information
+                        # stays above Scene and UI content.
                         # ------------------------------------------
 
-                        self.engine.debug_overlay.render(
-                            self.renderer
-                        )
+                        if debug_overlay is not None:
+                            debug_overlay.render(
+                                self.renderer
+                            )
 
                         # ------------------------------------------
                         # Global debug console
                         # ------------------------------------------
                         #
                         # Render last so the console always remains
-                        # above scenes, UI and the F3 overlay.
+                        # above scenes, UI and the debug overlay.
                         # ------------------------------------------
 
-                        self.engine.console.render(
-                            self.renderer
-                        )
+                        if console is not None:
+                            console.render(
+                                self.renderer
+                            )
 
                     finally:
                         self.renderer.end_frame()
@@ -310,7 +372,9 @@ class GameLoop:
                 # End input frame
                 # --------------------------------------------------
 
-                self.engine.console.end_frame()
+                if console is not None:
+                    console.end_frame()
+
                 self.input.end_frame()
 
                 # --------------------------------------------------

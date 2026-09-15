@@ -437,6 +437,17 @@ class Game:
         )
 
         # ======================================================
+        # Activate global overlay
+        #
+        # Scene has no activate() method. enter() is the lifecycle
+        # API that switches the scene from CREATED to ACTIVE.
+        # The overlay is not owned by SceneManager, so Game must
+        # enter it explicitly.
+        # ======================================================
+
+        overlay_scene.enter()
+
+        # ======================================================
         # Store
         # ======================================================
 

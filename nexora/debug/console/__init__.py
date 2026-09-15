@@ -7,6 +7,7 @@ from nexora.debug.console.console import (
     ConsoleLine,
     DebugConsole,
 )
+from nexora.debug.console.log_bridge import ConsoleLogBridge
 from nexora.debug.console.registry import CommandRegistry
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "ConsoleLevel",
     "ConsoleLine",
     "DebugConsole",
+    "ConsoleLogBridge",
 ]

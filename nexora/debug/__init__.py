@@ -1,4 +1,4 @@
-from nexora.debug.logger import Logger
+from nexora.debug.logger import LogEvent, LogLevel, Logger
 
 from nexora.debug.console import (
     CommandContext,
@@ -7,6 +7,7 @@ from nexora.debug.console import (
     ConsoleLevel,
     ConsoleLine,
     DebugConsole,
+    ConsoleLogBridge,
 )
 
 from nexora.debug.metrics import (
@@ -26,6 +27,8 @@ from nexora.debug.physics import (
 
 __all__ = [
     "Logger",
+    "LogEvent",
+    "LogLevel",
 
     "CommandContext",
     "CommandRegistry",
@@ -33,6 +36,7 @@ __all__ = [
     "ConsoleLevel",
     "ConsoleLine",
     "DebugConsole",
+    "ConsoleLogBridge",
 
     "DebugMetrics",
     "DebugSnapshot",

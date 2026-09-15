@@ -9,6 +9,7 @@ from typing import Iterable
 from nexora.debug.console.autocomplete import AutocompleteEngine
 from nexora.debug.console.command import CommandContext
 from nexora.debug.console.history import CommandHistory
+from nexora.debug.console.log_bridge import ConsoleLogBridge
 from nexora.debug.console.parser import parse_command
 from nexora.debug.console.registry import CommandRegistry
 from nexora.debug.console.renderer import DebugConsoleRenderer
@@ -68,6 +69,9 @@ class DebugConsole:
         self._last_blink = time.monotonic()
         self.cursor_visible = True
         self._release_capture_after_frame = False
+
+        self._log_bridge = ConsoleLogBridge(self, engine)
+        self._log_bridge.attach()
 
         self._register_builtin_commands()
 
@@ -177,8 +181,62 @@ class DebugConsole:
     def warning(self, text: object) -> None:
         self._append(text, ConsoleLevel.WARNING)
 
-    def error(self, text: object) -> None:
+    def error(
+        self,
+        text: object,
+        *,
+        title: str = "Engine Error",
+        duration: float = 6.0,
+    ) -> None:
         self._append(text, ConsoleLevel.ERROR)
+        self._notify_error(
+            text,
+            title=title,
+            duration=duration,
+        )
+
+    def _notify_error(
+        self,
+        text: object,
+        *,
+        title: str = "Engine Error",
+        duration: float = 6.0,
+    ) -> None:
+        """Mirror console errors to the global notification overlay.
+
+        The notification overlay is owned by Game and may not exist yet
+        during very early engine startup or shutdown. In that case the
+        console error is still kept, but no toast is attempted.
+        """
+        game = getattr(self.engine, "game", None)
+        if game is None:
+            return
+
+        # Real Game exposes ``notifications`` as a property once the
+        # global overlay is initialized. Tests and very early startup may
+        # only have the backing ``_notifications`` attribute. Support both.
+        try:
+            notifications = game.notifications
+        except (AttributeError, RuntimeError):
+            notifications = getattr(
+                game,
+                "_notifications",
+                None,
+            )
+
+        if notifications is None:
+            return
+
+        try:
+            notifications.error(
+                str(text),
+                title=title,
+                duration=duration,
+            )
+        except Exception:
+            # A notification failure must never break the debug console
+            # or recurse back into the logger.
+            pass
 
     # ==========================================================
     # Commands
@@ -228,7 +286,15 @@ class DebugConsole:
         try:
             result = command.handler(context)
         except Exception as exc:
-            self.error(f"{command.name}: {type(exc).__name__}: {exc}")
+            message = (
+                f"Console command '{command.name}' failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            logger = getattr(self.engine, "logger", None)
+            if logger is not None:
+                logger.error(message)
+            else:
+                self.error(message)
             return False
 
         if result is not None:
@@ -488,6 +554,8 @@ class DebugConsole:
             self._write_node_tree(child, depth + 1)
 
     def shutdown(self) -> None:
+        self._log_bridge.detach()
+
         if self._open:
             self.close(
                 defer_capture_release=False
