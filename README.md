@@ -1,4 +1,8 @@
 # Nexora Engine
+[![Tests](https://github.com/Lainupcomputer/Nexora/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Lainupcomputer/Nexora/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white)
+![Runtime](https://img.shields.io/badge/Runtime-Free--Threading-blueviolet)
+![Status](https://img.shields.io/badge/Status-Early%20Development-orange)
 
 **Nexora Engine** is a modern 2D game engine for Python, built on **SDL3** and **SDL_GPU** and designed for **Python 3.13 free-threading / No-GIL**.
 
