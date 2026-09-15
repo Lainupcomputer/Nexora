@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator
 
 from nexora.tilemap.tile_layer import TileLayer
+from nexora.tilemap.projection import TileProjection
 
 
 class TileMap:
@@ -28,6 +30,7 @@ class TileMap:
         tile_width: int,
         tile_height: int,
         name: str = "",
+        projection: TileProjection | str = TileProjection.ORTHOGONAL,
     ) -> None:
         width = int(
             width
@@ -72,6 +75,7 @@ class TileMap:
 
         self.tile_width = tile_width
         self.tile_height = tile_height
+        self.projection = TileProjection.coerce(projection)
 
         self._layers: list[
             TileLayer
@@ -114,19 +118,17 @@ class TileMap:
     def pixel_width(
         self,
     ) -> int:
-        return (
-            self.width
-            * self.tile_width
-        )
+        if self.projection is TileProjection.ISOMETRIC:
+            return int((self.width + self.height) * self.tile_width / 2.0)
+        return self.width * self.tile_width
 
     @property
     def pixel_height(
         self,
     ) -> int:
-        return (
-            self.height
-            * self.tile_height
-        )
+        if self.projection is TileProjection.ISOMETRIC:
+            return int((self.width + self.height) * self.tile_height / 2.0)
+        return self.height * self.tile_height
 
     @property
     def pixel_size(
@@ -191,6 +193,8 @@ class TileMap:
         enabled: bool = True,
         opacity: float = 1.0,
         index: int | None = None,
+        render_layer: int = 0,
+        y_sort: bool | None = None,
     ) -> TileLayer:
         """
         Create and add a layer matching the TileMap dimensions.
@@ -203,6 +207,8 @@ class TileMap:
             visible=visible,
             enabled=enabled,
             opacity=opacity,
+            render_layer=render_layer,
+            y_sort=(self.projection is TileProjection.ISOMETRIC if y_sort is None else y_sort),
         )
 
         self.add_layer(
@@ -551,69 +557,84 @@ class TileMap:
         self,
         x: int,
         y: int,
-    ) -> tuple[
-        float,
-        float,
-    ]:
-        """
-        Convert tile coordinates to the center position of the tile
-        in local map/world space.
-
-        Nexora sprite coordinates represent sprite centers, therefore
-        returning the tile center makes later rendering simpler.
-        """
-
-        x = int(
-            x
-        )
-
-        y = int(
-            y
-        )
-
-        if not self.contains(
-            x,
-            y,
-        ):
+    ) -> tuple[float, float]:
+        """Convert tile coordinates to the tile center in local map space."""
+        x = int(x)
+        y = int(y)
+        if not self.contains(x, y):
             raise IndexError(
                 f"Tile coordinate ({x}, {y}) is outside "
                 f"TileMap size {self.width}x{self.height}."
             )
 
-        return (
-            x * self.tile_width
-            + self.tile_width / 2.0,
+        if self.projection is TileProjection.ISOMETRIC:
+            half_w = self.tile_width / 2.0
+            half_h = self.tile_height / 2.0
+            # Offset X so the complete diamond starts at local x=0.
+            origin_x = self.height * half_w
+            return (
+                origin_x + (x - y) * half_w,
+                (x + y) * half_h + half_h,
+            )
 
-            y * self.tile_height
-            + self.tile_height / 2.0,
+        return (
+            x * self.tile_width + self.tile_width / 2.0,
+            y * self.tile_height + self.tile_height / 2.0,
         )
 
     def world_to_tile(
         self,
         x: float,
         y: float,
-    ) -> tuple[
-        int,
-        int,
-    ]:
-        """
-        Convert local map/world coordinates to tile coordinates.
+    ) -> tuple[int, int]:
+        """Convert local map coordinates to tile coordinates."""
+        x = float(x)
+        y = float(y)
 
-        Coordinates outside the map are allowed here; the resulting
-        tile coordinates can be checked with contains().
-        """
+        if self.projection is TileProjection.ISOMETRIC:
+            half_w = self.tile_width / 2.0
+            half_h = self.tile_height / 2.0
+            origin_x = self.height * half_w
+            dx = (x - origin_x) / half_w
+            dy = (y - half_h) / half_h
+            return (
+                int(math.floor((dy + dx) / 2.0)),
+                int(math.floor((dy - dx) / 2.0)),
+            )
 
         return (
-            int(
-                float(x)
-                // self.tile_width
-            ),
-
-            int(
-                float(y)
-                // self.tile_height
-            ),
+            int(x // self.tile_width),
+            int(y // self.tile_height),
         )
+
+    # ==============================================================
+    # Serialization
+    # ==============================================================
+
+    def to_state(self) -> dict:
+        return {
+            "name": self.name,
+            "width": self.width,
+            "height": self.height,
+            "tile_width": self.tile_width,
+            "tile_height": self.tile_height,
+            "projection": self.projection.value,
+            "layers": [layer.to_state() for layer in self._layers],
+        }
+
+    @classmethod
+    def from_state(cls, state: dict) -> "TileMap":
+        tilemap = cls(
+            name=str(state.get("name", "")),
+            width=int(state["width"]),
+            height=int(state["height"]),
+            tile_width=int(state["tile_width"]),
+            tile_height=int(state["tile_height"]),
+            projection=state.get("projection", TileProjection.ORTHOGONAL.value),
+        )
+        for layer_state in state.get("layers", ()):
+            tilemap.add_layer(TileLayer.from_state(dict(layer_state)))
+        return tilemap
 
     # ==============================================================
     # Iteration

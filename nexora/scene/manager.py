@@ -571,6 +571,63 @@ class SceneManager:
     def serialized_names(self) -> tuple[str, ...]:
         return tuple(self._serialized_registrations.keys())
 
+    def resolve_serialized_scene_name(
+        self,
+        reference: str | Path,
+    ) -> str:
+        """Resolve a serialized scene name from a name or .nxscene path.
+
+        Exact registered names win. Path references are matched against the
+        registered SerializedSceneRegistration paths. A basename-only match is
+        accepted when it is unique.
+        """
+
+        raw = str(reference).strip()
+        if not raw:
+            raise ValueError("Serialized scene reference cannot be empty.")
+
+        if raw in self._serialized_registrations:
+            return raw
+
+        candidate_path = Path(raw).expanduser()
+        try:
+            resolved_path = candidate_path.resolve()
+        except OSError:
+            resolved_path = candidate_path
+
+        exact_matches: list[str] = []
+        basename_matches: list[str] = []
+
+        for name, registration in self._serialized_registrations.items():
+            registered_path = registration.path
+
+            if registered_path == resolved_path:
+                exact_matches.append(name)
+                continue
+
+            if registered_path.name == candidate_path.name:
+                basename_matches.append(name)
+
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+
+        if len(exact_matches) > 1:
+            raise ValueError(
+                f"Serialized scene reference {raw!r} is ambiguous."
+            )
+
+        if len(basename_matches) == 1:
+            return basename_matches[0]
+
+        if len(basename_matches) > 1:
+            raise ValueError(
+                f"Serialized scene basename {candidate_path.name!r} is ambiguous."
+            )
+
+        raise KeyError(
+            f"No registered serialized scene matches {raw!r}."
+        )
+
     def load_serialized_registered(
         self,
         name: str,

@@ -52,6 +52,8 @@ class TileLayer:
         enabled: bool = True,
         opacity: float = 1.0,
         chunk_size: int = DEFAULT_CHUNK_SIZE,
+        render_layer: int = 0,
+        y_sort: bool = False,
     ) -> None:
         width = int(
             width
@@ -107,6 +109,9 @@ class TileLayer:
                 opacity
             )
         )
+
+        self.render_layer = int(render_layer)
+        self.y_sort = bool(y_sort)
 
         # ======================================================
         # Chunk grid
@@ -1001,3 +1006,52 @@ class TileLayer:
                 value
             )
         )
+    # ==============================================================
+    # Serialization
+    # ==============================================================
+
+    def to_state(self) -> dict:
+        return {
+            "name": self.name,
+            "width": self.width,
+            "height": self.height,
+            "visible": self.visible,
+            "enabled": self.enabled,
+            "opacity": self.opacity,
+            "chunk_size": self.chunk_size,
+            "render_layer": self.render_layer,
+            "y_sort": self.y_sort,
+            "tiles": list(self.tiles),
+        }
+
+    @classmethod
+    def from_state(cls, state: dict) -> "TileLayer":
+        layer = cls(
+            str(state["name"]),
+            width=int(state["width"]),
+            height=int(state["height"]),
+            visible=bool(state.get("visible", True)),
+            enabled=bool(state.get("enabled", True)),
+            opacity=float(state.get("opacity", 1.0)),
+
+            chunk_size=int(
+                state.get(
+                    "chunk_size",
+                    cls.DEFAULT_CHUNK_SIZE,
+                )
+            ),
+            render_layer=int(state.get("render_layer", 0)),
+            y_sort=bool(state.get("y_sort", False)),
+        )
+        tiles = list(state.get("tiles", ()))
+        if tiles:
+            if len(tiles) != layer.cell_count:
+                raise ValueError("Serialized TileLayer tile count does not match dimensions")
+            for index, tile_id in enumerate(tiles):
+                if int(tile_id) == EMPTY_TILE:
+                    continue
+                x = index % layer.width
+                y = index // layer.width
+                layer.set_tile(x, y, int(tile_id))
+        return layer
+

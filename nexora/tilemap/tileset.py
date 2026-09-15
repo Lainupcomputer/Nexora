@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from nexora.tilemap.tile_metadata import TileMetadata
+from nexora.tilemap.animation import TileAnimation
 
 
 @dataclass(
@@ -51,6 +52,7 @@ class TileSet:
         tile_width: int,
         tile_height: int,
         name: str = "",
+        texture_asset: str | None = None,
     ) -> None:
         columns = int(
             columns
@@ -95,11 +97,14 @@ class TileSet:
 
         self.tile_width = tile_width
         self.tile_height = tile_height
+        self.texture_asset = None if texture_asset is None else str(texture_asset)
 
         self._metadata: dict[
             int,
             TileMetadata,
         ] = {}
+
+        self._animations: dict[int, TileAnimation] = {}
 
     # ==============================================================
     # Dimensions
@@ -548,3 +553,87 @@ class TileSet:
         return metadata.has_tag(
             tag
         )
+
+    # ==============================================================
+    # Tile animations
+    # ==============================================================
+
+    def set_animation(self, index: int, animation: TileAnimation) -> None:
+        index = self._validate_index(index)
+        if not isinstance(animation, TileAnimation):
+            raise TypeError("animation must be a TileAnimation")
+        for frame in animation.frames:
+            self._validate_index(frame.tile_id)
+        self._animations[index] = animation
+
+    def remove_animation(self, index: int) -> TileAnimation | None:
+        return self._animations.pop(self._validate_index(index), None)
+
+    def get_animation(self, index: int) -> TileAnimation | None:
+        return self._animations.get(self._validate_index(index))
+
+    def resolve_tile(self, index: int, elapsed: float = 0.0) -> int:
+        index = self._validate_index(index)
+        animation = self._animations.get(index)
+        if animation is None:
+            return index
+        return animation.tile_at(elapsed)
+
+    # ==============================================================
+    # Asset / serialization helpers
+    # ==============================================================
+
+    def load_texture(self, assets, *, force_reload: bool = False):
+        if not self.texture_asset:
+            raise RuntimeError("TileSet has no texture_asset configured")
+        return assets.texture(self.texture_asset, force_reload=force_reload)
+
+    def to_state(self) -> dict:
+        metadata = {}
+        for index, item in self._metadata.items():
+            metadata[int(index)] = {
+                "solid": bool(item.solid),
+                "tags": sorted(item.tags),
+                "properties": dict(item.properties),
+            }
+        return {
+            "name": self.name,
+            "columns": self.columns,
+            "rows": self.rows,
+            "tile_width": self.tile_width,
+            "tile_height": self.tile_height,
+            "texture_asset": self.texture_asset,
+            "metadata": metadata,
+            "animations": {
+                int(index): animation.to_state()
+                for index, animation in self._animations.items()
+            },
+        }
+
+    @classmethod
+    def from_state(cls, state: dict) -> "TileSet":
+        tileset = cls(
+            name=str(state.get("name", "")),
+            columns=int(state["columns"]),
+            rows=int(state["rows"]),
+            tile_width=int(state["tile_width"]),
+            tile_height=int(state["tile_height"]),
+            texture_asset=state.get("texture_asset"),
+        )
+        for raw_index, raw_meta in dict(state.get("metadata", {})).items():
+            index = int(raw_index)
+            data = dict(raw_meta)
+            tileset.set_metadata(
+                index,
+                TileMetadata(
+                    solid=bool(data.get("solid", False)),
+                    tags=set(data.get("tags", ())),
+                    properties=dict(data.get("properties", {})),
+                ),
+            )
+        for raw_index, raw_animation in dict(state.get("animations", {})).items():
+            tileset.set_animation(
+                int(raw_index),
+                TileAnimation.from_state(raw_animation),
+            )
+        return tileset
