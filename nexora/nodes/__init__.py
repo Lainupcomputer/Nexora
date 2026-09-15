@@ -18,6 +18,11 @@ from .entity import (
     Area2D,
 )
 
+
+from .effects import (
+    ParticleEmitter2D,
+)
+
 from .navigation import (
     NavigationAgent2D,
     NavigationObstacle2D,
@@ -78,6 +83,9 @@ __all__ = [
     "Vector2",
     "StaticBody2D",
     "Area2D",
+
+    # Effects
+    "ParticleEmitter2D",
 
     # Navigation
     "NavigationAgent2D",

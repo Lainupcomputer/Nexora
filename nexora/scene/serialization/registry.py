@@ -15,6 +15,8 @@ from nexora.nodes.navigation.navigation_agent_2d import NavigationAgent2D
 from nexora.nodes.navigation.navigation_obstacle_2d import NavigationObstacle2D
 from nexora.tilemap import TileMap, TileSet
 from nexora.animation import AnimationClip, AnimationEvent, AnimationFrame, AnimationPlayer
+from nexora.nodes.effects import ParticleEmitter2D
+from nexora.particles import ParticleConfig
 
 from .errors import UnregisteredNodeTypeError
 
@@ -406,6 +408,29 @@ class NodeFactoryRegistry:
             AnimationPlayer,
             dump_state=dump_animation_player,
             load_state=load_animation_player,
+        )
+
+
+        def dump_particle_emitter(node: ParticleEmitter2D) -> dict[str, Any]:
+            return {
+                "config": node.config.to_state(),
+                "emitting": bool(node.emitting),
+            }
+
+        def load_particle_emitter(
+            node: ParticleEmitter2D,
+            state: dict[str, Any],
+            context: dict[str, Any],
+        ) -> None:
+            del context
+            node.config = ParticleConfig.from_state(dict(state.get("config", {})))
+            node.emitting = bool(state.get("emitting", False))
+
+        self.register(
+            "ParticleEmitter2D",
+            ParticleEmitter2D,
+            dump_state=dump_particle_emitter,
+            load_state=load_particle_emitter,
         )
 
         def dump_tilemap_node(node: TileMapNode) -> dict[str, Any]:
