@@ -170,6 +170,8 @@ class PostProcess:
         self.ambient_intensity: float = 1.0
         self.lights: tuple = ()
         self.max_lights: int = 32
+        self.shadow_segments: tuple = ()
+        self.max_shadow_segments: int = 256
 
         # ======================================================
         # Render target
@@ -267,11 +269,13 @@ class PostProcess:
         ambient_color: tuple[float, float, float],
         ambient_intensity: float,
         lights,
+        shadow_segments=(),
     ) -> None:
         self.lighting_enabled = bool(enabled)
         self.ambient_color = tuple(float(v) for v in ambient_color[:3])
         self.ambient_intensity = max(0.0, float(ambient_intensity))
         self.lights = tuple(lights)[: self.max_lights]
+        self.shadow_segments = tuple(shadow_segments)[: self.max_shadow_segments]
 
     # ==========================================================
     # Pixelation
@@ -545,6 +549,45 @@ class PostProcess:
                 ))
             else:
                 values.extend((0.0, 0.0, 0.0, 1.0))
+
+        # Per-light shadow range and strength. shadow_start/count index the
+        # global shadow segment array below. softness is normalized.
+        for index in range(self.max_lights):
+            if index < len(self.lights):
+                light = self.lights[index]
+                values.extend((
+                    float(getattr(light, "shadow_start", 0)),
+                    float(getattr(light, "shadow_count", 0)),
+                    float(getattr(light, "shadow_strength", 0.0)),
+                    float(getattr(light, "shadow_softness", 0.0)),
+                ))
+            else:
+                values.extend((0.0, 0.0, 0.0, 0.0))
+
+        for index in range(self.max_lights):
+            if index < len(self.lights):
+                color = getattr(self.lights[index], "shadow_color", (0.0, 0.0, 0.0))
+                values.extend((
+                    float(color[0]),
+                    float(color[1]),
+                    float(color[2]),
+                    0.0,
+                ))
+            else:
+                values.extend((0.0, 0.0, 0.0, 0.0))
+
+        # xy = segment A, zw = segment B.
+        for index in range(self.max_shadow_segments):
+            if index < len(self.shadow_segments):
+                segment = self.shadow_segments[index]
+                values.extend((
+                    float(segment.ax),
+                    float(segment.ay),
+                    float(segment.bx),
+                    float(segment.by),
+                ))
+            else:
+                values.extend((0.0, 0.0, 0.0, 0.0))
 
         data = struct.pack(
             f"<{len(values)}f",

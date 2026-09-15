@@ -52,6 +52,18 @@ cbuffer PostProcessBuffer
     // xyz = light color
     // w = falloff exponent
     float4 light_color_falloff[32];
+
+    // x = shadow segment start
+    // y = shadow segment count
+    // z = shadow strength
+    // w = normalized softness
+    float4 light_shadow_range_strength_softness[32];
+
+    // xyz = shadow tint color
+    float4 light_shadow_color[32];
+
+    // xy = segment A, zw = segment B
+    float4 shadow_segments[256];
 };
 
 
@@ -169,6 +181,142 @@ float4 sample_chromatic(
 }
 
 
+float cross_2d(
+    float2 a,
+    float2 b
+)
+{
+    return a.x * b.y - a.y * b.x;
+}
+
+
+bool ray_hits_segment(
+    float2 ray_start,
+    float2 ray_end,
+    float2 segment_a,
+    float2 segment_b
+)
+{
+    float2 r = ray_end - ray_start;
+    float2 s = segment_b - segment_a;
+    float denominator = cross_2d(r, s);
+
+    if (abs(denominator) < 0.00001)
+    {
+        return false;
+    }
+
+    float2 delta = segment_a - ray_start;
+    float t = cross_2d(delta, s) / denominator;
+    float u = cross_2d(delta, r) / denominator;
+
+    // Epsilon prevents the light itself or the shaded pixel from counting
+    // as an occluder when they lie exactly on a segment.
+    return
+        t > 0.0005
+        && t < 0.9995
+        && u >= 0.0
+        && u <= 1.0;
+}
+
+
+float hard_shadow_visibility(
+    float2 light_position,
+    float2 pixel_position,
+    int segment_start,
+    int segment_count
+)
+{
+    [loop]
+    for (int offset = 0; offset < segment_count; ++offset)
+    {
+        int index = segment_start + offset;
+
+        if (index < 0 || index >= 256)
+        {
+            break;
+        }
+
+        float4 segment = shadow_segments[index];
+
+        if (
+            ray_hits_segment(
+                light_position,
+                pixel_position,
+                segment.xy,
+                segment.zw
+            )
+        )
+        {
+            return 0.0;
+        }
+    }
+
+    return 1.0;
+}
+
+
+float shadow_visibility(
+    float2 light_position,
+    float2 pixel_position,
+    float radius,
+    int segment_start,
+    int segment_count,
+    float softness
+)
+{
+    if (segment_count <= 0)
+    {
+        return 1.0;
+    }
+
+    float center = hard_shadow_visibility(
+        light_position,
+        pixel_position,
+        segment_start,
+        segment_count
+    );
+
+    if (softness <= 0.0001)
+    {
+        return center;
+    }
+
+    float2 direction = pixel_position - light_position;
+    float length_squared = dot(direction, direction);
+
+    if (length_squared <= 0.0001)
+    {
+        return 1.0;
+    }
+
+    float2 normal = normalize(float2(-direction.y, direction.x));
+
+    // softness is editor-friendly and normalized. Clamp the actual screen
+    // offset so large lights do not create excessively expensive/wide blur.
+    float sample_offset = min(
+        max(radius * softness * 0.12, 0.75),
+        24.0
+    );
+
+    float left = hard_shadow_visibility(
+        light_position + normal * sample_offset,
+        pixel_position,
+        segment_start,
+        segment_count
+    );
+
+    float right = hard_shadow_visibility(
+        light_position - normal * sample_offset,
+        pixel_position,
+        segment_start,
+        segment_count
+    );
+
+    return (left + center + right) / 3.0;
+}
+
+
 float3 apply_lighting(
     float3 base_color,
     float2 uv,
@@ -213,15 +361,53 @@ float3 apply_lighting(
             max(color_data.w, 0.01)
         );
 
-        light_factor +=
+        if (attenuation <= 0.00001)
+        {
+            continue;
+        }
+
+        float3 contribution =
             color_data.xyz
             * max(position_data.w, 0.0)
             * attenuation;
+
+        float4 shadow_settings =
+            light_shadow_range_strength_softness[index];
+
+        int segment_start = max((int)shadow_settings.x, 0);
+        int segment_count = max((int)shadow_settings.y, 0);
+        float shadow_strength = saturate(shadow_settings.z);
+        float shadow_softness = max(shadow_settings.w, 0.0);
+
+        if (segment_count > 0 && shadow_strength > 0.0001)
+        {
+            float visibility = shadow_visibility(
+                position_data.xy,
+                pixel_position,
+                radius,
+                segment_start,
+                segment_count,
+                shadow_softness
+            );
+
+            float shadow_amount =
+                (1.0 - visibility) * shadow_strength;
+
+            float3 shadow_tint =
+                saturate(light_shadow_color[index].xyz);
+
+            contribution *= lerp(
+                float3(1.0, 1.0, 1.0),
+                shadow_tint,
+                shadow_amount
+            );
+        }
+
+        light_factor += contribution;
     }
 
     return base_color * max(light_factor, 0.0);
 }
-
 
 float4 main(
     PSInput input

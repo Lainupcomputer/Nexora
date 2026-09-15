@@ -18,6 +18,12 @@ class LightSnapshot:
     falloff: float
     mask: int = 0xFFFFFFFF
 
+    cast_shadows: bool = False
+    shadow_strength: float = 1.0
+    shadow_softness: float = 0.0
+    shadow_color: Color3 = (0.0, 0.0, 0.0)
+    shadow_mask: int = 0xFFFFFFFF
+
     def __post_init__(self) -> None:
         if self.radius < 0.0:
             raise ValueError("Light radius cannot be negative")
@@ -27,3 +33,9 @@ class LightSnapshot:
             raise ValueError("Light falloff must be greater than zero")
         if len(self.color) != 3:
             raise ValueError("Light color must contain exactly three values")
+        if not 0.0 <= self.shadow_strength <= 1.0:
+            raise ValueError("Shadow strength must be between 0 and 1")
+        if self.shadow_softness < 0.0:
+            raise ValueError("Shadow softness cannot be negative")
+        if len(self.shadow_color) != 3:
+            raise ValueError("Shadow color must contain exactly three values")

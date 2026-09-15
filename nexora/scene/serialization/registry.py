@@ -15,7 +15,7 @@ from nexora.nodes.navigation.navigation_agent_2d import NavigationAgent2D
 from nexora.nodes.navigation.navigation_obstacle_2d import NavigationObstacle2D
 from nexora.tilemap import TileMap, TileSet
 from nexora.animation import AnimationClip, AnimationEvent, AnimationFrame, AnimationPlayer
-from nexora.nodes.effects import ParticleEmitter2D, Light2D
+from nexora.nodes.effects import ParticleEmitter2D, Light2D, LightOccluder2D
 from nexora.particles import ParticleConfig
 
 from .errors import UnregisteredNodeTypeError
@@ -441,6 +441,11 @@ class NodeFactoryRegistry:
                 "falloff": float(node.falloff),
                 "light_enabled": bool(node.light_enabled),
                 "light_mask": int(node.light_mask),
+                "cast_shadows": bool(node.cast_shadows),
+                "shadow_strength": float(node.shadow_strength),
+                "shadow_softness": float(node.shadow_softness),
+                "shadow_color": list(node.shadow_color),
+                "shadow_mask": int(node.shadow_mask),
                 "flicker_enabled": bool(node.flicker_enabled),
                 "flicker_strength": float(node.flicker_strength),
                 "flicker_speed": float(node.flicker_speed),
@@ -464,6 +469,12 @@ class NodeFactoryRegistry:
             node.falloff = float(state.get("falloff", 2.0))
             node.light_enabled = bool(state.get("light_enabled", True))
             node.light_mask = int(state.get("light_mask", 0xFFFFFFFF))
+            node.cast_shadows = bool(state.get("cast_shadows", False))
+            node.shadow_strength = float(state.get("shadow_strength", 1.0))
+            node.shadow_softness = float(state.get("shadow_softness", 0.0))
+            shadow_color = state.get("shadow_color", (0.0, 0.0, 0.0))
+            node.shadow_color = tuple(float(v) for v in shadow_color[:3])
+            node.shadow_mask = int(state.get("shadow_mask", 0xFFFFFFFF))
             node.flicker_enabled = bool(state.get("flicker_enabled", False))
             node.flicker_strength = float(state.get("flicker_strength", 0.12))
             node.flicker_speed = float(state.get("flicker_speed", 17.0))
@@ -478,6 +489,37 @@ class NodeFactoryRegistry:
             Light2D,
             dump_state=dump_light_2d,
             load_state=load_light_2d,
+        )
+
+        def dump_light_occluder_2d(node: LightOccluder2D) -> dict[str, Any]:
+            return {
+                "points": [list(point) for point in node.points],
+                "closed": bool(node.closed),
+                "occluder_enabled": bool(node.occluder_enabled),
+                "occluder_mask": int(node.occluder_mask),
+                "debug_draw": bool(node.debug_draw),
+                "debug_layer": int(node.debug_layer),
+            }
+
+        def load_light_occluder_2d(
+            node: LightOccluder2D,
+            state: dict[str, Any],
+            context: dict[str, Any],
+        ) -> None:
+            del context
+            points = state.get("points", ((-32.0, -32.0), (32.0, -32.0), (32.0, 32.0), (-32.0, 32.0)))
+            node.set_polygon(points)
+            node.closed = bool(state.get("closed", True))
+            node.occluder_enabled = bool(state.get("occluder_enabled", True))
+            node.occluder_mask = int(state.get("occluder_mask", 0xFFFFFFFF))
+            node.debug_draw = bool(state.get("debug_draw", False))
+            node.debug_layer = int(state.get("debug_layer", 100_010))
+
+        self.register(
+            "LightOccluder2D",
+            LightOccluder2D,
+            dump_state=dump_light_occluder_2d,
+            load_state=load_light_occluder_2d,
         )
 
         def dump_tilemap_node(node: TileMapNode) -> dict[str, Any]:

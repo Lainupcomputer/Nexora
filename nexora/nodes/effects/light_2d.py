@@ -24,6 +24,13 @@ class Light2D(Node):
         self.light_enabled = True
         self.light_mask = 0xFFFFFFFF
 
+        # Shadow settings. shadow_softness is normalized (0 = hard).
+        self.cast_shadows = False
+        self.shadow_strength = 1.0
+        self.shadow_softness = 0.0
+        self.shadow_color: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.shadow_mask = 0xFFFFFFFF
+
         # Optional procedural modulation. Values are deterministic so lights
         # remain stable/reproducible in tests and replays.
         self.flicker_enabled = False
@@ -80,6 +87,11 @@ class Light2D(Node):
             color=tuple(self._clamp01(v) for v in self.color),
             falloff=max(0.01, float(self.falloff)),
             mask=int(self.light_mask),
+            cast_shadows=bool(self.cast_shadows),
+            shadow_strength=self._clamp01(self.shadow_strength),
+            shadow_softness=max(0.0, float(self.shadow_softness)),
+            shadow_color=tuple(self._clamp01(v) for v in self.shadow_color),
+            shadow_mask=int(self.shadow_mask),
         )
 
     def render(self, renderer, interpolation: float) -> None:

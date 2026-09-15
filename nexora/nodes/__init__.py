@@ -22,6 +22,7 @@ from .entity import (
 from .effects import (
     ParticleEmitter2D,
     Light2D,
+    LightOccluder2D,
 )
 
 from .navigation import (
@@ -88,6 +89,7 @@ __all__ = [
     # Effects
     "ParticleEmitter2D",
     "Light2D",
+    "LightOccluder2D",
 
     # Navigation
     "NavigationAgent2D",
