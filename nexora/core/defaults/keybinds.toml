@@ -36,3 +36,6 @@ keyboard = ["f3"]
 
 [physics_debug]
 keyboard = ["f4"]
+
+[debug_console]
+keyboard = ["f10"]

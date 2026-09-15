@@ -135,6 +135,7 @@ class Game:
         self.input = None
         self.window = None
         self.graphics = None
+        self.console = None
 
         # ======================================================
         # Project

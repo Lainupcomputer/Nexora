@@ -1,5 +1,14 @@
 from nexora.debug.logger import Logger
 
+from nexora.debug.console import (
+    CommandContext,
+    CommandRegistry,
+    ConsoleCommand,
+    ConsoleLevel,
+    ConsoleLine,
+    DebugConsole,
+)
+
 from nexora.debug.metrics import (
     DebugMetrics,
     DebugSnapshot,
@@ -17,6 +26,13 @@ from nexora.debug.physics import (
 
 __all__ = [
     "Logger",
+
+    "CommandContext",
+    "CommandRegistry",
+    "ConsoleCommand",
+    "ConsoleLevel",
+    "ConsoleLine",
+    "DebugConsole",
 
     "DebugMetrics",
     "DebugSnapshot",

@@ -91,6 +91,7 @@ class InputManager:
         self._text_input_active = False
         self._text_input_started = False
         self._text_input_stopped = False
+        self._text_input_locks: set[int] = set()
 
         # ======================================================
         # Actions
@@ -105,6 +106,19 @@ class InputManager:
             str,
             list[Binding],
         ] = {}
+
+        # ======================================================
+        # Action capture
+        # ======================================================
+        #
+        # Global engine tools such as the debug console can
+        # temporarily suppress gameplay actions while still
+        # allowing a small engine-level allowlist.
+        # ======================================================
+
+        self._action_capture_active = False
+        self._action_capture_allowlist: set[str] = set()
+        self._captured_action_state = ActionState()
 
         # ======================================================
         # Layered TOML binding storage
@@ -812,8 +826,64 @@ class InputManager:
             state.released = released
 
     # ==========================================================
+    # ACTION CAPTURE
+    # ==========================================================
+
+    def set_action_capture(
+        self,
+        active: bool,
+        *,
+        allowed_actions: Iterable[str] = (),
+    ) -> None:
+        self._action_capture_active = bool(active)
+
+        if self._action_capture_active:
+            self._action_capture_allowlist = {
+                str(action)
+                for action in allowed_actions
+            }
+        else:
+            self._action_capture_allowlist.clear()
+
+    @property
+    def action_capture_active(
+        self,
+    ) -> bool:
+        return self._action_capture_active
+
+    # ==========================================================
     # TEXT INPUT
     # ==========================================================
+
+    def acquire_text_input(
+        self,
+        owner: object,
+    ) -> None:
+        """Keep SDL text input enabled until *owner* releases it."""
+        self._text_input_locks.add(
+            id(owner)
+        )
+        self.start_text_input()
+
+    def release_text_input(
+        self,
+        owner: object,
+    ) -> None:
+        """Release a persistent text-input request."""
+        self._text_input_locks.discard(
+            id(owner)
+        )
+
+        if not self._text_input_locks:
+            self.stop_text_input()
+
+    @property
+    def text_input_locked(
+        self,
+    ) -> bool:
+        return bool(
+            self._text_input_locks
+        )
 
     def start_text_input(
         self,
@@ -845,6 +915,9 @@ class InputManager:
             "InputManager.stop_text_input() "
             "must run on the main thread"
         )
+
+        if self._text_input_locks:
+            return
 
         if not self._text_input_active:
             return
@@ -1001,6 +1074,12 @@ class InputManager:
         self,
         action: str,
     ) -> ActionState:
+        if (
+            self._action_capture_active
+            and action not in self._action_capture_allowlist
+        ):
+            return self._captured_action_state
+
         if action not in self._actions:
             self._actions[
                 action

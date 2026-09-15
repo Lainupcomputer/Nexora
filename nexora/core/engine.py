@@ -17,6 +17,10 @@ from nexora.debug.logger import (
     Logger,
 )
 
+from nexora.debug.console import (
+    DebugConsole,
+)
+
 from nexora.debug.overlay import (
     DebugOverlay,
 )
@@ -617,6 +621,20 @@ class Engine:
         )
 
         # ======================================================
+        # Debug console
+        # ======================================================
+
+        self.console = (
+            DebugConsole(
+                self
+            )
+        )
+
+        self.game.console = (
+            self.console
+        )
+
+        # ======================================================
         # Game loop
         # ======================================================
 
@@ -1063,6 +1081,19 @@ class Engine:
         except Exception as exc:
             self.logger.warning(
                 "Audio shutdown failed: "
+                f"{exc}"
+            )
+
+        # ======================================================
+        # Debug console
+        # ======================================================
+
+        try:
+            self.console.shutdown()
+
+        except Exception as exc:
+            self.logger.warning(
+                "Debug console shutdown failed: "
                 f"{exc}"
             )
 
