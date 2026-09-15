@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import threading
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, TypeVar
 
 from nexora.assets.asset import Asset, AssetStatus
 from nexora.assets.loader import AssetLoader, FontLoader, ImageData, TextureLoader
+from nexora.assets.group import AssetGroupDefinition, normalize_group_name
 from nexora.assets.preload import (
     AssetCategory,
     AssetLoadCallbacks,
@@ -50,6 +52,14 @@ class AssetManager:
 
         self._audio_cache: AudioCache | None = None
         self._managed_sound_paths: set[Path] = set()
+
+        # Asset groups -------------------------------------------------
+        # Definitions are declarative. Active groups are reference-counted
+        # independently from individual resources so dependencies and shared
+        # assets remain resident until the last group releases them.
+        self._groups: dict[str, AssetGroupDefinition] = {}
+        self._group_ref_counts: dict[str, int] = {}
+        self._group_resource_refs: dict[tuple[str, object], int] = {}
 
         self._lock = threading.RLock()
 
@@ -518,6 +528,357 @@ class AssetManager:
 
         return created
 
+    # ==============================================================
+    # Asset groups
+    # ==============================================================
+
+    def register_group(
+        self,
+        name: str,
+        *,
+        fonts: Iterable[FontAssetRequest | tuple[str | Path, float]] = (),
+        sounds: Iterable[str | Path] = (),
+        textures: Iterable[str | Path] = (),
+        dependencies: Iterable[str] = (),
+        persistent: bool = False,
+        replace: bool = False,
+    ) -> AssetGroupDefinition:
+        """Register a named asset group.
+
+        Groups are definitions only; registering one does not load anything.
+        """
+        definition = AssetGroupDefinition.create(
+            name,
+            fonts=fonts,
+            sounds=sounds,
+            textures=textures,
+            dependencies=dependencies,
+            persistent=persistent,
+        )
+
+        with self._lock:
+            if definition.name in self._groups and not replace:
+                raise ValueError(
+                    f"Asset group {definition.name!r} is already registered."
+                )
+            if self._group_ref_counts.get(definition.name, 0) > 0:
+                raise RuntimeError(
+                    f"Cannot replace active asset group {definition.name!r}."
+                )
+            self._groups[definition.name] = definition
+            self._group_ref_counts.setdefault(definition.name, 0)
+
+        return definition
+
+    def unregister_group(self, name: str) -> bool:
+        name = normalize_group_name(name)
+        with self._lock:
+            if self._group_ref_counts.get(name, 0) > 0:
+                raise RuntimeError(
+                    f"Cannot unregister active asset group {name!r}."
+                )
+            existed = self._groups.pop(name, None) is not None
+            self._group_ref_counts.pop(name, None)
+            return existed
+
+    def get_group(self, name: str) -> AssetGroupDefinition | None:
+        name = normalize_group_name(name)
+        with self._lock:
+            return self._groups.get(name)
+
+    def group_names(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(self._groups)
+
+    def loaded_groups(self) -> tuple[str, ...]:
+        with self._lock:
+            return tuple(
+                name
+                for name, count in self._group_ref_counts.items()
+                if count > 0
+            )
+
+    def group_ref_count(self, name: str) -> int:
+        name = normalize_group_name(name)
+        with self._lock:
+            return int(self._group_ref_counts.get(name, 0))
+
+    def is_group_loaded(self, name: str) -> bool:
+        return self.group_ref_count(name) > 0
+
+    def _require_group(self, name: str) -> AssetGroupDefinition:
+        name = normalize_group_name(name)
+        definition = self._groups.get(name)
+        if definition is None:
+            raise KeyError(f"Unknown asset group: {name!r}")
+        return definition
+
+    def _group_acquire_deltas(self, name: str) -> Counter[str]:
+        """Return reference increments for a group and all dependency edges."""
+        root = normalize_group_name(name)
+        deltas: Counter[str] = Counter()
+
+        def visit(current: str, stack: tuple[str, ...]) -> None:
+            definition = self._require_group(current)
+            if current in stack:
+                cycle = " -> ".join((*stack, current))
+                raise ValueError(f"Asset group dependency cycle: {cycle}")
+
+            deltas[current] += 1
+            next_stack = (*stack, current)
+            for dependency in definition.dependencies:
+                visit(dependency, next_stack)
+
+        with self._lock:
+            visit(root, ())
+
+        return deltas
+
+    def _transitioning_groups(
+        self,
+        deltas: Counter[str],
+        *,
+        force_reload: bool,
+    ) -> list[AssetGroupDefinition]:
+        with self._lock:
+            result = []
+            for name in deltas:
+                definition = self._require_group(name)
+                if force_reload or self._group_ref_counts.get(name, 0) == 0:
+                    result.append(definition)
+            return result
+
+    def _collect_group_assets(
+        self,
+        definitions: Iterable[AssetGroupDefinition],
+    ) -> tuple[list[FontAssetRequest], list[str | Path], list[str | Path]]:
+        fonts: list[FontAssetRequest] = []
+        sounds: list[str | Path] = []
+        textures: list[str | Path] = []
+        seen_fonts: set[tuple[str, float]] = set()
+        seen_sounds: set[str] = set()
+        seen_textures: set[str] = set()
+
+        for definition in definitions:
+            for font in definition.fonts:
+                key = self._font_cache_key(font.path, font.size)
+                if key not in seen_fonts:
+                    seen_fonts.add(key)
+                    fonts.append(font)
+
+            for sound in definition.sounds:
+                key = self._cache_key(sound)
+                if key not in seen_sounds:
+                    seen_sounds.add(key)
+                    sounds.append(sound)
+
+            for texture in definition.textures:
+                key = self._cache_key(texture)
+                if key not in seen_textures:
+                    seen_textures.add(key)
+                    textures.append(texture)
+
+        return fonts, sounds, textures
+
+    def _group_resource_tokens(
+        self,
+        definition: AssetGroupDefinition,
+    ) -> tuple[tuple[str, object], ...]:
+        tokens: list[tuple[str, object]] = []
+        tokens.extend(
+            ("font", self._font_cache_key(font.path, font.size))
+            for font in definition.fonts
+        )
+        tokens.extend(
+            ("audio", self._cache_key(path))
+            for path in definition.sounds
+        )
+        tokens.extend(
+            ("texture", self._cache_key(path))
+            for path in definition.textures
+        )
+        return tuple(tokens)
+
+    def _commit_group_acquire(self, deltas: Counter[str]) -> None:
+        with self._lock:
+            for name, delta in deltas.items():
+                previous = self._group_ref_counts.get(name, 0)
+                self._group_ref_counts[name] = previous + int(delta)
+
+                if previous == 0:
+                    definition = self._require_group(name)
+                    for token in self._group_resource_tokens(definition):
+                        self._group_resource_refs[token] = (
+                            self._group_resource_refs.get(token, 0) + 1
+                        )
+
+    def load_group(
+        self,
+        name: str,
+        *,
+        callbacks: AssetLoadCallbacks | None = None,
+        force_reload: bool = False,
+    ) -> AssetGroupDefinition:
+        """Synchronously acquire a group and all of its dependencies.
+
+        All newly required resources are loaded globally in the same order as
+        the normal asset pipeline: Font -> Audio -> Texture.
+        """
+        name = normalize_group_name(name)
+        deltas = self._group_acquire_deltas(name)
+        definitions = self._transitioning_groups(
+            deltas,
+            force_reload=force_reload,
+        )
+        fonts, sounds, textures = self._collect_group_assets(definitions)
+
+        self.preload(
+            fonts=fonts,
+            sounds=sounds,
+            textures=textures,
+            callbacks=callbacks,
+            force_reload=force_reload,
+        )
+        self._commit_group_acquire(deltas)
+        return self._require_group(name)
+
+    def add_group_loading_stages(
+        self,
+        task,
+        name: str,
+        *,
+        callbacks: AssetLoadCallbacks | None = None,
+        force_reload: bool = False,
+        font_weight: float = 1.0,
+        audio_weight: float = 1.0,
+        texture_weight: float = 1.0,
+        commit_weight: float = 0.05,
+    ) -> list[object]:
+        """Add one group's loading pipeline to a SceneLoadTask.
+
+        Dependencies are resolved first, duplicate assets are removed, and the
+        resulting resources still load in Font -> Audio -> Texture order.
+        Group references are committed only after all loading stages succeed.
+        """
+        name = normalize_group_name(name)
+        deltas = self._group_acquire_deltas(name)
+        definitions = self._transitioning_groups(
+            deltas,
+            force_reload=force_reload,
+        )
+        fonts, sounds, textures = self._collect_group_assets(definitions)
+
+        stages = self.add_loading_stages(
+            task,
+            fonts=fonts,
+            sounds=sounds,
+            textures=textures,
+            callbacks=callbacks,
+            force_reload=force_reload,
+            font_weight=font_weight,
+            audio_weight=audio_weight,
+            texture_weight=texture_weight,
+        )
+
+        def commit() -> None:
+            self._commit_group_acquire(deltas)
+
+        commit_stage = task.add_stage(
+            f"assets_group_{name}",
+            weight=max(0.0001, float(commit_weight)),
+            status=f"Asset-Gruppe bereit: {name}",
+            callback=commit,
+        )
+        stages.append(commit_stage)
+        return stages
+
+    def unload_group(
+        self,
+        name: str,
+        *,
+        force: bool = False,
+        unload_assets: bool = True,
+    ) -> bool:
+        """Release one reference to a group and its dependency closure.
+
+        Resources shared with another active group remain loaded. Persistent
+        groups ignore normal unload requests and require force=True.
+        """
+        name = normalize_group_name(name)
+        with self._lock:
+            definition = self._require_group(name)
+            if self._group_ref_counts.get(name, 0) <= 0:
+                return False
+            if definition.persistent and not force:
+                return False
+
+        deltas = self._group_acquire_deltas(name)
+        groups_to_release: list[AssetGroupDefinition] = []
+
+        with self._lock:
+            # Validate before mutating so a broken ref graph cannot partially
+            # unload a group.
+            for group_name, delta in deltas.items():
+                current = self._group_ref_counts.get(group_name, 0)
+                if current < delta:
+                    raise RuntimeError(
+                        f"Asset group reference underflow for {group_name!r}: "
+                        f"{current} < {delta}."
+                    )
+
+            for group_name, delta in deltas.items():
+                current = self._group_ref_counts[group_name]
+                new_value = current - int(delta)
+                child = self._require_group(group_name)
+
+                if child.persistent and not force:
+                    new_value = max(1, new_value)
+
+                self._group_ref_counts[group_name] = new_value
+                if current > 0 and new_value == 0:
+                    groups_to_release.append(child)
+
+            releasable: list[tuple[str, object]] = []
+            for child in groups_to_release:
+                for token in self._group_resource_tokens(child):
+                    count = self._group_resource_refs.get(token, 0) - 1
+                    if count <= 0:
+                        self._group_resource_refs.pop(token, None)
+                        releasable.append(token)
+                    else:
+                        self._group_resource_refs[token] = count
+
+        if unload_assets:
+            for kind, key in releasable:
+                if kind == "font":
+                    path_key, size = key
+                    self.unload_font(Path(path_key), size)
+                elif kind == "audio":
+                    self.unload_sound(Path(str(key)))
+                elif kind == "texture":
+                    self.unload_texture(Path(str(key)), unload_image=True)
+
+        return True
+
+    def clear_groups(self, *, unload_assets: bool = True) -> None:
+        """Force-release every active group while keeping definitions."""
+        with self._lock:
+            names = [
+                name
+                for name, count in self._group_ref_counts.items()
+                if count > 0
+            ]
+
+        # Force each group down to zero. Repeated references require repeated
+        # releases, so loop until no active references remain.
+        for name in names:
+            while self.group_ref_count(name) > 0:
+                self.unload_group(
+                    name,
+                    force=True,
+                    unload_assets=unload_assets,
+                )
+
     # ============================================================== 
     # Generic cache / cleanup
     # ============================================================== 
@@ -560,6 +921,9 @@ class AssetManager:
             self._fonts.clear()
             sound_paths = tuple(self._managed_sound_paths)
             self._managed_sound_paths.clear()
+            for name in self._group_ref_counts:
+                self._group_ref_counts[name] = 0
+            self._group_resource_refs.clear()
 
         for texture in textures:
             texture.destroy()

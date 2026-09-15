@@ -1,5 +1,6 @@
 from nexora.assets.asset import Asset, AssetStatus
 from nexora.assets.loader import AssetLoader, FontLoader, ImageData, TextureLoader
+from nexora.assets.group import AssetGroupDefinition
 from nexora.assets.manager import AssetManager
 from nexora.assets.preload import (
     AssetCategory,
@@ -12,6 +13,7 @@ __all__ = [
     "Asset",
     "AssetStatus",
     "AssetLoader",
+    "AssetGroupDefinition",
     "ImageData",
     "TextureLoader",
     "FontLoader",
