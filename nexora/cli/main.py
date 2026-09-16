@@ -6,15 +6,26 @@ import sys
 from nexora.cli.project import create_project
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nexora",
         description="Nexora Engine command-line tools.",
     )
 
+    parser.add_argument(
+        "--editor",
+        nargs="?",
+        const=".",
+        default=None,
+        metavar="PROJECT",
+        help=(
+            "Start the Nexora Editor. "
+            "Without PROJECT the current directory is opened."
+        ),
+    )
+
     subparsers = parser.add_subparsers(
         dest="command",
-        required=True,
     )
 
     create_parser = subparsers.add_parser(
@@ -34,7 +45,29 @@ def main() -> int:
         help="Directory where the project should be created.",
     )
 
-    args = parser.parse_args()
+    return parser
+
+
+def main(
+    argv: list[str] | None = None,
+) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if (
+        args.editor is not None
+        and args.command is not None
+    ):
+        parser.error(
+            "--editor cannot be combined with a subcommand."
+        )
+
+    if args.editor is not None:
+        from nexora.editor import run_editor
+
+        return run_editor(
+            project_path=args.editor,
+        )
 
     if args.command == "create":
         return create_project(
@@ -42,6 +75,7 @@ def main() -> int:
             path=args.path,
         )
 
+    parser.print_help()
     return 0
 
 

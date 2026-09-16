@@ -125,6 +125,11 @@ class TextInput(UINode):
 
         self.padding: float = 10.0
 
+        # When True, the control grows with its text. Editors/layouts can
+        # disable this and assign a fixed size. Existing behavior remains
+        # the default for backwards compatibility.
+        self.auto_size: bool = True
+
         # ----------------------------------------------------------
         # Callbacks
         # ----------------------------------------------------------
@@ -259,7 +264,8 @@ class TextInput(UINode):
     # ==============================================================
 
     def _sync_layout(self) -> None:
-        self.size = self.content_size
+        if self.auto_size:
+            self.size = self.content_size
 
         width, height = self.size
 

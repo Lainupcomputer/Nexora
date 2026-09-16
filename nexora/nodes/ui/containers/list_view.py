@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import time
+
 import sdl3
 
 from nexora.nodes.ui.output.label import Label
@@ -164,6 +166,15 @@ class ListView(ScrollView):
             Callable[[int, str], None]
             | None
         ) = None
+
+        # ==========================================================
+        # Mouse activation
+        # ==========================================================
+
+        self.double_click_interval: float = 0.35
+
+        self._last_click_time: float = -1.0
+        self._last_click_index: int = -1
 
         # ==========================================================
         # Internal nodes
@@ -882,8 +893,13 @@ class ListView(ScrollView):
         for index, row in enumerate(
             self._item_nodes
         ):
-            if not self._is_inside_viewport(
-                row
+            row_x, row_y = (
+                row.calculate_position()
+            )
+
+            if not self._point_inside_viewport(
+                row_x,
+                row_y,
             ):
                 continue
 
@@ -1067,9 +1083,39 @@ class ListView(ScrollView):
             ui_input.mouse_left_pressed
             and self.hovered_index >= 0
         ):
-            self.set_selected_index(
+            clicked_index = (
                 self.hovered_index
             )
+
+            self.set_selected_index(
+                clicked_index
+            )
+
+            now = time.monotonic()
+
+            is_double_click = (
+                clicked_index
+                == self._last_click_index
+                and self._last_click_time >= 0.0
+                and (
+                    now
+                    - self._last_click_time
+                )
+                <= self.double_click_interval
+            )
+
+            self._last_click_time = now
+            self._last_click_index = (
+                clicked_index
+            )
+
+            if is_double_click:
+                self.activate_selected()
+
+                # Requiring a fresh pair avoids accidental triple-click
+                # activation loops.
+                self._last_click_time = -1.0
+                self._last_click_index = -1
 
         # ----------------------------------------------------------
         # Keyboard

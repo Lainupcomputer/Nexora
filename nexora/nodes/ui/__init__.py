@@ -20,6 +20,13 @@ from .containers import (
     ScrollView,
 )
 
+from .dialogs import (
+    Dialog,
+    ConfirmDialog,
+    MessageDialog,
+    FileDialog,
+)
+
 from .output import (
     Label,
     ProgressBar,
@@ -51,6 +58,12 @@ __all__ = [
     "ListView",
     "Panel",
     "ScrollView",
+
+    # Dialogs
+    "Dialog",
+    "ConfirmDialog",
+    "MessageDialog",
+    "FileDialog",
 
     # Output
     "Label",

@@ -352,8 +352,14 @@ class CheckBox(UINode):
             0.5,
         )
 
+        # Panel rendering uses calculate_position() as the visual center.
+        #
+        # With anchor.x == 0.0 the calculated position is the left edge of
+        # the CheckBox. Therefore the box center needs to be shifted right by
+        # half its own width. Without this offset the visible square is drawn
+        # half a box-width to the left of the CheckBox hitbox.
         self._box.position = (
-            0.0,
+            self.box_size / 2.0,
             0.0,
         )
 

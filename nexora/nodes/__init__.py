@@ -61,6 +61,11 @@ from .ui import (
     Panel,
     ScrollView,
 
+    Dialog,
+    ConfirmDialog,
+    MessageDialog,
+    FileDialog,
+
     Label,
     ProgressBar,
     NotificationAnchor,
@@ -128,6 +133,12 @@ __all__ = [
     "ListView",
     "Panel",
     "ScrollView",
+
+    # UI Dialogs
+    "Dialog",
+    "ConfirmDialog",
+    "MessageDialog",
+    "FileDialog",
 
     # UI Output
     "Label",

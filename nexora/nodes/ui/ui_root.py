@@ -57,6 +57,12 @@ class UIRoot(UINode):
 
         self.focused_node: UINode | None = None
 
+        # ==========================================================
+        # Modal input scope
+        # ==========================================================
+
+        self._modal_stack: list[UINode] = []
+
     # ==============================================================
     # Viewport
     # ==============================================================
@@ -155,21 +161,31 @@ class UIRoot(UINode):
 
     def _collect_focusable_nodes(
         self,
+        root: UINode | None = None,
     ) -> list[UINode]:
-        """
-        Return focusable nodes in UI tree order.
+        """Return focusable nodes in UI tree order.
+
+        When a modal node is active, focus traversal is constrained to
+        that modal subtree.
         """
 
         result: list[UINode] = []
+        start = root or self.active_modal or self
 
         def visit(
             node: UINode,
         ) -> None:
+            if not node.visible or not node.enabled:
+                return
+
             for child in node.children:
                 if not isinstance(
                     child,
                     UINode,
                 ):
+                    continue
+
+                if not child.visible or not child.enabled:
                     continue
 
                 if child.can_focus:
@@ -182,10 +198,60 @@ class UIRoot(UINode):
                 )
 
         visit(
-            self
+            start
         )
 
         return result
+
+    @property
+    def active_modal(
+        self,
+    ) -> UINode | None:
+        while self._modal_stack:
+            node = self._modal_stack[-1]
+            if node.parent is not None and node.visible:
+                return node
+            self._modal_stack.pop()
+        return None
+
+    def push_modal(
+        self,
+        node: UINode,
+    ) -> None:
+        """Restrict UI input and focus to ``node``."""
+
+        if node in self._modal_stack:
+            self._modal_stack.remove(node)
+        self._modal_stack.append(node)
+
+        if self.focused_node is not None:
+            current: UINode | None = self.focused_node
+            inside = False
+            while current is not None:
+                if current is node:
+                    inside = True
+                    break
+                parent = current.parent
+                current = parent if isinstance(parent, UINode) else None
+            if not inside:
+                self.clear_focus()
+
+    def pop_modal(
+        self,
+        node: UINode | None = None,
+    ) -> None:
+        """Remove one modal input scope."""
+
+        if not self._modal_stack:
+            return
+        if node is None:
+            self._modal_stack.pop()
+            return
+        self._modal_stack = [
+            item
+            for item in self._modal_stack
+            if item is not node
+        ]
 
     # ==============================================================
     # Focus management
@@ -455,9 +521,14 @@ class UIRoot(UINode):
             ui_input.mouse_position
         )
 
+        search_root = (
+            self.active_modal
+            or self
+        )
+
         node = (
             self._find_focusable_at_point(
-                self,
+                search_root,
                 mouse_x,
                 mouse_y,
             )
@@ -498,15 +569,24 @@ class UIRoot(UINode):
             ui_input
         )
 
-        # Let children process their own input.
-        for child in self.children:
-            if isinstance(
-                child,
-                UINode,
-            ):
-                child.update_input(
-                    ui_input
-                )
+        # Let only the active modal process input while a modal is
+        # open. This prevents controls behind a dialog from receiving
+        # the same click/key event.
+        modal = self.active_modal
+
+        if modal is not None:
+            modal.update_input(
+                ui_input
+            )
+        else:
+            for child in self.children:
+                if isinstance(
+                    child,
+                    UINode,
+                ):
+                    child.update_input(
+                        ui_input
+                    )
 
         self._validate_focus()
 
