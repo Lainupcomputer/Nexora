@@ -34,10 +34,12 @@ from nexora.editor.commands import (
     AddNodeCommand,
     CommandStack,
     DeleteNodeCommand,
+    InstantiatePrefabCommand,
     RenameNodeCommand,
     SetPropertyCommand,
     TransformNodeCommand,
     TransformSnapshot,
+    prefab_instance_overrides_for_node,
 )
 
 from nexora.editor.inspector import (
@@ -106,6 +108,7 @@ class EditorScene(Scene):
         self._scene_entries = []
         self._last_size = (-1.0, -1.0)
         self._pending_action = None
+        self._prefab_save_node = None
 
         self.viewport_state = EditorViewportState()
 
@@ -219,6 +222,12 @@ class EditorScene(Scene):
             "SaveAsButton",
             "Save As",
             self.save_scene_as,
+        )
+        self.save_prefab_button = self._button(
+            self.toolbar,
+            "SavePrefabButton",
+            "Prefab",
+            self.save_selected_prefab,
         )
         self.undo_button = self._button(
             self.toolbar,
@@ -345,6 +354,14 @@ class EditorScene(Scene):
         )
         self.save_scene_dialog.file_selected.connect(self._on_save_scene_selected)
 
+        self.save_prefab_dialog = self.ui.create_child(
+            "SavePrefabDialog",
+            node_type=FileDialog,
+        )
+        self.save_prefab_dialog.file_selected.connect(
+            self._on_save_prefab_selected
+        )
+
         self.unsaved_dialog = self.ui.create_child(
             "UnsavedDialog",
             node_type=ConfirmDialog,
@@ -446,6 +463,8 @@ class EditorScene(Scene):
             self.save_scene_as()
             return
 
+        self._sync_all_prefab_instance_overrides()
+
         try:
             path = self.document.save(self.game.scene_serializer)
         except Exception as exc:
@@ -454,6 +473,50 @@ class EditorScene(Scene):
 
         self._refresh_document_ui()
         self.status_label.text = f"Saved {path.name}"
+
+    def save_selected_prefab(self) -> None:
+        node = self._editable_selected_node()
+        if node is None:
+            self.status_label.text = "Select a node to save as a prefab first"
+            return
+
+        start = self.project_path / "prefabs"
+        if not start.is_dir():
+            start = self.project_path / "assets"
+        if not start.is_dir():
+            start = self.project_path
+
+        self._prefab_save_node = node
+        self.save_prefab_dialog.configure(
+            mode="save",
+            root_path=self.project_path,
+            current_path=start,
+            extensions=(".nxprefab",),
+            title="Save Prefab As",
+        )
+        self.save_prefab_dialog.filename_input.set_text(
+            f"{node.name}.nxprefab",
+            emit=False,
+        )
+        self.save_prefab_dialog.open(
+            focus=self.save_prefab_dialog.filename_input
+        )
+
+    def _on_save_prefab_selected(self, _dialog, path: Path) -> None:
+        node = self._prefab_save_node
+        self._prefab_save_node = None
+
+        if node is None:
+            return
+
+        try:
+            saved = self.game.scene_serializer.prefabs.save(node, path)
+        except Exception as exc:
+            self._show_error(f"Could not save prefab:\n{exc}")
+            return
+
+        self._refresh_asset_browser(preserve_selection=False)
+        self.status_label.text = f"Saved prefab {saved.name}"
 
     def save_scene_as(self) -> None:
         start = self._scene_start_directory()
@@ -471,6 +534,8 @@ class EditorScene(Scene):
         self.save_scene_dialog.open(focus=self.save_scene_dialog.filename_input)
 
     def _on_save_scene_selected(self, _dialog, path: Path) -> None:
+        self._sync_all_prefab_instance_overrides()
+
         try:
             saved = self.document.save_as(self.game.scene_serializer, path)
         except Exception as exc:
@@ -624,6 +689,7 @@ class EditorScene(Scene):
         except Exception as exc:
             self._show_error(f"Could not rename node:\n{exc}")
             return
+        self._sync_prefab_instance_overrides(node)
         self.document.mark_dirty()
         self._refresh_document_ui()
         self.status_label.text = f"Renamed node to {new_name}"
@@ -672,6 +738,7 @@ class EditorScene(Scene):
             selected = self.selection.selected
             if selected is not None and not self.document.scene.world.is_alive(selected.entity):
                 self.selection.clear()
+        self._sync_all_prefab_instance_overrides()
         self._refresh_document_ui()
         self.status_label.text = f"Undo: {label}"
 
@@ -688,6 +755,7 @@ class EditorScene(Scene):
             selected = self.selection.selected
             if selected is not None and not self.document.scene.world.is_alive(selected.entity):
                 self.selection.clear()
+        self._sync_all_prefab_instance_overrides()
         self._refresh_document_ui()
         self.status_label.text = f"Redo: {label}"
 
@@ -818,6 +886,7 @@ class EditorScene(Scene):
             "delete_node_dialog",
             "open_scene_dialog",
             "save_scene_dialog",
+            "save_prefab_dialog",
             "unsaved_dialog",
             "error_dialog",
         )
@@ -1283,6 +1352,7 @@ class EditorScene(Scene):
             )
         )
 
+        self._sync_prefab_instance_overrides(node)
         self.document.mark_dirty()
         self._refresh_document_ui()
         self.status_label.text = (
@@ -1954,6 +2024,7 @@ class EditorScene(Scene):
             self._refresh_inspector()
             return
 
+        self._sync_prefab_instance_overrides(node)
         self.document.mark_dirty()
 
         if prop.key == "name":
@@ -2560,8 +2631,7 @@ class EditorScene(Scene):
         if entry.kind == "prefab":
             self.status_label.text = (
                 "Prefab selected. "
-                "Prefab editing is prepared "
-                "for a later editor milestone."
+                "Drag it into the viewport to instantiate it."
             )
             return
 
@@ -2583,6 +2653,32 @@ class EditorScene(Scene):
         while f"{base}_{index}" in existing: index += 1
         return f"{base}_{index}"
 
+    def _sync_prefab_instance_overrides(self, node=None) -> None:
+        """Keep a prefab instance's saved root state in sync with edits."""
+
+        node = self.selection.selected if node is None else node
+
+        if node is None or not getattr(node, "_nexora_prefab_source", None):
+            return
+
+        try:
+            node._nexora_prefab_overrides = (
+                prefab_instance_overrides_for_node(
+                    node,
+                    self.game.scene_serializer.registry,
+                )
+            )
+        except Exception:
+            # The instance was created by the registered prefab serializer, so
+            # this should only be reachable for a custom runtime node that was
+            # changed outside the editor registry. Saving can still report the
+            # original serialization error normally.
+            return
+
+    def _sync_all_prefab_instance_overrides(self) -> None:
+        for node in self._iter_viewport_nodes():
+            self._sync_prefab_instance_overrides(node)
+
     def _drop_image_asset_in_viewport(self, entry, mouse_x: float, mouse_y: float) -> None:
         if entry is None or entry.kind != "image" or self.game.engine is None: return
         center_x, center_y = self.viewport_canvas.calculate_position()
@@ -2596,6 +2692,45 @@ class EditorScene(Scene):
         self.document.mark_dirty(); self.selection.select(node); self._refresh_document_ui()
         self.status_label.text = f"Created sprite '{name}' from {entry.name}"
 
+    def _drop_prefab_asset_in_viewport(self, entry, mouse_x: float, mouse_y: float) -> None:
+        if entry is None or entry.kind != "prefab":
+            return
+
+        center_x, center_y = self.viewport_canvas.calculate_position()
+        world_x, world_y = self.viewport_state.screen_to_world(
+            mouse_x,
+            mouse_y,
+            center_x,
+            center_y,
+        )
+        name = self._unique_node_name(entry.path.stem)
+        serializer = self.game.scene_serializer
+        command = InstantiatePrefabCommand(
+            parent=self.document.scene.root,
+            prefab_serializer=serializer.prefabs,
+            registry=serializer.registry,
+            prefab_path=entry.path,
+            name=name,
+            x=world_x,
+            y=world_y,
+            context=self._serialization_context(),
+        )
+
+        try:
+            node = self.commands.execute(command)
+        except Exception as exc:
+            self._show_error(
+                f"Could not instantiate prefab:\n{exc}"
+            )
+            return
+
+        self.document.mark_dirty()
+        self.selection.select(node)
+        self._refresh_document_ui()
+        self.status_label.text = (
+            f"Instantiated prefab '{name}' from {entry.name}"
+        )
+
     def _reset_asset_drag(self) -> None:
         self._asset_pointer_press = None; self._asset_drag_active = False; self._asset_drag_entry = None
         if hasattr(self, "asset_drag_badge"): self.asset_drag_badge.visible = False
@@ -2608,19 +2743,25 @@ class EditorScene(Scene):
             hovered = self.asset_list.hovered_index
             if 0 <= hovered < len(self._asset_entries):
                 entry = self._asset_entries[hovered]
-                if not entry.is_directory and entry.kind == "image":
+                if not entry.is_directory and entry.kind in {"image", "prefab"}:
                     self._asset_pointer_press = (mouse_x, mouse_y); self._asset_drag_entry = entry
         if self._asset_pointer_press is not None and input_manager.mouse_down("left"):
             sx, sy = self._asset_pointer_press; dx = mouse_x-sx; dy = mouse_y-sy
             if not self._asset_drag_active and dx*dx+dy*dy >= self._asset_drag_threshold*self._asset_drag_threshold: self._asset_drag_active = True
             if self._asset_drag_active:
                 entry = self._asset_drag_entry; self.asset_drag_badge.visible = True; self.asset_drag_badge.position = (mouse_x+118.0, mouse_y+24.0)
-                self.asset_drag_label.text = f"Drop Image -> Sprite  |  {entry.name}"
+                target = "Image -> Sprite" if entry.kind == "image" else "Prefab -> Instance"
+                self.asset_drag_label.text = f"Drop {target}  |  {entry.name}"
                 self.asset_drag_badge.border_color = (70,190,110,255) if self._mouse_inside_viewport_canvas() else (80,120,190,255)
         if self._asset_pointer_press is not None and input_manager.mouse_released("left"):
             entry = self._asset_drag_entry; should_drop = self._asset_drag_active and self._mouse_inside_viewport_canvas()
             self._reset_asset_drag()
-            if should_drop: self._drop_image_asset_in_viewport(entry, mouse_x, mouse_y)
+            if not should_drop:
+                return
+            if entry.kind == "image":
+                self._drop_image_asset_in_viewport(entry, mouse_x, mouse_y)
+            elif entry.kind == "prefab":
+                self._drop_prefab_asset_in_viewport(entry, mouse_x, mouse_y)
 
     def _asset_context_open_selected(
         self,
@@ -2715,7 +2856,7 @@ class EditorScene(Scene):
 
     @property
     def asset_drag_payload(self):
-        """Selected asset payload for future viewport/inspector drop targets."""
+        """Selected asset payload for viewport and inspector drop targets."""
         return self._asset_drag_payload
 
     # ==========================================================
@@ -2900,6 +3041,7 @@ class EditorScene(Scene):
             (self.open_button, 74.0),
             (self.save_button, 72.0),
             (self.save_as_button, 92.0),
+            (self.save_prefab_button, 82.0),
             (self.undo_button, 72.0),
             (self.redo_button, 72.0),
             (self.play_button, 66.0),

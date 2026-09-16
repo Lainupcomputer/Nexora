@@ -33,6 +33,31 @@ def texture_source_for_assets(asset_path: str | Path, assets) -> str:
         return str(path)
 
 
+def prefab_instance_overrides_for_node(node, registry) -> dict:
+    """Capture the editable root state of a prefab instance.
+
+    Prefab instances are saved as a source path plus root overrides.  Keeping
+    the current root state in the overrides means moving, renaming, or
+    changing an instance in the editor survives a save/reload cycle.
+    """
+
+    transform = node.transform
+
+    return {
+        "name": str(node.name),
+        "enabled": bool(node.enabled),
+        "visible": bool(node.visible),
+        "transform": {
+            "x": float(transform.x),
+            "y": float(transform.y),
+            "rotation": float(transform.rotation),
+            "scale_x": float(transform.scale_x),
+            "scale_y": float(transform.scale_y),
+        },
+        "properties": registry.dump_properties(node),
+    }
+
+
 class AddImageSpriteCommand:
     def __init__(self, *, parent, registry, assets, asset_path, name, x, y, context=None) -> None:
         self.parent = parent
@@ -70,4 +95,74 @@ class AddImageSpriteCommand:
         if self._node is None: return None
         self._state = node_to_state(self._node, self.registry)
         self._node.destroy(); self._node = None
+        return None
+
+
+class InstantiatePrefabCommand:
+    """Undoable placement of one prefab instance into a scene tree."""
+
+    def __init__(
+        self,
+        *,
+        parent,
+        prefab_serializer,
+        registry,
+        prefab_path,
+        name,
+        x,
+        y,
+        context=None,
+    ) -> None:
+        self.parent = parent
+        self.prefab_serializer = prefab_serializer
+        self.registry = registry
+        self.prefab_path = Path(prefab_path).resolve()
+        self.name = (
+            str(name).strip()
+            or self.prefab_path.stem
+            or "Prefab"
+        )
+        self.x = float(x)
+        self.y = float(y)
+        self.context = dict(context or {})
+        self.label = f"Add Prefab {self.name}"
+        self._node = None
+        self._index = len(parent.children)
+        self._overrides = {
+            "name": self.name,
+            "transform": {
+                "x": self.x,
+                "y": self.y,
+            },
+        }
+
+    @property
+    def node(self):
+        return self._node
+
+    def execute(self):
+        node = self.prefab_serializer.instantiate(
+            self.prefab_path,
+            self.parent.world,
+            context=self.context,
+            overrides=self._overrides,
+        )
+        _insert_child(self.parent, node, self._index)
+        self._node = node
+        self._overrides = prefab_instance_overrides_for_node(
+            node,
+            self.registry,
+        )
+        return node
+
+    def undo(self):
+        if self._node is None:
+            return None
+
+        self._overrides = prefab_instance_overrides_for_node(
+            self._node,
+            self.registry,
+        )
+        self._node.destroy()
+        self._node = None
         return None

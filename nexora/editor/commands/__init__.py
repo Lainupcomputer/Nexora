@@ -1,4 +1,9 @@
-from .asset_commands import AddImageSpriteCommand, texture_source_for_assets
+from .asset_commands import (
+    AddImageSpriteCommand,
+    InstantiatePrefabCommand,
+    prefab_instance_overrides_for_node,
+    texture_source_for_assets,
+)
 from .node_commands import (
     AddNodeCommand,
     DeleteNodeCommand,
@@ -13,6 +18,8 @@ from .transform_command import (
 
 __all__ = [
     "AddImageSpriteCommand",
+    "InstantiatePrefabCommand",
+    "prefab_instance_overrides_for_node",
     "texture_source_for_assets",
     "AddNodeCommand",
     "CommandStack",
