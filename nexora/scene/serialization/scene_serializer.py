@@ -109,6 +109,67 @@ class SceneSerializer:
     def load_state(self, path: str | Path) -> dict[str, Any]:
         return self.decode_state(Path(path).read_bytes())
 
+    def from_state(
+        self,
+        state: dict[str, Any],
+        *,
+        base_dir: str | Path | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Scene:
+        """Construct a runtime Scene from an already decoded state.
+
+        Editors and tools can use this to create an isolated scene preview
+        without writing a temporary scene file to disk.
+        """
+
+        if not isinstance(state, dict) or state.get("format") != "nexora_scene":
+            raise ValueError("Payload is not a Nexora scene state.")
+
+        state = self.migrations.migrate(dict(state))
+        base_path = Path(base_dir or ".").expanduser().resolve()
+        scene = Scene(str(state.get("name", "Scene")))
+
+        context_data = dict(context or {})
+        context_data.setdefault(
+            "scene_path",
+            str(base_path / f"{scene.name}{self.FILE_EXTENSION}"),
+        )
+        context_data.setdefault("scene", scene)
+
+        id_lookup: dict[str, Any] = {}
+
+        for child_state in state.get("root_children", []):
+            child = self._build_entry(
+                dict(child_state),
+                scene,
+                scene.root,
+                base_path,
+                context_data,
+                id_lookup,
+            )
+            if child.parent is None:
+                scene.root.add_child(child)
+
+        for child_state in state.get("ui_children", []):
+            child = self._build_entry(
+                dict(child_state),
+                scene,
+                scene.ui,
+                base_path,
+                context_data,
+                id_lookup,
+            )
+            if child.parent is None:
+                scene.ui.add_child(child)
+
+        camera_id = state.get("camera_id")
+        if camera_id and camera_id in id_lookup:
+            scene.camera = id_lookup[camera_id]
+
+        scene.asset_groups = list(state.get("asset_groups", []))
+        scene.serialization_metadata = dict(state.get("metadata", {}))
+        return scene
+
     def inspect_metadata(self, path: str | Path) -> dict[str, Any]:
         """Read scene metadata without constructing any Node objects."""
         state = self.load_state(path)
@@ -171,45 +232,13 @@ class SceneSerializer:
     ) -> Scene:
         path = Path(path)
         state = self.load_state(path)
-        scene = Scene(str(state.get("name", path.stem)))
-        scene.asset_groups = list(state.get("asset_groups", []))
-        scene.serialization_metadata = dict(state.get("metadata", {}))
-
         context_data = dict(context or {})
         context_data.setdefault("scene_path", str(path))
-        context_data.setdefault("scene", scene)
-
-        id_lookup: dict[str, Any] = {}
-
-        for child_state in state.get("root_children", []):
-            child = self._build_entry(
-                dict(child_state),
-                scene,
-                scene.root,
-                path.parent,
-                context_data,
-                id_lookup,
-            )
-            if child.parent is None:
-                scene.root.add_child(child)
-
-        for child_state in state.get("ui_children", []):
-            child = self._build_entry(
-                dict(child_state),
-                scene,
-                scene.ui,
-                path.parent,
-                context_data,
-                id_lookup,
-            )
-            if child.parent is None:
-                scene.ui.add_child(child)
-
-        camera_id = state.get("camera_id")
-        if camera_id and camera_id in id_lookup:
-            scene.camera = id_lookup[camera_id]
-
-        return scene
+        return self.from_state(
+            state,
+            base_dir=path.parent,
+            context=context_data,
+        )
 
     def _build_entry(
         self,

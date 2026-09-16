@@ -65,6 +65,27 @@ def test_scene_round_trip(tmp_path: Path) -> None:
     assert loaded_shape.disabled is True
 
 
+def test_scene_from_state_creates_an_isolated_copy(tmp_path: Path) -> None:
+    scene = Scene("Preview")
+    body = StaticBody2D("Player", scene.world)
+    body.transform.x = 48.0
+    scene.root.add_child(body)
+
+    serializer = SceneSerializer(signing_key=KEY)
+    preview = serializer.from_state(
+        serializer.to_state(scene),
+        base_dir=tmp_path,
+    )
+
+    assert preview is not scene
+    assert preview.name == "Preview"
+    assert preview.root.children[0] is not body
+    assert preview.root.children[0].transform.x == 48.0
+
+    preview.root.children[0].transform.x = 96.0
+    assert body.transform.x == 48.0
+
+
 def test_prefab_round_trip_and_overrides(tmp_path: Path) -> None:
     scene = Scene("PrefabSource")
     root = StaticBody2D("Crate", scene.world)

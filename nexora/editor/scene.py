@@ -245,7 +245,7 @@ class EditorScene(Scene):
             self.toolbar,
             "PlayButton",
             "Run",
-            self._run_placeholder,
+            self._toggle_play_mode,
         )
 
         self.document_label = self.toolbar.create_child(
@@ -2939,8 +2939,11 @@ class EditorScene(Scene):
             "Assets panel selected"
         )
 
-    def _run_placeholder(self) -> None:
-        self.status_label.text = "Run project comes in a later editor milestone"
+    def _toggle_play_mode(self) -> None:
+        if self.game.play_mode:
+            self.game.stop_play_mode()
+        else:
+            self.game.start_play_mode()
 
     # ==========================================================
     # LAYOUT
