@@ -138,6 +138,17 @@ class AnimatedSprite(Node):
             name
         )
 
+    @property
+    def animations(self) -> tuple[AnimationClip, ...]:
+        """Return the clips owned by this sprite in insertion order."""
+
+        return tuple(self.animator._clips.values())
+
+    @property
+    def current_animation_name(self) -> str | None:
+        clip = self.current_animation
+        return None if clip is None else clip.name
+
     # ==============================================================
     # Animation sets
     # ==============================================================

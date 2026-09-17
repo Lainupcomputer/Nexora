@@ -18,6 +18,24 @@ class FileDialog(Dialog):
     """
 
     VALID_MODES = ("open", "save")
+    DEFAULT_IGNORED_NAMES = frozenset(
+        {
+            ".git",
+            ".github",
+            ".idea",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".venv",
+            "Bruch",
+            "build",
+            "dist",
+            "env",
+            "htmlcov",
+            "__pycache__",
+            "venv",
+        }
+    )
 
     def __init__(self, name: str, world) -> None:
         super().__init__(name, world)
@@ -103,6 +121,9 @@ class FileDialog(Dialog):
             return True
         return path.suffix.lower() in self.extensions
 
+    def _is_ignored_directory(self, path: Path) -> bool:
+        return path.name in self.DEFAULT_IGNORED_NAMES
+
     def _refresh_entries(self) -> None:
         try:
             entries = list(self.current_path.iterdir())
@@ -110,7 +131,11 @@ class FileDialog(Dialog):
             entries = []
 
         directories = sorted(
-            (entry for entry in entries if entry.is_dir()),
+            (
+                entry
+                for entry in entries
+                if entry.is_dir() and not self._is_ignored_directory(entry)
+            ),
             key=lambda item: item.name.lower(),
         )
         files = sorted(

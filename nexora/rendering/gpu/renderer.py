@@ -867,6 +867,12 @@ class GPURenderer:
             ),
         )
 
+        # Rectangles, shapes, sprites and lines share one camera uniform per
+        # batch. Upload an identity camera for the overlay phase so UIRoot
+        # content stays fixed to the window while the world camera moves.
+        command_buffer = getattr(self.context, "command_buffer", None)
+        last_camera_phase = None
+
         for (
             (
                 _layer,
@@ -876,9 +882,38 @@ class GPURenderer:
                 count,
             ),
             command_phase,
-        ) in ordered:
+            ) in ordered:
             if phase is not None and command_phase != phase:
                 continue
+
+            camera_phase = (
+                "overlay"
+                if command_phase == "overlay"
+                else "world"
+            )
+            if (
+                command_buffer is not None
+                and camera_phase != last_camera_phase
+            ):
+                screen_space = camera_phase == "overlay"
+                self.sprite_batch.push_camera_uniform(
+                    command_buffer,
+                    screen_space=screen_space,
+                )
+                self.rect_batch.push_camera_uniform(
+                    command_buffer,
+                    screen_space=screen_space,
+                )
+                self.line_batch.push_camera_uniform(
+                    command_buffer,
+                    screen_space=screen_space,
+                )
+                self.shape_batch.push_camera_uniform(
+                    command_buffer,
+                    screen_space=screen_space,
+                )
+                last_camera_phase = camera_phase
+
             if kind == "sprite":
                 self.sprite_batch.draw_range(
                     render_pass,

@@ -163,15 +163,19 @@ class AssetBrowserModel:
 
     DEFAULT_IGNORED_NAMES = {
         ".git",
+        ".github",
         ".idea",
         ".pytest_cache",
         ".mypy_cache",
         ".ruff_cache",
         ".venv",
+        "Bruch",
         "__pycache__",
         "build",
         "dist",
+        "env",
         "htmlcov",
+        "venv",
     }
 
     def __init__(

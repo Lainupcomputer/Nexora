@@ -27,6 +27,22 @@ def test_isometric_projection_roundtrip():
         assert tilemap.world_to_tile(world_x, world_y) == (x, y)
 
 
+def test_angled_2d_projection_uses_a_straight_square_grid():
+    tilemap = TileMap(
+        name="StardewLayout",
+        width=20,
+        height=12,
+        tile_width=32,
+        tile_height=32,
+        projection=TileProjection.ANGLED_2D,
+    )
+
+    assert tilemap.pixel_size == (640, 384)
+    for x, y in [(0, 0), (1, 0), (0, 1), (19, 11)]:
+        world_x, world_y = tilemap.tile_to_world(x, y)
+        assert tilemap.world_to_tile(world_x, world_y) == (x, y)
+
+
 def test_isometric_pixel_size():
     tilemap = TileMap(
         width=10,

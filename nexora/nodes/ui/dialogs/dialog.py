@@ -11,6 +11,9 @@ from nexora.nodes.ui.output.label import Label
 from nexora.signals import Signal
 
 
+_DIALOG_LAYER_OFFSET = 200_000
+
+
 class Dialog(UINode):
     """Reusable modal dialog node.
 
@@ -259,4 +262,9 @@ class Dialog(UINode):
         if not self._is_open:
             return
         self._sync_layout()
-        super().render(renderer)
+        layer_scope = getattr(renderer, "layer_scope", None)
+        if layer_scope is None:
+            super().render(renderer)
+            return
+        with layer_scope(_DIALOG_LAYER_OFFSET):
+            super().render(renderer)

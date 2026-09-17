@@ -4,6 +4,7 @@ from .asset_commands import (
     prefab_instance_overrides_for_node,
     texture_source_for_assets,
 )
+from .animation_commands import AnimationClipCommand
 from .node_commands import (
     AddNodeCommand,
     DeleteNodeCommand,
@@ -11,6 +12,11 @@ from .node_commands import (
 )
 from .property_command import SetPropertyCommand
 from .stack import CommandStack, EditorCommand
+from .tilemap_commands import (
+    TileMapCellEdit,
+    TileMapPaintCommand,
+    TileMapProjectionCommand,
+)
 from .transform_command import (
     TransformNodeCommand,
     TransformSnapshot,
@@ -18,6 +24,7 @@ from .transform_command import (
 
 __all__ = [
     "AddImageSpriteCommand",
+    "AnimationClipCommand",
     "InstantiatePrefabCommand",
     "prefab_instance_overrides_for_node",
     "texture_source_for_assets",
@@ -27,6 +34,9 @@ __all__ = [
     "EditorCommand",
     "RenameNodeCommand",
     "SetPropertyCommand",
+    "TileMapCellEdit",
+    "TileMapPaintCommand",
+    "TileMapProjectionCommand",
     "TransformNodeCommand",
     "TransformSnapshot",
 ]

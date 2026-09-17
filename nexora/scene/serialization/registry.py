@@ -256,6 +256,62 @@ class NodeFactoryRegistry:
     def _register_defaults(
         self,
     ) -> None:
+        def dump_animations(node) -> list[dict[str, Any]]:
+            return [
+                {
+                    "name": clip.name,
+                    "loop": bool(clip.loop),
+                    "frames": [
+                        {
+                            "index": int(frame.index),
+                            "duration": float(frame.duration),
+                            "uv": frame.uv,
+                        }
+                        for frame in clip.frames
+                    ],
+                    "events": [
+                        {
+                            "frame": int(event.frame),
+                            "name": event.name,
+                            "data": event.data,
+                        }
+                        for event in clip.events
+                    ],
+                }
+                for clip in node.animations
+            ]
+
+        def load_animations(node, state: dict[str, Any]) -> None:
+            for clip_state in state.get("animations", []):
+                frames = tuple(
+                    AnimationFrame(
+                        index=int(frame["index"]),
+                        duration=float(frame["duration"]),
+                        uv=(
+                            None
+                            if frame.get("uv") is None
+                            else tuple(frame["uv"])
+                        ),
+                    )
+                    for frame in clip_state.get("frames", [])
+                )
+                events = tuple(
+                    AnimationEvent(
+                        frame=int(event["frame"]),
+                        name=str(event["name"]),
+                        data=event.get("data"),
+                    )
+                    for event in clip_state.get("events", [])
+                )
+                node.add_animation(
+                    AnimationClip(
+                        name=str(clip_state["name"]),
+                        frames=frames,
+                        loop=bool(clip_state.get("loop", True)),
+                        events=events,
+                    )
+                )
+
         # ==========================================================
         # Base Node
         # ==========================================================
@@ -312,6 +368,7 @@ class NodeFactoryRegistry:
                     for value
                     in node.uv
                 ),
+                "animations": dump_animations(node),
             }
 
         def load_animated_sprite(
@@ -386,6 +443,8 @@ class NodeFactoryRegistry:
                 for value
                 in uv
             )
+
+            load_animations(node, state)
 
             source = state.get(
                 "texture_source"

@@ -6,6 +6,7 @@ from math import atan2, cos, degrees, hypot, radians, sin
 
 from nexora.nodes.ui.ui_node import UINode
 from nexora.rendering.camera import Camera
+from nexora.tilemap import TileProjection
 
 
 @dataclass(slots=True)
@@ -803,6 +804,9 @@ class EditorViewportCanvas(UINode):
         if editor is None:
             return
 
+        if getattr(editor, "tilemap_tool", "select") != "select":
+            return
+
         node = editor.selection.selected
 
         if (
@@ -1060,6 +1064,8 @@ class EditorViewportCanvas(UINode):
                 1.0,
             )
 
+            self._draw_tilemap_hover(renderer, state)
+
             self._draw_selection(renderer, state)
             self._draw_transform_gizmo(
                 renderer,
@@ -1069,6 +1075,62 @@ class EditorViewportCanvas(UINode):
             renderer.pop_clip_rect()
 
         super().render(renderer)
+
+    def _draw_tilemap_hover(
+        self,
+        renderer,
+        state: EditorViewportState,
+    ) -> None:
+        editor = self.editor_scene
+        if editor is None:
+            return
+
+        model = editor._selected_tilemap_editor_model()
+        cell = getattr(editor, "_tilemap_hover_cell", None)
+        if model is None or cell is None:
+            return
+
+        x, y = cell
+        try:
+            center_x, center_y = model.node.tile_world_position(x, y)
+            tilemap = model.tilemap
+        except (IndexError, RuntimeError, ValueError):
+            return
+
+        half_w = tilemap.tile_width * 0.5
+        half_h = tilemap.tile_height * 0.5
+        if tilemap.projection is TileProjection.ISOMETRIC:
+            points = (
+                (center_x, center_y - half_h),
+                (center_x + half_w, center_y),
+                (center_x, center_y + half_h),
+                (center_x - half_w, center_y),
+            )
+        else:
+            points = (
+                (center_x - half_w, center_y - half_h),
+                (center_x + half_w, center_y - half_h),
+                (center_x + half_w, center_y + half_h),
+                (center_x - half_w, center_y + half_h),
+            )
+
+        viewport_center = self.calculate_position()
+        screen_points = [
+            state.world_to_screen(px, py, *viewport_center)
+            for px, py in points
+        ]
+        color = (0.95, 0.72, 0.18, 1.0)
+        for index, (x1, y1) in enumerate(screen_points):
+            x2, y2 = screen_points[(index + 1) % len(screen_points)]
+            renderer.line(
+                x1,
+                y1,
+                x2,
+                y2,
+                width=2.0,
+                color=color,
+                layer=100050,
+            )
 
 
 def node_hit_distance(

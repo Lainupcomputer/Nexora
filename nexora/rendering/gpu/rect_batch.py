@@ -826,8 +826,10 @@ class GPURectBatch:
 
     def _update_camera_uniform(
         self,
+        *,
+        screen_space: bool = False,
     ):
-        if self.camera is None:
+        if screen_space or self.camera is None:
             camera_x = 0.0
             camera_y = 0.0
 
@@ -882,6 +884,35 @@ class GPURectBatch:
             shake_y,
 
             0.0,
+        )
+
+    def push_camera_uniform(
+        self,
+        command_buffer,
+        *,
+        screen_space: bool = False,
+    ) -> None:
+        """Push the camera used by the next rectangle draw calls."""
+
+        self._update_camera_uniform(screen_space=screen_space)
+
+        camera_buffer = (
+            (
+                ctypes.c_ubyte
+                * self.CAMERA_UNIFORM_SIZE
+            ).from_buffer(
+                self._camera_data
+            )
+        )
+
+        sdl3.SDL_PushGPUVertexUniformData(
+            command_buffer,
+            0,
+            ctypes.cast(
+                camera_buffer,
+                ctypes.c_void_p,
+            ),
+            self.CAMERA_UNIFORM_SIZE,
         )
 
     # ==========================================================

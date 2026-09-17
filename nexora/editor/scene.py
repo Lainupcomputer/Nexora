@@ -31,6 +31,7 @@ from nexora.editor.model import (
 
 from nexora.editor.commands import (
     AddImageSpriteCommand,
+    AnimationClipCommand,
     AddNodeCommand,
     CommandStack,
     DeleteNodeCommand,
@@ -39,6 +40,8 @@ from nexora.editor.commands import (
     SetPropertyCommand,
     TransformNodeCommand,
     TransformSnapshot,
+    TileMapPaintCommand,
+    TileMapProjectionCommand,
     prefab_instance_overrides_for_node,
 )
 
@@ -58,6 +61,12 @@ from nexora.editor.viewport import (
     world_delta_to_local,
 )
 from nexora.nodes.node import Node
+from nexora.nodes.world.tilemap_node import TileMapNode
+from nexora.nodes.texture.animated_sprite import AnimatedSprite
+from nexora.editor.tilemap import TileMapEditorModel
+from nexora.editor.tile_palette import TilePalette
+from nexora.animation import AnimationClip, AnimationFrame, AnimationPlayer
+from nexora.tilemap import TileMap, TileProjection, TileSet
 
 from nexora.editor.theme import (
     ACCENT,
@@ -121,6 +130,11 @@ class EditorScene(Scene):
         self._gizmo_drag = None
         self._gizmo_active_handle = None
 
+        self.tilemap_tool = "select"
+        self._tilemap_model = None
+        self._tilemap_drag_cells = None
+        self._tilemap_hover_cell = None
+
         self.asset_browser = AssetBrowserModel(
             self.project_path
         )
@@ -128,6 +142,7 @@ class EditorScene(Scene):
         self._selected_asset = None
         self._asset_drag_payload = None
         self._bottom_tab = "assets"
+        self._animation_clip_name = None
         self._asset_pointer_press = None
         self._asset_drag_active = False
         self._asset_drag_entry = None
@@ -306,6 +321,7 @@ class EditorScene(Scene):
         self.add_node_type_list.padding_right = 5.0
         self.add_node_type_list.padding_top = 5.0
         self.add_node_type_list.padding_bottom = 5.0
+        self.add_node_type_list.on_change = self._on_add_node_type_selected
 
         self.add_node_name = self.add_node_dialog.content.create_child(
             "NodeName",
@@ -613,6 +629,12 @@ class EditorScene(Scene):
     # NODE EDITING / UNDO REDO
     # ==========================================================
 
+    def _on_add_node_type_selected(self, _index: int, label: str | None) -> None:
+        """Keep the suggested node name in sync with the selected type."""
+
+        if label:
+            self.add_node_name.set_text(str(label), emit=False)
+
     def _editable_selected_node(self):
         node = self.selection.selected
         if node is None:
@@ -652,12 +674,18 @@ class EditorScene(Scene):
         name = self.add_node_name.text.strip() or type_id
         parent = self._selected_parent_for_add()
         try:
+            configure = (
+                self._configure_default_tilemap_node
+                if type_id == "TileMapNode"
+                else None
+            )
             command = AddNodeCommand(
                 parent=parent,
                 registry=self.game.scene_serializer.registry,
                 type_id=type_id,
                 name=name,
                 context=self._serialization_context(),
+                configure=configure,
             )
             node = self.commands.execute(command)
         except Exception as exc:
@@ -668,6 +696,54 @@ class EditorScene(Scene):
         self.selection.select(node)
         self._refresh_document_ui()
         self.status_label.text = f"Added {name}"
+
+    def _configure_default_tilemap_node(self, node: TileMapNode) -> None:
+        """Create a usable starter map when adding a TileMapNode in-editor."""
+
+        candidates = (
+            "demo_sprite.png",
+            "world/isometric_tiles.png",
+        )
+        texture_asset = next(
+            (
+                candidate
+                for candidate in candidates
+                if (self.project_path / "assets" / candidate).is_file()
+            ),
+            None,
+        )
+        if texture_asset is None:
+            raise FileNotFoundError(
+                "No starter texture found in the project's assets folder."
+            )
+
+        tilemap = TileMap(
+            name=f"{node.name}Map",
+            width=16,
+            height=16,
+            tile_width=32,
+            tile_height=32,
+            projection=TileProjection.ANGLED_2D,
+        )
+        tilemap.create_layer("ground")
+
+        if texture_asset == "demo_sprite.png":
+            columns = rows = 3
+        else:
+            columns = rows = 1
+
+        tileset = TileSet(
+            name=f"{node.name}Tiles",
+            columns=columns,
+            rows=rows,
+            tile_width=32,
+            tile_height=32,
+            texture_asset=texture_asset,
+        )
+        assets = self.game.engine.assets
+        texture = assets.texture(texture_asset)
+        node.set_map(tilemap, tileset, texture)
+        node.centered = True
 
     def open_rename_node_dialog(self) -> None:
         node = self._editable_selected_node()
@@ -878,6 +954,433 @@ class EditorScene(Scene):
         self.viewport_controls.anchor = (1.0, 0.0)
         self.viewport_controls.pivot = (1.0, 0.0)
 
+        self.tilemap_tool_label = self.viewport.create_child(
+            "TileMapToolLabel",
+            node_type=Label,
+        )
+        self.tilemap_tool_label.text = "TileMap: select a configured node"
+        self.tilemap_tool_label.scale = 0.56
+        self.tilemap_tool_label.anchor = (0.0, 0.0)
+        self.tilemap_tool_label.pivot = (0.0, 0.0)
+
+        self.tilemap_select_button = self._button(
+            self.viewport,
+            "TileMapSelectButton",
+            "Select",
+            lambda: self._set_tilemap_tool("select"),
+        )
+        self.tilemap_paint_button = self._button(
+            self.viewport,
+            "TileMapPaintButton",
+            "Paint",
+            lambda: self._set_tilemap_tool("paint"),
+        )
+        self.tilemap_erase_button = self._button(
+            self.viewport,
+            "TileMapEraseButton",
+            "Erase",
+            lambda: self._set_tilemap_tool("erase"),
+        )
+        self.tilemap_fill_button = self._button(
+            self.viewport,
+            "TileMapFillButton",
+            "Fill",
+            lambda: self._set_tilemap_tool("fill"),
+        )
+        self.tilemap_projection_button = self._button(
+            self.viewport,
+            "TileMapProjectionButton",
+            "Angled 2D",
+            self._set_angled_2d_projection,
+        )
+
+        self.tilemap_tile_input = self.viewport.create_child(
+            "TileMapTileInput",
+            node_type=TextInput,
+        )
+        self.tilemap_tile_input.placeholder = "Tile ID"
+        self.tilemap_tile_input.set_text("0", emit=False)
+        self.tilemap_tile_input.auto_size = False
+
+        self.tilemap_layer_label = self.viewport.create_child(
+            "TileMapLayerLabel",
+            node_type=Label,
+        )
+        self.tilemap_layer_label.text = "Layer: -"
+        self.tilemap_layer_label.scale = 0.56
+        self.tilemap_layer_label.anchor = (1.0, 0.0)
+        self.tilemap_layer_label.pivot = (1.0, 0.0)
+
+    def _selected_tilemap_editor_model(self):
+        node = self.selection.selected
+        if not isinstance(node, TileMapNode):
+            self._tilemap_model = None
+            return None
+        if node.tilemap is None or node.tileset is None:
+            self._tilemap_model = None
+            return None
+
+        if self._tilemap_model is None or self._tilemap_model.node is not node:
+            self._tilemap_model = TileMapEditorModel(node)
+
+        if (
+            self._tilemap_model.active_layer_name not in node.tilemap.layer_names
+            and node.tilemap.layer_count
+        ):
+            self._tilemap_model.set_active_layer(node.tilemap.layer_names[0])
+
+        return self._tilemap_model
+
+    def _set_tilemap_tool(self, tool: str) -> None:
+        tool = str(tool).lower()
+        if tool not in {"select", "paint", "erase", "fill"}:
+            raise ValueError(f"Unknown TileMap tool: {tool}")
+
+        self.tilemap_tool = tool
+        self._tilemap_drag_cells = None
+        self.status_label.text = f"TileMap tool: {tool.title()}"
+        self._refresh_tilemap_tools()
+
+    def _set_angled_2d_projection(self) -> None:
+        model = self._selected_tilemap_editor_model()
+        if model is None:
+            self.status_label.text = "Select a configured TileMap first"
+            return
+        if model.tilemap.projection is TileProjection.ANGLED_2D:
+            self.status_label.text = "TileMap is already Angled 2D"
+            return
+        self.commands.execute(
+            TileMapProjectionCommand(
+                model.node,
+                TileProjection.ANGLED_2D,
+            )
+        )
+        self.document.mark_dirty()
+        self._refresh_document_ui()
+        self.status_label.text = "TileMap projection set to Angled 2D"
+
+    def _refresh_tilemap_tools(self) -> None:
+        if not hasattr(self, "tilemap_paint_button"):
+            return
+
+        model = self._selected_tilemap_editor_model()
+        enabled = model is not None and bool(model.layer_names)
+        for control in (
+            self.tilemap_select_button,
+            self.tilemap_paint_button,
+            self.tilemap_erase_button,
+            self.tilemap_fill_button,
+            self.tilemap_projection_button,
+            self.tilemap_tile_input,
+        ):
+            control.enabled = enabled
+
+        if model is None:
+            self.tilemap_tool_label.text = "TileMap: select a configured node"
+            self.tilemap_layer_label.text = "Layer: -"
+            if hasattr(self, "tilemap_palette_list"):
+                self.tilemap_palette_list.set_tileset(None)
+                self.tilemap_layer_list.set_items([])
+            return
+
+        self.tilemap_tool_label.text = (
+            f"TileMap: {self.tilemap_tool.title()}  |  "
+            f"{model.tilemap.projection.value}  |  Tile ID"
+        )
+        self.tilemap_layer_label.text = (
+            f"Layer: {model.active_layer_name or '-'}"
+        )
+
+        if hasattr(self, "tilemap_palette_list"):
+            tile_count = model.tileset.tile_count
+            self.tilemap_palette_list.set_tileset(
+                model.tileset,
+                model.node.texture,
+            )
+            selected_tile = (
+                model.selected_tile
+                if model.selected_tile is not None
+                else 0
+            )
+            if tile_count:
+                self.tilemap_palette_list.set_selected_index(
+                    min(selected_tile, tile_count - 1),
+                    emit=False,
+                )
+            self.tilemap_layer_list.set_items(list(model.layer_names))
+            if model.active_layer_name in model.layer_names:
+                self.tilemap_layer_list.set_selected_index(
+                    model.layer_names.index(model.active_layer_name),
+                    emit=False,
+                )
+
+    def _on_tile_palette_selected(self, index: int, _label: str | None) -> None:
+        model = self._selected_tilemap_editor_model()
+        if model is None:
+            return
+        try:
+            model.set_selected_tile(index)
+        except (IndexError, ValueError) as exc:
+            self.status_label.text = str(exc)
+            return
+        self.tilemap_tile_input.set_text(str(index), emit=False)
+        self.status_label.text = f"Selected Tile {index}"
+
+    def _on_tile_layer_selected(self, index: int, _label: str | None) -> None:
+        model = self._selected_tilemap_editor_model()
+        if model is None or not (0 <= index < len(model.layer_names)):
+            return
+        model.set_active_layer(model.layer_names[index])
+        self._refresh_tilemap_tools()
+        self.status_label.text = f"Active layer: {model.active_layer_name}"
+
+    def _selected_animation_player(self):
+        node = self.selection.selected
+        return node if isinstance(node, (AnimationPlayer, AnimatedSprite)) else None
+
+    def _animation_speed_property(self, node) -> str:
+        return "speed_scale" if isinstance(node, AnimationPlayer) else "animation_speed"
+
+    def _animation_speed(self, node) -> float:
+        return float(
+            node.speed_scale
+            if isinstance(node, AnimationPlayer)
+            else node.animation_speed
+        )
+
+    def _add_animation_clip(self) -> None:
+        node = self._selected_animation_player()
+        if node is None:
+            return
+
+        existing = {clip.name for clip in node.animations}
+        index = 1
+        while f"Animation {index}" in existing:
+            index += 1
+        name = f"Animation {index}"
+        clip = AnimationClip(
+            name=name,
+            frames=(AnimationFrame(index=0, duration=1.0 / 6.0),),
+            loop=True,
+        )
+        self.commands.execute(AnimationClipCommand(node, clip))
+        self.document.mark_dirty()
+        self._animation_clip_name = name
+        node.play(name, restart=True)
+        self._refresh_animation_panel()
+        self.status_label.text = f"Created animation: {name}"
+
+    def _refresh_animation_panel(self) -> None:
+        if not hasattr(self, "animation_list"):
+            return
+
+        player = self._selected_animation_player()
+        enabled = player is not None
+        for control in (
+            self.animation_list,
+            self.animation_frame_list,
+            self.animation_new_button,
+            self.animation_play_button,
+            self.animation_pause_button,
+            self.animation_stop_button,
+            self.animation_speed_input,
+        ):
+            control.enabled = enabled
+
+        if player is None:
+            self.animation_list.set_items([])
+            self.animation_frame_list.set_items([])
+            self.animation_status_label.text = "Select an AnimatedSprite or AnimationPlayer"
+            return
+
+        animations = player.animations
+        names = [clip.name for clip in animations]
+        self.animation_list.set_items(names)
+        if not names:
+            self._animation_clip_name = None
+            self.animation_frame_list.set_items([])
+            self.animation_status_label.text = "No animations - click New"
+            return
+
+        if self._animation_clip_name not in names:
+            self._animation_clip_name = (
+                player.current_animation_name
+                if player.current_animation_name in names
+                else names[0]
+            )
+
+        animation_index = names.index(self._animation_clip_name)
+        self.animation_list.set_selected_index(animation_index, emit=False)
+        clip = player.get_animation(self._animation_clip_name)
+        if clip is None:
+            self.animation_frame_list.set_items([])
+            return
+
+        self.animation_frame_list.set_items(
+            [
+                f"Frame {index}  |  source {frame.index}  |  "
+                f"{frame.duration * 1000.0:.1f} ms"
+                for index, frame in enumerate(clip.frames)
+            ]
+        )
+        self.animation_speed_input.set_text(
+            f"{self._animation_speed(player):g}",
+            emit=False,
+        )
+        state = "Playing" if player.playing else "Stopped"
+        self.animation_status_label.text = (
+            f"{clip.name}  |  {clip.frame_count} frames  |  {state}"
+        )
+
+    def _on_animation_selected(self, index: int, _label: str | None) -> None:
+        player = self._selected_animation_player()
+        if player is None or not (0 <= index < len(player.animations)):
+            return
+        self._animation_clip_name = player.animations[index].name
+        player.play(self._animation_clip_name, restart=True)
+        self._refresh_animation_panel()
+        self.status_label.text = f"Preview: {self._animation_clip_name}"
+
+    def _on_animation_speed_submitted(self, text: str) -> None:
+        player = self._selected_animation_player()
+        if player is None:
+            return
+        try:
+            speed = float(str(text).strip().replace(",", "."))
+        except ValueError:
+            self.status_label.text = "Animation speed must be a number"
+            self._refresh_animation_panel()
+            return
+        if speed <= 0.0:
+            self.status_label.text = "Animation speed must be greater than zero"
+            self._refresh_animation_panel()
+            return
+        if speed == self._animation_speed(player):
+            return
+        property_name = self._animation_speed_property(player)
+        self.commands.execute(
+            SetPropertyCommand(
+                player,
+                property_name,
+                speed,
+                label=f"Set {player.name} Animation Speed",
+            )
+        )
+        self.document.mark_dirty()
+        self._refresh_animation_panel()
+        self.status_label.text = "Animation speed changed"
+
+    def _play_selected_animation(self) -> None:
+        player = self._selected_animation_player()
+        if player is None or self._animation_clip_name is None:
+            return
+        player.play(self._animation_clip_name)
+        self._refresh_animation_panel()
+
+    def _pause_selected_animation(self) -> None:
+        player = self._selected_animation_player()
+        if player is None:
+            return
+        player.pause()
+        self._refresh_animation_panel()
+
+    def _stop_selected_animation(self) -> None:
+        player = self._selected_animation_player()
+        if player is None:
+            return
+        player.stop()
+        self._refresh_animation_panel()
+
+    def _read_tilemap_tile_id(self, model) -> bool:
+        try:
+            tile_id = int(self.tilemap_tile_input.text.strip())
+            model.set_selected_tile(tile_id)
+        except (TypeError, ValueError, IndexError) as exc:
+            self.status_label.text = f"Invalid Tile ID: {exc}"
+            return False
+        return True
+
+    def _apply_tilemap_command(self, command: TileMapPaintCommand) -> None:
+        if not command.edits:
+            self.status_label.text = "TileMap: no cells changed"
+            return
+
+        self.commands.execute(command)
+        self.document.mark_dirty()
+        self._refresh_document_ui()
+        self.status_label.text = command.label
+
+    def _tilemap_cell_under_mouse(self, model):
+        mouse_x, mouse_y = self._viewport_mouse_centered()
+        center_x, center_y = self.viewport_canvas.calculate_position()
+        world_x, world_y = self.viewport_state.screen_to_world(
+            mouse_x,
+            mouse_y,
+            center_x,
+            center_y,
+        )
+        return model.cell_from_world(world_x, world_y)
+
+    def _update_tilemap_input(self) -> bool:
+        model = self._selected_tilemap_editor_model()
+        if model is None or not model.layer_names:
+            self._tilemap_drag_cells = None
+            self._tilemap_hover_cell = None
+            return False
+
+        input_manager = self.game.input
+        if input_manager.key_pressed("p"):
+            self._set_tilemap_tool("paint")
+        elif input_manager.key_pressed("x"):
+            self._set_tilemap_tool("erase")
+        elif input_manager.key_pressed("b"):
+            self._set_tilemap_tool("fill")
+
+        self._tilemap_hover_cell = (
+            self._tilemap_cell_under_mouse(model)
+            if self._mouse_inside_viewport_canvas()
+            else None
+        )
+
+        if self.tilemap_tool == "select":
+            return False
+
+        if input_manager.key_pressed("escape"):
+            self._tilemap_drag_cells = None
+            return True
+
+        if self._tilemap_drag_cells is not None:
+            if input_manager.mouse_down("left"):
+                cell = self._tilemap_cell_under_mouse(model)
+                if cell is not None and cell not in self._tilemap_drag_cells:
+                    self._tilemap_drag_cells.append(cell)
+
+            if input_manager.mouse_released("left"):
+                cells = self._tilemap_drag_cells
+                self._tilemap_drag_cells = None
+                if self.tilemap_tool == "erase" or self._read_tilemap_tile_id(model):
+                    command = (
+                        model.erase_command(cells)
+                        if self.tilemap_tool == "erase"
+                        else model.paint_command(cells)
+                    )
+                    self._apply_tilemap_command(command)
+            return True
+
+        if not self._mouse_inside_viewport_canvas():
+            return True
+
+        if input_manager.mouse_pressed("left"):
+            if self.tilemap_tool == "fill":
+                if self._read_tilemap_tile_id(model):
+                    self._apply_tilemap_command(model.fill_command())
+            else:
+                cell = self._tilemap_cell_under_mouse(model)
+                if cell is not None:
+                    self._tilemap_drag_cells = [cell]
+
+        return True
+
     def _any_editor_dialog_open(self) -> bool:
         names = (
             "new_scene_dialog",
@@ -959,6 +1462,22 @@ class EditorScene(Scene):
             self.selection.select(best_node)
 
         self._refresh_scene_tree()
+
+    def _focus_selected_node(self) -> None:
+        node = self._selected_viewport_node()
+        if node is None:
+            self.status_label.text = "Select a node to focus"
+            return
+
+        try:
+            world_x, world_y = node.world_position
+        except Exception:
+            self.status_label.text = "Selected node has no world position"
+            return
+
+        self.viewport_state.x = float(world_x)
+        self.viewport_state.y = float(world_y)
+        self.status_label.text = f"Focused {node.name}"
 
     def _selected_viewport_node(self):
         node = self.selection.selected
@@ -1420,6 +1939,13 @@ class EditorScene(Scene):
 
             return
 
+        if input_manager.key_pressed("f"):
+            self._focus_selected_node()
+
+        if input_manager.key_pressed("home"):
+            self.viewport_state.reset()
+            self.status_label.text = "Viewport reset"
+
         if not self._mouse_inside_viewport_canvas():
             self._gizmo_active_handle = None
             return
@@ -1561,6 +2087,7 @@ class EditorScene(Scene):
 
         self.viewport_controls.text = (
             f"W Move  E Rotate  R Scale  G Snap:{snap_text}   "
+            f"F Focus  Home Reset  P Paint  X Erase  B Fill  "
             f"MMB Pan  Wheel Zoom   "
             f"{tool_text}   "
             f"{self.viewport_state.zoom * 100.0:.0f}%"
@@ -2091,7 +2618,13 @@ class EditorScene(Scene):
         )
 
     def _on_selection_changed(self, node, _previous) -> None:
+        self._tilemap_drag_cells = None
+        self._tilemap_hover_cell = None
+        if not isinstance(node, TileMapNode):
+            self.tilemap_tool = "select"
         self._refresh_inspector()
+        self._refresh_tilemap_tools()
+        self._refresh_animation_panel()
 
         # Reset only after the selected node's controls have been made
         # visible and the ScrollView content size has been recalculated.
@@ -2134,6 +2667,24 @@ class EditorScene(Scene):
             "Console",
             lambda: self._set_bottom_tab(
                 "console"
+            ),
+        )
+
+        self.tilemap_button = self._button(
+            self.bottom_dock,
+            "TileMapTab",
+            "TileMap",
+            lambda: self._set_bottom_tab(
+                "tilemap"
+            ),
+        )
+
+        self.animation_button = self._button(
+            self.bottom_dock,
+            "AnimationTab",
+            "Animation",
+            lambda: self._set_bottom_tab(
+                "animation"
             ),
         )
 
@@ -2268,7 +2819,7 @@ class EditorScene(Scene):
         )
 
         # ------------------------------------------------------
-        # Console placeholder
+        # Console output
         # ------------------------------------------------------
 
         self.console_content = (
@@ -2278,9 +2829,7 @@ class EditorScene(Scene):
             )
         )
 
-        self.console_content.text = (
-            "Debug console output will be docked here."
-        )
+        self.console_content.text = "Console ready."
         self.console_content.scale = 0.66
         self.console_content.anchor = (
             0.0,
@@ -2290,6 +2839,110 @@ class EditorScene(Scene):
             0.0,
             0.0,
         )
+
+        self.console_clear_button = self._button(
+            self.bottom_dock,
+            "ConsoleClearButton",
+            "Clear",
+            self._clear_editor_console,
+        )
+
+        self.tilemap_palette_list = self.bottom_dock.create_child(
+            "TileMapPalette",
+            node_type=TilePalette,
+        )
+        self.tilemap_palette_list.on_change = self._on_tile_palette_selected
+
+        self.tilemap_layer_list = self.bottom_dock.create_child(
+            "TileMapLayers",
+            node_type=ListView,
+        )
+        self.tilemap_layer_list.item_height = 28.0
+        self.tilemap_layer_list.spacing = 1.0
+        self.tilemap_layer_list.padding_left = 5.0
+        self.tilemap_layer_list.padding_right = 5.0
+        self.tilemap_layer_list.padding_top = 5.0
+        self.tilemap_layer_list.padding_bottom = 5.0
+        self.tilemap_layer_list.text_padding_left = 7.0
+        self.tilemap_layer_list.text_scale = 0.58
+        self.tilemap_layer_list.on_change = self._on_tile_layer_selected
+
+        self.tilemap_layers_title = self.bottom_dock.create_child(
+            "TileMapLayersTitle",
+            node_type=Label,
+        )
+        self.tilemap_layers_title.text = "Layers"
+        self.tilemap_layers_title.scale = 0.62
+        self.tilemap_layers_title.anchor = (0.0, 0.0)
+        self.tilemap_layers_title.pivot = (0.0, 0.0)
+
+        self.animation_list = self.bottom_dock.create_child(
+            "AnimationList",
+            node_type=ListView,
+        )
+        self.animation_list.item_height = 30.0
+        self.animation_list.spacing = 1.0
+        self.animation_list.padding_left = 5.0
+        self.animation_list.padding_right = 5.0
+        self.animation_list.padding_top = 5.0
+        self.animation_list.padding_bottom = 5.0
+        self.animation_list.text_padding_left = 7.0
+        self.animation_list.text_scale = 0.58
+        self.animation_list.on_change = self._on_animation_selected
+
+        self.animation_frame_list = self.bottom_dock.create_child(
+            "AnimationFrameList",
+            node_type=ListView,
+        )
+        self.animation_frame_list.item_height = 30.0
+        self.animation_frame_list.spacing = 1.0
+        self.animation_frame_list.padding_left = 5.0
+        self.animation_frame_list.padding_right = 5.0
+        self.animation_frame_list.padding_top = 5.0
+        self.animation_frame_list.padding_bottom = 5.0
+        self.animation_frame_list.text_padding_left = 7.0
+        self.animation_frame_list.text_scale = 0.58
+
+        self.animation_new_button = self._button(
+            self.bottom_dock,
+            "AnimationNew",
+            "New",
+            self._add_animation_clip,
+        )
+
+        self.animation_status_label = self.bottom_dock.create_child(
+            "AnimationStatus",
+            node_type=Label,
+        )
+        self.animation_status_label.scale = 0.58
+        self.animation_status_label.anchor = (0.0, 0.0)
+        self.animation_status_label.pivot = (0.0, 0.0)
+
+        self.animation_play_button = self._button(
+            self.bottom_dock,
+            "AnimationPlay",
+            "Play",
+            self._play_selected_animation,
+        )
+        self.animation_pause_button = self._button(
+            self.bottom_dock,
+            "AnimationPause",
+            "Pause",
+            self._pause_selected_animation,
+        )
+        self.animation_stop_button = self._button(
+            self.bottom_dock,
+            "AnimationStop",
+            "Stop",
+            self._stop_selected_animation,
+        )
+        self.animation_speed_input = self.bottom_dock.create_child(
+            "AnimationSpeed",
+            node_type=TextInput,
+        )
+        self.animation_speed_input.placeholder = "Speed"
+        self.animation_speed_input.auto_size = False
+        self.animation_speed_input.on_submit = self._on_animation_speed_submitted
 
         # ------------------------------------------------------
         # Context actions
@@ -2384,6 +3037,8 @@ class EditorScene(Scene):
     def _refresh_document_ui(self) -> None:
         self._refresh_scene_tree()
         self._refresh_inspector()
+        self._refresh_tilemap_tools()
+        self._refresh_animation_panel()
         self.document_label.text = (
             f"{self.project.name}  |  {self.document.title}"
         )
@@ -2893,6 +3548,8 @@ class EditorScene(Scene):
             self._bottom_tab
             == "assets"
         )
+        tilemap_visible = self._bottom_tab == "tilemap"
+        animation_visible = self._bottom_tab == "animation"
 
         for node in (
             self.asset_up_button,
@@ -2907,8 +3564,32 @@ class EditorScene(Scene):
                 assets_visible
             )
 
-        self.console_content.visible = (
+        self.console_content.visible = self._bottom_tab == "console"
+        self.console_clear_button.visible = (
             not assets_visible
+        )
+
+        for node in (
+            self.tilemap_palette_list,
+            self.tilemap_layer_list,
+            self.tilemap_layers_title,
+        ):
+            node.visible = tilemap_visible
+
+        for node in (
+            self.animation_list,
+            self.animation_frame_list,
+            self.animation_new_button,
+            self.animation_status_label,
+            self.animation_play_button,
+            self.animation_pause_button,
+            self.animation_stop_button,
+            self.animation_speed_input,
+        ):
+            node.visible = animation_visible
+
+        self.console_clear_button.visible = (
+            self._bottom_tab == "console"
         )
 
         if not assets_visible:
@@ -2918,6 +3599,14 @@ class EditorScene(Scene):
         self,
         tab: str,
     ) -> None:
+        if tab == "tilemap":
+            self._bottom_tab = "tilemap"
+            self.bottom_title.text = "Tile Palette"
+            self._apply_bottom_tab_visibility()
+            self._refresh_tilemap_tools()
+            self.status_label.text = "TileMap palette selected"
+            return
+
         if tab == "console":
             self._bottom_tab = "console"
             self.bottom_title.text = (
@@ -2929,6 +3618,14 @@ class EditorScene(Scene):
             )
             return
 
+        if tab == "animation":
+            self._bottom_tab = "animation"
+            self.bottom_title.text = "Animation Editor"
+            self._apply_bottom_tab_visibility()
+            self._refresh_animation_panel()
+            self.status_label.text = "Animation editor selected"
+            return
+
         self._bottom_tab = "assets"
         self.bottom_title.text = (
             "Assets"
@@ -2938,6 +3635,30 @@ class EditorScene(Scene):
         self.status_label.text = (
             "Assets panel selected"
         )
+
+    def _refresh_console_output(self) -> None:
+        engine = getattr(self.game, "engine", None)
+        console = getattr(engine, "console", None)
+        if console is None:
+            text = "No engine console available."
+        else:
+            lines = getattr(console, "lines", ())
+            recent = tuple(lines)[-8:]
+            text = "\n".join(
+                getattr(line, "display_text", str(line))
+                for line in recent
+            ) or "Console ready."
+
+        if self.console_content.text != text:
+            self.console_content.text = text
+
+    def _clear_editor_console(self) -> None:
+        engine = getattr(self.game, "engine", None)
+        console = getattr(engine, "console", None)
+        if console is not None:
+            console.clear()
+        self._refresh_console_output()
+        self.status_label.text = "Console cleared"
 
     def _toggle_play_mode(self) -> None:
         if self.game.play_mode:
@@ -2952,7 +3673,17 @@ class EditorScene(Scene):
     def update(self, delta_time: float) -> None:
         super().update(delta_time)
         self._sync_layout()
-        self._update_viewport_input()
+        self._refresh_console_output()
+        animation_node = self._selected_animation_player()
+        if (
+            self._bottom_tab == "animation"
+            and animation_node is not None
+            and animation_node.playing
+        ):
+            animation_node.update(delta_time)
+            self._refresh_animation_panel()
+        if not self._update_tilemap_input():
+            self._update_viewport_input()
         self._update_asset_drag_input()
         self._update_asset_context_input()
         if getattr(self.add_node_dialog, "is_open", False):
@@ -3119,7 +3850,7 @@ class EditorScene(Scene):
     def _sync_viewport_layout(self, width: float, height: float) -> None:
         self.viewport_title.position = (12.0, 10.0)
 
-        header_height = 38.0
+        header_height = 74.0
         margin = 5.0
         canvas_width = max(0.0, width - margin * 2.0)
         canvas_height = max(0.0, height - header_height - margin)
@@ -3162,7 +3893,7 @@ class EditorScene(Scene):
 
         self.viewport_controls.text = (
             f"W Move  E Rotate  R Scale  G Snap:{snap_text}   "
-            f"MMB Pan  Wheel Zoom   "
+            f"P Paint  X Erase  B Fill  MMB Pan  Wheel Zoom   "
             f"{tool_text}   "
             f"{self.viewport_state.zoom * 100.0:.0f}%"
         )
@@ -3170,6 +3901,34 @@ class EditorScene(Scene):
             -12.0,
             11.0,
         )
+
+        self.tilemap_tool_label.position = (12.0, 40.0)
+        self.tilemap_layer_label.position = (width - 12.0, 40.0)
+
+        tile_button_y = 61.0
+        tile_button_widths = (
+            (self.tilemap_select_button, 62.0),
+            (self.tilemap_paint_button, 62.0),
+            (self.tilemap_erase_button, 62.0),
+            (self.tilemap_fill_button, 58.0),
+        )
+        tile_x = 12.0
+        for button, button_width in tile_button_widths:
+            button.size = (button_width, 25.0)
+            button.anchor = (0.0, 0.0)
+            button.pivot = (0.5, 0.5)
+            button.position = (tile_x + button_width / 2.0, tile_button_y)
+            tile_x += button_width + 5.0
+
+        self.tilemap_tile_input.size = (72.0, 25.0)
+        self.tilemap_tile_input.anchor = (0.0, 0.0)
+        self.tilemap_tile_input.pivot = (0.5, 0.5)
+        self.tilemap_tile_input.position = (tile_x + 36.0, tile_button_y)
+        tile_x += 72.0 + 5.0
+        self.tilemap_projection_button.size = (92.0, 25.0)
+        self.tilemap_projection_button.anchor = (0.0, 0.0)
+        self.tilemap_projection_button.pivot = (0.5, 0.5)
+        self.tilemap_projection_button.position = (tile_x + 46.0, tile_button_y)
 
     def _sync_inspector_layout(self, width: float, height: float) -> None:
         self.inspector_title.position = (12.0, 10.0)
@@ -3346,8 +4105,42 @@ class EditorScene(Scene):
             23.0,
         )
 
+        self.tilemap_button.size = (
+            100.0,
+            32.0,
+        )
+        self.tilemap_button.anchor = (
+            0.0,
+            0.0,
+        )
+        self.tilemap_button.pivot = (
+            0.5,
+            0.5,
+        )
+        self.tilemap_button.position = (
+            245.0,
+            23.0,
+        )
+
+        self.animation_button.size = (
+            112.0,
+            32.0,
+        )
+        self.animation_button.anchor = (
+            0.0,
+            0.0,
+        )
+        self.animation_button.pivot = (
+            0.5,
+            0.5,
+        )
+        self.animation_button.position = (
+            351.0,
+            23.0,
+        )
+
         self.bottom_title.position = (
-            250.0,
+            490.0,
             13.0,
         )
 
@@ -3518,6 +4311,139 @@ class EditorScene(Scene):
         self.console_content.position = (
             18.0,
             76.0,
+        )
+
+        self.console_clear_button.size = (
+            78.0,
+            28.0,
+        )
+        self.console_clear_button.anchor = (
+            1.0,
+            0.0,
+        )
+        self.console_clear_button.pivot = (
+            0.5,
+            0.5,
+        )
+        self.console_clear_button.position = (
+            width - 48.0,
+            toolbar_y,
+        )
+
+        # ------------------------------------------------------
+        # TileMap palette
+        # ------------------------------------------------------
+
+        palette_top = 70.0
+        palette_height = max(
+            0.0,
+            height - palette_top - content_bottom_margin,
+        )
+        layer_width = min(
+            230.0,
+            max(170.0, width * 0.18),
+        )
+        palette_width = max(
+            180.0,
+            width - layer_width - 24.0,
+        )
+
+        self.tilemap_palette_list.size = (
+            palette_width,
+            palette_height,
+        )
+        self.tilemap_palette_list.anchor = (0.0, 0.0)
+        self.tilemap_palette_list.pivot = (0.5, 0.5)
+        self.tilemap_palette_list.position = (
+            8.0 + palette_width / 2.0,
+            palette_top + palette_height / 2.0,
+        )
+
+        self.tilemap_layers_title.position = (
+            16.0 + palette_width,
+            52.0,
+        )
+        self.tilemap_layer_list.size = (
+            layer_width,
+            palette_height,
+        )
+        self.tilemap_layer_list.anchor = (0.0, 0.0)
+        self.tilemap_layer_list.pivot = (0.5, 0.5)
+        self.tilemap_layer_list.position = (
+            16.0 + palette_width + layer_width / 2.0,
+            palette_top + palette_height / 2.0,
+        )
+
+        # ------------------------------------------------------
+        # Animation editor
+        # ------------------------------------------------------
+
+        animation_list_width = min(
+            230.0,
+            max(170.0, width * 0.18),
+        )
+        animation_top = 70.0
+        animation_height = max(
+            0.0,
+            height - animation_top - content_bottom_margin,
+        )
+        animation_frame_width = max(
+            240.0,
+            width - animation_list_width - 28.0,
+        )
+
+        self.animation_list.size = (
+            animation_list_width,
+            animation_height,
+        )
+        self.animation_list.anchor = (0.0, 0.0)
+        self.animation_list.pivot = (0.5, 0.5)
+        self.animation_list.position = (
+            8.0 + animation_list_width / 2.0,
+            animation_top + animation_height / 2.0,
+        )
+
+        self.animation_frame_list.size = (
+            animation_frame_width,
+            animation_height,
+        )
+        self.animation_frame_list.anchor = (0.0, 0.0)
+        self.animation_frame_list.pivot = (0.5, 0.5)
+        self.animation_frame_list.position = (
+            16.0 + animation_list_width + animation_frame_width / 2.0,
+            animation_top + animation_height / 2.0,
+        )
+
+        self.animation_status_label.position = (
+            16.0 + animation_list_width,
+            52.0,
+        )
+        animation_button_y = 49.0
+        self.animation_new_button.size = (58.0, 28.0)
+        self.animation_new_button.anchor = (0.0, 0.0)
+        self.animation_new_button.pivot = (0.5, 0.5)
+        self.animation_new_button.position = (37.0, animation_button_y)
+        animation_button_x = width - 246.0
+        for button, button_width in (
+            (self.animation_play_button, 64.0),
+            (self.animation_pause_button, 70.0),
+            (self.animation_stop_button, 64.0),
+        ):
+            button.size = (button_width, 28.0)
+            button.anchor = (0.0, 0.0)
+            button.pivot = (0.5, 0.5)
+            button.position = (
+                animation_button_x + button_width / 2.0,
+                animation_button_y,
+            )
+            animation_button_x += button_width + 5.0
+
+        self.animation_speed_input.size = (70.0, 28.0)
+        self.animation_speed_input.anchor = (1.0, 0.0)
+        self.animation_speed_input.pivot = (0.5, 0.5)
+        self.animation_speed_input.position = (
+            width - 42.0,
+            animation_button_y,
         )
 
         # Fixed context menu at the right edge of the asset list. It appears

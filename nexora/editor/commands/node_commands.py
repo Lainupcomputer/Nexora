@@ -51,12 +51,14 @@ class AddNodeCommand:
         type_id: str,
         name: str,
         context: dict | None = None,
+        configure=None,
     ) -> None:
         self.parent = parent
         self.registry = registry
         self.type_id = str(type_id)
         self.name = str(name).strip() or self.type_id
         self.context = dict(context or {})
+        self.configure = configure
         self.label = f"Add {self.name}"
         self._state = None
         self._node = None
@@ -75,7 +77,13 @@ class AddNodeCommand:
                 context=self.context,
             )
             _insert_child(self.parent, node, self._index)
-            self._state = node_to_state(node, self.registry)
+            try:
+                if self.configure is not None:
+                    self.configure(node)
+                self._state = node_to_state(node, self.registry)
+            except Exception:
+                node.destroy()
+                raise
             self._node = node
             return node
 

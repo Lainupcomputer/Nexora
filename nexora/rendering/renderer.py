@@ -212,6 +212,13 @@ class Renderer:
     def world_scope(self):
         return self.gpu.world_scope()
 
+    @property
+    def layer_offset(self) -> int:
+        return self.gpu.layer_offset
+
+    def layer_scope(self, offset: int):
+        return self.gpu.layer_scope(offset)
+
     # ==========================================================
     # Clipping
     # ==========================================================

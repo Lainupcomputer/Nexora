@@ -81,7 +81,10 @@ class EditorDocument:
 
     def load(self, serializer, path: str | Path, *, context: dict | None = None) -> Scene:
         resolved = Path(path).expanduser().resolve()
-        scene = serializer.load(resolved, context=context)
+        if context is None:
+            scene = serializer.load(resolved)
+        else:
+            scene = serializer.load(resolved, context=context)
         self.replace(scene, path=resolved, dirty=False)
         return scene
 

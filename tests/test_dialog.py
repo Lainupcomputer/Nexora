@@ -131,6 +131,17 @@ def test_file_dialog_filters_extensions(tmp_path: Path) -> None:
     assert "[folder]" in dialog.file_list.items
 
 
+def test_file_dialog_hides_technical_directories(tmp_path: Path) -> None:
+    for name in (".git", ".github", ".pytest_cache", ".venv", "Bruch", "assets"):
+        (tmp_path / name).mkdir()
+
+    scene = create_scene()
+    dialog = scene.ui.create_child("Files", node_type=FileDialog)
+    dialog.configure(mode="open", root_path=tmp_path)
+
+    assert dialog.file_list.items == ["[assets]"]
+
+
 def test_file_dialog_save_adds_extension(tmp_path: Path) -> None:
     scene = create_scene()
     dialog = scene.ui.create_child("Files", node_type=FileDialog)
