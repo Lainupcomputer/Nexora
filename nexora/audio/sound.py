@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .buffer import AudioBuffer
-from .pcm import decode_pcm
+from .pcm import PcmSamples, decode_pcm
 from .wav import WavLoader
 
 
@@ -15,7 +15,7 @@ class Sound:
     buffer: AudioBuffer
     path: Path | None = None
 
-    _pcm_cache: list[float] | None = field(
+    _pcm_cache: PcmSamples | None = field(
         default=None,
         init=False,
         repr=False,
@@ -38,8 +38,12 @@ class Sound:
         return self.buffer.size
 
     @property
-    def pcm(self) -> list[float]:
-        """Return decoded PCM samples, decoding only once."""
+    def pcm(self) -> PcmSamples:
+        """Return decoded PCM samples, decoding only once.
+
+        Long clips use a packed float array so a multi-minute WAV does not
+        expand into millions of Python float objects.
+        """
 
         if self._pcm_cache is None:
             self._pcm_cache = decode_pcm(

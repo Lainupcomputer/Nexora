@@ -6,6 +6,7 @@ from .device import AudioDevice
 from .mixer import AudioMixer
 from .player import AudioPlayer
 from .sound import Sound
+from .stream import StreamedSound, WavStreamReader
 from .source import AudioSource, AudioSourceState
 from .wav import WavLoader
 from .music import MusicPlayer, RepeatMode
@@ -21,6 +22,8 @@ __all__ = [
     "MusicPlayer",
     "AudioPlayer",
     "Sound",
+    "StreamedSound",
+    "WavStreamReader",
     "AudioSource",
     "AudioSourceState",
     "WavLoader",

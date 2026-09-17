@@ -46,6 +46,7 @@ class AudioSource:
         # Playback position
         self._position = 0
         self._playback_position = 0.0
+        self._stream_reader = None
 
         # Spatial audio
         self._spatial_position = (0.0, 0.0)
@@ -296,6 +297,9 @@ class AudioSource:
             self._position
         )
 
+        if self._stream_reader is not None:
+            self._stream_reader.seek(self._position)
+
     def seek_seconds(self, seconds: float) -> None:
         """Seek to a specific position in seconds."""
 
@@ -456,6 +460,10 @@ class AudioSource:
     def play(self) -> None:
         """Start playback from the beginning."""
 
+        self._ensure_stream_reader()
+        if self._stream_reader is not None:
+            self._stream_reader.seek(0)
+
         self._position = 0
         self._playback_position = 0.0
         self._state = AudioSourceState.PLAYING
@@ -480,6 +488,7 @@ class AudioSource:
         self._state = AudioSourceState.STOPPED
         self._position = 0
         self._playback_position = 0.0
+        self._close_stream_reader()
 
         self._clear_fade()
 
@@ -545,6 +554,28 @@ class AudioSource:
     # Internal
     # ------------------------------------------------------------------
 
+    def _ensure_stream_reader(self):
+        if not getattr(self.sound, "streaming", False):
+            return None
+
+        if self._stream_reader is None:
+            self._stream_reader = self.sound.open_reader()
+
+        return self._stream_reader
+
+    def _stream_sample(self, frame: int, channel: int) -> float:
+        reader = self._ensure_stream_reader()
+        if reader is None:
+            return 0.0
+        return reader.sample(frame, channel)
+
+    def _close_stream_reader(self) -> None:
+        reader = self._stream_reader
+        self._stream_reader = None
+
+        if reader is not None:
+            reader.close()
+
     def _finish(self) -> None:
         """Mark the source as naturally finished."""
 
@@ -552,7 +583,14 @@ class AudioSource:
             self._volume = self._fade_target_volume
 
         self._state = AudioSourceState.STOPPED
+        self._close_stream_reader()
         self._clear_fade()
+
+    def __del__(self):
+        try:
+            self._close_stream_reader()
+        except Exception:
+            pass
         
     def _advance_playback(
         self,

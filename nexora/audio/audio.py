@@ -7,6 +7,7 @@ from .device import AudioDevice
 from .mixer import AudioMixer
 from .player import AudioPlayer
 from .sound import Sound
+from .stream import StreamedSound
 
 
 class AudioSystem:
@@ -300,7 +301,7 @@ class AudioSystem:
     def load(
         self,
         path: str,
-    ) -> Sound:
+    ) -> Sound | StreamedSound:
         """
         Load a sound through the audio cache.
         """
@@ -310,6 +311,14 @@ class AudioSystem:
                 path
             )
         )
+
+    def load_stream(
+        self,
+        path: str,
+    ) -> StreamedSound | Sound:
+        """Load a WAV as metadata and stream decoded chunks during playback."""
+
+        return self.cache.load_stream(path)
 
     def unload(
         self,

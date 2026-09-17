@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .sound import Sound
+from .stream import StreamedSound
 from .wav import WavLoader
 
 
@@ -10,7 +11,7 @@ class AudioCache:
     """Caches loaded audio assets."""
 
     def __init__(self) -> None:
-        self._sounds: dict[Path, Sound] = {}
+        self._sounds: dict[Path, Sound | StreamedSound] = {}
 
     @property
     def sounds(self) -> tuple[Sound, ...]:
@@ -46,7 +47,7 @@ class AudioCache:
     def load(
         self,
         path: str | Path,
-    ) -> Sound:
+    ) -> Sound | StreamedSound:
         """Load and cache a sound."""
 
         path = self._normalize_path(path)
@@ -56,6 +57,22 @@ class AudioCache:
 
         sound = Sound.load(path)
 
+        self._sounds[path] = sound
+
+        return sound
+
+    def load_stream(
+        self,
+        path: str | Path,
+    ) -> StreamedSound | Sound:
+        """Load WAV metadata without decoding the complete audio file."""
+
+        path = self._normalize_path(path)
+
+        if path in self._sounds:
+            return self._sounds[path]
+
+        sound = StreamedSound.load(path)
         self._sounds[path] = sound
 
         return sound
