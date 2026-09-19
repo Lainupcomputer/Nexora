@@ -87,13 +87,15 @@ class AudioSettings:
         self,
         *,
         project_name: str = "Nexora",
+        settings_path=...,
         autosave: bool = True,
     ) -> None:
         self.store = (
             AudioSettingsStore(
                 project_name=(
                     project_name
-                )
+                ),
+                settings_path=settings_path,
             )
         )
 

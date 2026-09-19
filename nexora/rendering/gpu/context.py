@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 from enum import Enum
+from pathlib import Path
 
 import sdl3
 
@@ -203,6 +204,22 @@ class GPUContext:
             self.window,
             "SDL_CreateWindow failed",
         )
+
+    def set_icon(self, path: str | Path) -> bool:
+        """Set the native window icon from a PNG/BMP image file."""
+        icon_path = Path(path).expanduser()
+        if not icon_path.is_file():
+            return False
+
+        surface = sdl3.SDL_LoadPNG(str(icon_path).encode("utf-8"))
+        self._check(surface, f"Could not load window icon: {icon_path}")
+        try:
+            result = sdl3.SDL_SetWindowIcon(self.window, surface)
+            if result is False:
+                self._check(False, "SDL_SetWindowIcon failed")
+        finally:
+            sdl3.SDL_DestroySurface(surface)
+        return True
 
     def _create_device(
         self,

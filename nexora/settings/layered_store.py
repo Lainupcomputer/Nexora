@@ -149,9 +149,15 @@ class LayeredSettingsStore(
         # User settings
         # ======================================================
 
+        # Public settings facades use ``...`` as their omitted/default
+        # value, while direct store users use the internal sentinel.  Treat
+        # both forms as the automatic project settings directory.  Without
+        # this compatibility check ``Path(...)`` receives an Ellipsis and
+        # engine startup fails before the first scene is created.
         if (
             settings_path
             is _AUTO_PATH
+            or settings_path is ...
         ):
             self.settings_path = (
                 self.project_paths.settings

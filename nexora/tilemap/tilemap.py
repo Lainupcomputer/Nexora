@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 
-from nexora.tilemap.tile_layer import TileLayer
+from nexora.tilemap.tile_layer import TileLayer, normalize_layer_role
 from nexora.tilemap.projection import TileProjection
 
 
@@ -195,6 +195,7 @@ class TileMap:
         index: int | None = None,
         render_layer: int = 0,
         y_sort: bool | None = None,
+        role: str | None = None,
     ) -> TileLayer:
         """
         Create and add a layer matching the TileMap dimensions.
@@ -209,6 +210,7 @@ class TileMap:
             opacity=opacity,
             render_layer=render_layer,
             y_sort=(self.projection is TileProjection.ISOMETRIC if y_sort is None else y_sort),
+            role=normalize_layer_role(role, name=name),
         )
 
         self.add_layer(
@@ -348,6 +350,26 @@ class TileMap:
         return self._layers.index(
             layer
         )
+
+    def rename_layer(self, layer_or_name: TileLayer | str, new_name: str) -> TileLayer:
+        """Rename a layer while keeping the layer lookup consistent."""
+        layer = self._resolve_layer(layer_or_name)
+        new_name = str(new_name).strip()
+        if not new_name:
+            raise ValueError("TileLayer name cannot be empty.")
+        if new_name == layer.name:
+            return layer
+        if new_name in self._layer_lookup:
+            raise ValueError(f"Layer {new_name!r} already exists.")
+        self._layer_lookup.pop(layer.name, None)
+        layer.name = new_name
+        self._layer_lookup[new_name] = layer
+        return layer
+
+    def layers_with_role(self, role: str) -> tuple[TileLayer, ...]:
+        """Return all layers assigned to a functional role."""
+        normalized = normalize_layer_role(role)
+        return tuple(layer for layer in self._layers if layer.role == normalized)
 
     # ==============================================================
     # Remove

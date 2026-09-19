@@ -124,6 +124,7 @@ class Game:
         autosave_enabled: bool = True,
         autosave_slots: int = 3,
         autosave_prefix: str = "autosave",
+        editor_mode: bool = False,
     ) -> None:
         # ======================================================
         # Engine services
@@ -291,6 +292,10 @@ class Game:
 
         self._autosave_prefix = str(
             autosave_prefix
+        )
+
+        self._editor_mode = bool(
+            editor_mode
         )
 
         # ======================================================
@@ -653,6 +658,10 @@ class Game:
             autosave_prefix=(
                 self._autosave_prefix
             ),
+
+            editor_mode=(
+                self._editor_mode
+            ),
         )
 
     # ==========================================================
@@ -701,6 +710,7 @@ class Game:
                 "input": self.input,
                 "assets": self.engine.assets,
                 "audio": self.engine.audio,
+                "scene_signing_key": self._scene_signing_key,
             }
         )
 

@@ -13,6 +13,8 @@ from .entity import (
     Body2D,
     CollisionShape2D,
     CharacterBody2D,
+    CharacterController2D,
+    AttackProfile,
     Vector2,
     StaticBody2D,
     Area2D,
@@ -65,6 +67,10 @@ from .ui import (
     ConfirmDialog,
     MessageDialog,
     FileDialog,
+    MAX_DIALOGUE_CHOICES,
+    DialogueBox,
+    DialogueChoice,
+    DialoguePage,
 
     Label,
     ProgressBar,
@@ -72,6 +78,17 @@ from .ui import (
     NotificationCenter,
     NotificationType,
     Tooltip,
+
+    GameMenu,
+    GameMenuTab,
+    EquipmentTab,
+    InventoryTab,
+    CraftingTab,
+    SkillsTab,
+    HealthTab,
+    QuestsTab,
+    MapTab,
+    GameTab,
 )
 
 
@@ -91,6 +108,8 @@ __all__ = [
     "Body2D",
     "CollisionShape2D",
     "CharacterBody2D",
+    "CharacterController2D",
+    "AttackProfile",
     "Vector2",
     "StaticBody2D",
     "Area2D",
@@ -139,6 +158,10 @@ __all__ = [
     "ConfirmDialog",
     "MessageDialog",
     "FileDialog",
+    "MAX_DIALOGUE_CHOICES",
+    "DialogueBox",
+    "DialogueChoice",
+    "DialoguePage",
 
     # UI Output
     "Label",
@@ -147,6 +170,18 @@ __all__ = [
     "NotificationCenter",
     "NotificationType",
     "Tooltip",
+
+    # UI Menus
+    "GameMenu",
+    "GameMenuTab",
+    "EquipmentTab",
+    "InventoryTab",
+    "CraftingTab",
+    "SkillsTab",
+    "HealthTab",
+    "QuestsTab",
+    "MapTab",
+    "GameTab",
 ]
 
 from .entity import (

@@ -12,6 +12,11 @@ from .character_body_2d import (
     Vector2,
 )
 
+from .character_controller_2d import (
+    AttackProfile,
+    CharacterController2D,
+)
+
 from .static_body_2d import (
     StaticBody2D,
 )
@@ -27,6 +32,8 @@ __all__ = [
     "BodyMoveResult",
     "CharacterBody2D",
     "Vector2",
+    "AttackProfile",
+    "CharacterController2D",
     "StaticBody2D",
     "Area2D",
 ]

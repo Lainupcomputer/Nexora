@@ -25,6 +25,10 @@ from .dialogs import (
     ConfirmDialog,
     MessageDialog,
     FileDialog,
+    MAX_DIALOGUE_CHOICES,
+    DialogueBox,
+    DialogueChoice,
+    DialoguePage,
 )
 
 from .output import (
@@ -34,6 +38,19 @@ from .output import (
     NotificationCenter,
     NotificationType,
     Tooltip,
+)
+
+from .menus import (
+    CraftingTab,
+    EquipmentTab,
+    GameMenu,
+    GameMenuTab,
+    GameTab,
+    HealthTab,
+    InventoryTab,
+    MapTab,
+    QuestsTab,
+    SkillsTab,
 )
 
 
@@ -64,6 +81,10 @@ __all__ = [
     "ConfirmDialog",
     "MessageDialog",
     "FileDialog",
+    "MAX_DIALOGUE_CHOICES",
+    "DialogueBox",
+    "DialogueChoice",
+    "DialoguePage",
 
     # Output
     "Label",
@@ -72,4 +93,16 @@ __all__ = [
     "NotificationCenter",
     "NotificationType",
     "Tooltip",
+
+    # Menus
+    "GameMenu",
+    "GameMenuTab",
+    "EquipmentTab",
+    "InventoryTab",
+    "CraftingTab",
+    "SkillsTab",
+    "HealthTab",
+    "QuestsTab",
+    "MapTab",
+    "GameTab",
 ]

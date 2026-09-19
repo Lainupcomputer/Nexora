@@ -53,6 +53,10 @@ class TileSet:
         tile_height: int,
         name: str = "",
         texture_asset: str | None = None,
+        spacing_x: int = 0,
+        spacing_y: int = 0,
+        margin_x: int = 0,
+        margin_y: int = 0,
     ) -> None:
         columns = int(
             columns
@@ -90,6 +94,15 @@ class TileSet:
                 "tile_height must be greater than zero."
             )
 
+        spacing_x = int(spacing_x)
+        spacing_y = int(spacing_y)
+        margin_x = int(margin_x)
+        margin_y = int(margin_y)
+        if spacing_x < 0 or spacing_y < 0:
+            raise ValueError("TileSet spacing cannot be negative.")
+        if margin_x < 0 or margin_y < 0:
+            raise ValueError("TileSet margins cannot be negative.")
+
         self.name = name
 
         self.columns = columns
@@ -98,6 +111,10 @@ class TileSet:
         self.tile_width = tile_width
         self.tile_height = tile_height
         self.texture_asset = None if texture_asset is None else str(texture_asset)
+        self.spacing_x = spacing_x
+        self.spacing_y = spacing_y
+        self.margin_x = margin_x
+        self.margin_y = margin_y
 
         self._metadata: dict[
             int,
@@ -135,19 +152,13 @@ class TileSet:
     def texture_width(
         self,
     ) -> int:
-        return (
-            self.columns
-            * self.tile_width
-        )
+        return self.margin_x * 2 + self.columns * self.tile_width + max(0, self.columns - 1) * self.spacing_x
 
     @property
     def texture_height(
         self,
     ) -> int:
-        return (
-            self.rows
-            * self.tile_height
-        )
+        return self.margin_y * 2 + self.rows * self.tile_height + max(0, self.rows - 1) * self.spacing_y
 
     @property
     def texture_size(
@@ -301,26 +312,16 @@ class TileSet:
             )
         )
 
-        uv_width = (
-            1.0
-            / float(
-                self.columns
-            )
-        )
-
-        uv_height = (
-            1.0
-            / float(
-                self.rows
-            )
-        )
+        texture_width = float(self.texture_width)
+        texture_height = float(self.texture_height)
+        uv_width = self.tile_width / texture_width
+        uv_height = self.tile_height / texture_height
+        pixel_x = self.margin_x + column * (self.tile_width + self.spacing_x)
+        pixel_y = self.margin_y + row * (self.tile_height + self.spacing_y)
 
         return (
-            column
-            * uv_width,
-
-            row
-            * uv_height,
+            pixel_x / texture_width,
+            pixel_y / texture_height,
 
             uv_width,
 
@@ -416,11 +417,8 @@ class TileSet:
         )
 
         return (
-            column
-            * self.tile_width,
-
-            row
-            * self.tile_height,
+            self.margin_x + column * (self.tile_width + self.spacing_x),
+            self.margin_y + row * (self.tile_height + self.spacing_y),
 
             self.tile_width,
 
@@ -602,6 +600,10 @@ class TileSet:
             "rows": self.rows,
             "tile_width": self.tile_width,
             "tile_height": self.tile_height,
+            "spacing_x": self.spacing_x,
+            "spacing_y": self.spacing_y,
+            "margin_x": self.margin_x,
+            "margin_y": self.margin_y,
             "texture_asset": self.texture_asset,
             "metadata": metadata,
             "animations": {
@@ -619,6 +621,10 @@ class TileSet:
             tile_width=int(state["tile_width"]),
             tile_height=int(state["tile_height"]),
             texture_asset=state.get("texture_asset"),
+            spacing_x=int(state.get("spacing_x", state.get("gap_x", 0))),
+            spacing_y=int(state.get("spacing_y", state.get("gap_y", 0))),
+            margin_x=int(state.get("margin_x", 0)),
+            margin_y=int(state.get("margin_y", 0)),
         )
         for raw_index, raw_meta in dict(state.get("metadata", {})).items():
             index = int(raw_index)

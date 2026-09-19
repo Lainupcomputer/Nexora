@@ -2,9 +2,15 @@ from nexora.tilemap.constants import EMPTY_TILE
 from nexora.tilemap.projection import TileProjection
 from nexora.tilemap.animation import TileAnimation, TileAnimationFrame
 from nexora.tilemap.tile_chunk import TileChunk
-from nexora.tilemap.tile_layer import TileLayer
+from nexora.tilemap.tile_layer import LAYER_ROLES, TileLayer, normalize_layer_role
 from nexora.tilemap.tilemap import TileMap
 from nexora.tilemap.tileset import TileRegion, TileSet
+from nexora.tilemap.asset import (
+    TILEMAP_ASSET_FORMAT,
+    TILEMAP_ASSET_VERSION,
+    TILEMAP_ASSET_SUFFIX,
+    TileMapAsset,
+)
 from nexora.tilemap.tile_chunk_cache import CachedTile, TileChunkRenderCache
 from nexora.tilemap.tile_metadata import TileMetadata
 from nexora.tilemap.tile_collision import SolidTileHit, TileCollision, TileMoveResult
@@ -17,9 +23,15 @@ __all__ = [
     "TileAnimationFrame",
     "TileChunk",
     "TileLayer",
+    "LAYER_ROLES",
+    "normalize_layer_role",
     "TileMap",
     "TileRegion",
     "TileSet",
+    "TileMapAsset",
+    "TILEMAP_ASSET_FORMAT",
+    "TILEMAP_ASSET_VERSION",
+    "TILEMAP_ASSET_SUFFIX",
     "CachedTile",
     "TileChunkRenderCache",
     "TileMetadata",

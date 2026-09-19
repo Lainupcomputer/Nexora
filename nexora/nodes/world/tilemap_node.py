@@ -9,6 +9,7 @@ from nexora.tilemap import (
     TileChunkRenderCache,
     TileMap,
     TileSet,
+    TileMapAsset,
     TileMetadataHit,
     TilePrefabSpawn,
     TileTeleportEvent,
@@ -56,6 +57,9 @@ class TileMapNode(Node):
         self.tilemap: TileMap | None = None
         self.tileset: TileSet | None = None
         self.texture = None
+        # Project-assets-relative path to a .tilemap.net file.  Inline maps
+        # from older .nxscene files keep this as None for compatibility.
+        self.tilemap_asset: str | None = None
 
         # Shared navigation state. Every TileNavigation created from this
         # TileMapNode sees the same dynamic blockers/revision.
@@ -146,6 +150,7 @@ class TileMapNode(Node):
         self.tilemap = tilemap
         self.tileset = tileset
         self.texture = texture
+        self.tilemap_asset = None
 
         # Dynamic blockers belong to one concrete map. Replacing the map
         # therefore starts a fresh shared navigation state.
@@ -170,6 +175,34 @@ class TileMapNode(Node):
             force_reload=force_reload,
         )
         self.set_map(tilemap, tileset, texture)
+
+    def layers_with_role(self, role: str):
+        """Return asset layers assigned to a functional role."""
+        if self.tilemap is None:
+            return ()
+        return self.tilemap.layers_with_role(role)
+
+    @property
+    def collision_layers(self):
+        return self.layers_with_role("collision")
+
+    @property
+    def trigger_layers(self):
+        return self.layers_with_role("trigger")
+
+    def load_tilemap_asset(self, asset_path: str, assets) -> None:
+        """Load and bind a ``.tilemap.net`` asset from the project assets."""
+        if assets is None:
+            raise RuntimeError("Loading a TileMap asset requires an AssetManager.")
+        asset = TileMapAsset.load(assets.resolve(asset_path))
+        tilemap, tileset = asset.build()
+        self.set_map_from_assets(tilemap, tileset, assets)
+        resolved = assets.resolve(asset_path)
+        try:
+            relative = resolved.relative_to(assets.root)
+            self.tilemap_asset = relative.as_posix()
+        except ValueError:
+            self.tilemap_asset = str(asset_path).replace("\\", "/")
 
     @property
     def navigation_state(self) -> NavigationState:

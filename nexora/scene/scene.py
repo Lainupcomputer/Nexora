@@ -560,6 +560,14 @@ class Scene:
             delta_time
         )
 
+        # UI nodes have their own hierarchy below ``self.ui`` rather than
+        # below the world root. Update it through the same lifecycle so
+        # time-based controls (for example DialogueBox's typewriter effect)
+        # receive delta_time every frame.
+        self.ui.update_tree(
+            delta_time
+        )
+
         self.world.update(
             delta_time
         )

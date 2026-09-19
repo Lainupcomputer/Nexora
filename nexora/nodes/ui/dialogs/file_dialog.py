@@ -46,6 +46,11 @@ class FileDialog(Dialog):
         self.extensions: tuple[str, ...] = ()
         self.selected_path: Path | None = None
         self.allow_directories: bool = False
+        # Some editor pickers, such as the tileset picker, are intended to
+        # behave like an asset browser: selecting an asset is the confirm
+        # action.  Keep the normal double-click behavior for generic file
+        # dialogs and opt into single-click activation per dialog.
+        self.activate_on_single_click: bool = False
 
         self.file_selected = Signal(f"{name}.file_selected", owner=self)
 
@@ -79,6 +84,7 @@ class FileDialog(Dialog):
         current_path: str | Path | None = None,
         extensions: tuple[str, ...] | list[str] = (),
         title: str | None = None,
+        activate_on_single_click: bool = False,
     ) -> FileDialog:
         mode = str(mode).lower()
         if mode not in self.VALID_MODES:
@@ -101,6 +107,7 @@ class FileDialog(Dialog):
             if ext:
                 normalized.append(ext)
         self.extensions = tuple(normalized)
+        self.activate_on_single_click = bool(activate_on_single_click)
 
         self.title = title or ("Open File" if mode == "open" else "Save File")
         self.confirm_text = "Open" if mode == "open" else "Save"
@@ -119,7 +126,8 @@ class FileDialog(Dialog):
     def _matches_extension(self, path: Path) -> bool:
         if not self.extensions:
             return True
-        return path.suffix.lower() in self.extensions
+        lowered = str(path).lower()
+        return any(lowered.endswith(extension) for extension in self.extensions)
 
     def _is_ignored_directory(self, path: Path) -> bool:
         return path.name in self.DEFAULT_IGNORED_NAMES
@@ -166,6 +174,16 @@ class FileDialog(Dialog):
         if path.is_file():
             self.selected_path = path
             self.filename_input.set_text(path.name, emit=False)
+            if self.mode == "open" and self.activate_on_single_click:
+                self.confirm()
+        elif path.is_dir() and self.allow_directories:
+            # Directory-selection dialogs use the normal single-click
+            # selection plus the footer confirm button. Double-clicking
+            # still navigates into the directory via _on_list_activate().
+            self.selected_path = path
+            self.filename_input.set_text(path.name, emit=False)
+            if self.mode == "open" and self.activate_on_single_click:
+                self.confirm()
 
     def _on_list_activate(self, index: int, _item: str) -> None:
         if not (0 <= index < len(self._entries)):

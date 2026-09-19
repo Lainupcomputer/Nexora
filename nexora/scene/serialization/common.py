@@ -40,6 +40,7 @@ def node_to_state(
         "children": [
             node_to_state(child, registry, id_map=id_map)
             for child in node.children
+            if not getattr(child, "_nexora_runtime_only", False)
         ],
     }
 

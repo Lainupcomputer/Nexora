@@ -31,6 +31,32 @@ mouse = ["left"]
 [pause]
 keyboard = ["escape"]
 
+# In-game menu navigation. The GameMenu reads these semantic actions
+# through InputManager; physical keys can be overridden by a project.
+[menu_next_tab]
+keyboard = ["tab"]
+
+[menu_previous_tab]
+keyboard = ["q"]
+
+[menu_confirm]
+keyboard = ["enter"]
+
+[menu_back]
+keyboard = ["backspace"]
+
+[menu_up]
+keyboard = ["up"]
+
+[menu_down]
+keyboard = ["down"]
+
+[menu_left]
+keyboard = ["left"]
+
+[menu_right]
+keyboard = ["right"]
+
 [debug_overlay]
 keyboard = ["f3"]
 

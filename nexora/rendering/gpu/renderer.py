@@ -279,6 +279,7 @@ class GPURenderer:
         self._submission_index = 0
         self._render_command_phases: list[str] = []
         self._render_phase = "world"
+        self._layer_offset = 0
 
         # ======================================================
         # Clipping
@@ -361,6 +362,19 @@ class GPURenderer:
 
     def world_scope(self):
         return self.render_phase_scope("world")
+
+    @property
+    def layer_offset(self) -> int:
+        return int(getattr(self, "_layer_offset", 0))
+
+    @contextmanager
+    def layer_scope(self, offset: int):
+        previous = self.layer_offset
+        self._layer_offset = previous + int(offset)
+        try:
+            yield self
+        finally:
+            self._layer_offset = previous
 
     # ==========================================================
     # Clipping
@@ -558,6 +572,7 @@ class GPURenderer:
         self._render_command_phases.clear()
         self._submission_index = 0
         self._render_phase = "world"
+        self._layer_offset = 0
 
         # ------------------------------------------------------
         # Begin batches
@@ -816,7 +831,7 @@ class GPURenderer:
 
         self._render_commands.append(
             (
-                int(layer),
+                int(layer) + self.layer_offset,
                 self._submission_index,
                 str(kind),
                 int(start),
@@ -839,6 +854,50 @@ class GPURenderer:
     # Draw scene
     # ==========================================================
 
+    def _prepare_camera_for_phase(
+        self,
+        phase: str | None,
+    ) -> None:
+        """Apply the camera space required by the render phase.
+
+        World rendering uses the active gameplay camera.  Overlay content
+        such as UI panels and buttons is submitted during a second pass and
+        must use centered screen coordinates instead.  The GPU batches keep
+        their camera uniform from ``render_into``; refresh it immediately
+        before drawing the overlay so a moving world camera cannot move the
+        screen UI with it.
+        """
+
+        if phase != "overlay":
+            return
+
+        context = getattr(self, "context", None)
+        command_buffer = getattr(
+            context,
+            "command_buffer",
+            None,
+        )
+        if command_buffer is None:
+            return
+
+        for batch_name in (
+            "sprite_batch",
+            "rect_batch",
+            "line_batch",
+            "shape_batch",
+        ):
+            batch = getattr(self, batch_name, None)
+            push_camera_uniform = getattr(
+                batch,
+                "push_camera_uniform",
+                None,
+            )
+            if callable(push_camera_uniform):
+                push_camera_uniform(
+                    command_buffer,
+                    screen_space=True,
+                )
+
     def _draw_scene(
         self,
         render_pass,
@@ -854,6 +913,8 @@ class GPURenderer:
             2. original submission order
         """
 
+        self._prepare_camera_for_phase(phase)
+
         commands = list(self._render_commands)
         phases = list(getattr(self, "_render_command_phases", ()))
         if len(phases) != len(commands):
@@ -867,12 +928,6 @@ class GPURenderer:
             ),
         )
 
-        # Rectangles, shapes, sprites and lines share one camera uniform per
-        # batch. Upload an identity camera for the overlay phase so UIRoot
-        # content stays fixed to the window while the world camera moves.
-        command_buffer = getattr(self.context, "command_buffer", None)
-        last_camera_phase = None
-
         for (
             (
                 _layer,
@@ -882,38 +937,9 @@ class GPURenderer:
                 count,
             ),
             command_phase,
-            ) in ordered:
+        ) in ordered:
             if phase is not None and command_phase != phase:
                 continue
-
-            camera_phase = (
-                "overlay"
-                if command_phase == "overlay"
-                else "world"
-            )
-            if (
-                command_buffer is not None
-                and camera_phase != last_camera_phase
-            ):
-                screen_space = camera_phase == "overlay"
-                self.sprite_batch.push_camera_uniform(
-                    command_buffer,
-                    screen_space=screen_space,
-                )
-                self.rect_batch.push_camera_uniform(
-                    command_buffer,
-                    screen_space=screen_space,
-                )
-                self.line_batch.push_camera_uniform(
-                    command_buffer,
-                    screen_space=screen_space,
-                )
-                self.shape_batch.push_camera_uniform(
-                    command_buffer,
-                    screen_space=screen_space,
-                )
-                last_camera_phase = camera_phase
-
             if kind == "sprite":
                 self.sprite_batch.draw_range(
                     render_pass,
@@ -991,6 +1017,7 @@ class GPURenderer:
         self._render_command_phases.clear()
         self._submission_index = 0
         self._render_phase = "world"
+        self._layer_offset = 0
 
         # ------------------------------------------------------
         # Sprite batch

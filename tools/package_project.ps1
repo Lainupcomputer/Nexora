@@ -38,8 +38,6 @@ $StageRoot = Join-Path $TempRoot $ProjectName
 
 # ============================================================
 # EXCLUDED DIRECTORY NAMES
-#
-# These are excluded wherever they occur.
 # ============================================================
 
 $ExcludedDirectoryNames = @(
@@ -64,25 +62,22 @@ $ExcludedDirectoryNames = @(
 
 # ============================================================
 # EXCLUDED ROOT DIRECTORIES
-#
-# These are only excluded when they are directly inside the
-# project root.
-#
-# IMPORTANT:
-#
-#   nexora\settings\
-#
-# remains INCLUDED.
-#
-# Only:
-#
-#   <project>\settings\
-#
-# is excluded because that is local runtime configuration.
 # ============================================================
 
 $ExcludedRootDirectories = @(
     "settings"
+)
+
+# ============================================================
+# EXCLUDED DIRECTORY PATHS
+#
+# Relative zum Projekt-Root.
+# MyGame\assets\ und alle Unterordner werden ausgeschlossen.
+# Der normale Root-Ordner assets\ bleibt enthalten.
+# ============================================================
+
+$ExcludedDirectoryPaths = @(
+    "MyGame\assets"
 )
 
 # ============================================================
@@ -113,8 +108,6 @@ $ExcludedFilePatterns = @(
 
 # ============================================================
 # RELATIVE PATH
-#
-# Compatible with Windows PowerShell 5.1.
 # ============================================================
 
 function Get-RelativePath {
@@ -159,6 +152,26 @@ function Test-ExcludedDirectory {
     $Parts = $Normalized -split "\\"
 
     # --------------------------------------------------------
+    # Specific nested directory exclusions
+    # --------------------------------------------------------
+
+    foreach ($ExcludedPath in $ExcludedDirectoryPaths) {
+        $NormalizedExcludedPath = (
+            $ExcludedPath.Replace("/", "\").TrimEnd("\")
+        )
+
+        if (
+            $Normalized -ieq $NormalizedExcludedPath -or
+            $Normalized.StartsWith(
+                $NormalizedExcludedPath + "\",
+                [System.StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            return $true
+        }
+    }
+
+    # --------------------------------------------------------
     # Root-only exclusions
     # --------------------------------------------------------
 
@@ -201,7 +214,7 @@ function Test-ExcludedFile {
         [string]$RelativePath
     )
 
-    # Never include the ZIP currently being generated.
+    # Die aktuell erzeugte ZIP niemals selbst einpacken.
 
     $FilePath = [System.IO.Path]::GetFullPath($File.FullName)
 
@@ -209,7 +222,7 @@ function Test-ExcludedFile {
         return $true
     }
 
-    # Check parent directory.
+    # Übergeordnetes Verzeichnis prüfen.
 
     $Parent = Split-Path -Parent $RelativePath
 
@@ -219,7 +232,7 @@ function Test-ExcludedFile {
         }
     }
 
-    # Check filename.
+    # Dateiname prüfen.
 
     foreach ($Pattern in $ExcludedFilePatterns) {
         if ($File.Name -like $Pattern) {
@@ -257,10 +270,17 @@ Write-Host ""
 # ============================================================
 
 if (Test-Path -LiteralPath $TempRoot) {
-    Remove-Item -LiteralPath $TempRoot -Recurse -Force
+    Remove-Item `
+        -LiteralPath $TempRoot `
+        -Recurse `
+        -Force
 }
 
-New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
+New-Item `
+    -ItemType Directory `
+    -Path $StageRoot `
+    -Force |
+    Out-Null
 
 try {
 

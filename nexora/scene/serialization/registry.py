@@ -8,6 +8,7 @@ from nexora.nodes.entity.body_2d import Body2D
 from nexora.nodes.entity.static_body_2d import StaticBody2D
 from nexora.nodes.entity.area_2d import Area2D
 from nexora.nodes.entity.character_body_2d import CharacterBody2D
+from nexora.nodes.entity.character_controller_2d import CharacterController2D
 from nexora.nodes.entity.collision_shape_2d import CollisionShape2D
 from nexora.nodes.entity.ray_cast_2d import RayCast2D
 from nexora.nodes.world.tilemap_node import TileMapNode
@@ -256,6 +257,11 @@ class NodeFactoryRegistry:
     def _register_defaults(
         self,
     ) -> None:
+        # Import lazily: the cutscene asset module uses the serialization
+        # helpers, so importing it at module import time would create a
+        # common.py -> registry.py -> cutscene.py cycle.
+        from nexora.cutscene.node import CutscenePlayerNode
+
         def dump_animations(node) -> list[dict[str, Any]]:
             return [
                 {
@@ -660,6 +666,84 @@ class NodeFactoryRegistry:
             CharacterBody2D,
             dump_state=dump_character,
             load_state=load_character,
+        )
+
+        # ==========================================================
+        # CharacterController2D
+        # ==========================================================
+
+        def dump_character_controller(
+            node: CharacterController2D,
+        ) -> dict[str, Any]:
+            data = dump_character(node)
+            data.update(
+                {
+                    "walk_speed": float(node.walk_speed),
+                    "run_speed": float(node.run_speed),
+                    "acceleration": float(node.acceleration),
+                    "friction": float(node.friction),
+                    "roll_speed": float(node.roll_speed),
+                    "roll_duration": float(node.roll_duration),
+                    "roll_cooldown": float(node.roll_cooldown),
+                    "max_health": float(node.max_health),
+                    "health": float(node.health),
+                    "floor_type": str(node.floor_type),
+                    "footstep_interval_walk": float(node.footstep_interval_walk),
+                    "footstep_interval_run": float(node.footstep_interval_run),
+                    "input_actions": dict(node.input_actions),
+                    "active_weapon": node.active_weapon,
+                    "active_tool": node.active_tool,
+                    "weapon_profiles": {
+                        name: {
+                            "animation": profile.animation,
+                            "duration": float(profile.duration),
+                            "damage": float(profile.damage),
+                        }
+                        for name, profile in node.weapon_profiles.items()
+                    },
+                    "tool_profiles": {
+                        name: {
+                            "animation": profile.animation,
+                            "duration": float(profile.duration),
+                            "damage": float(profile.damage),
+                        }
+                        for name, profile in node.tool_profiles.items()
+                    },
+                }
+            )
+            return data
+
+        def load_character_controller(
+            node: CharacterController2D,
+            state: dict[str, Any],
+            context: dict[str, Any],
+        ) -> None:
+            load_character(node, state, context)
+            for attribute in (
+                "walk_speed", "run_speed", "acceleration", "friction",
+                "roll_speed", "roll_duration", "roll_cooldown", "max_health",
+                "health", "footstep_interval_walk", "footstep_interval_run",
+            ):
+                if attribute in state:
+                    setattr(node, attribute, float(state[attribute]))
+            node.floor_type = str(state.get("floor_type", node.floor_type))
+            actions = state.get("input_actions")
+            if isinstance(actions, dict):
+                node.input_actions.update({str(key): str(value) for key, value in actions.items()})
+            for key, profile in state.get("weapon_profiles", {}).items():
+                if isinstance(profile, dict):
+                    node.register_weapon(str(key), profile)
+            for key, profile in state.get("tool_profiles", {}).items():
+                if isinstance(profile, dict):
+                    node.register_tool(str(key), profile)
+            node.active_weapon = state.get("active_weapon")
+            node.active_tool = state.get("active_tool")
+
+        self.register(
+            "CharacterController2D",
+            CharacterController2D,
+            dump_state=dump_character_controller,
+            load_state=load_character_controller,
         )
 
         # ==========================================================
@@ -1655,13 +1739,7 @@ class NodeFactoryRegistry:
                     "TileMap and TileSet"
                 )
 
-            return {
-                "tilemap": (
-                    node.tilemap.to_state()
-                ),
-                "tileset": (
-                    node.tileset.to_state()
-                ),
+            state = {
                 "centered": bool(
                     node.centered
                 ),
@@ -1675,28 +1753,18 @@ class NodeFactoryRegistry:
                     node.base_render_layer
                 ),
             }
+            if node.tilemap_asset:
+                state["tilemap_asset"] = str(node.tilemap_asset)
+            else:
+                state["tilemap"] = node.tilemap.to_state()
+                state["tileset"] = node.tileset.to_state()
+            return state
 
         def load_tilemap_node(
             node: TileMapNode,
             state: dict[str, Any],
             context: dict[str, Any],
         ) -> None:
-            tilemap = TileMap.from_state(
-                dict(
-                    state[
-                        "tilemap"
-                    ]
-                )
-            )
-
-            tileset = TileSet.from_state(
-                dict(
-                    state[
-                        "tileset"
-                    ]
-                )
-            )
-
             assets = context.get(
                 "assets"
             )
@@ -1708,11 +1776,13 @@ class NodeFactoryRegistry:
                     "context['assets']"
                 )
 
-            node.set_map_from_assets(
-                tilemap,
-                tileset,
-                assets,
-            )
+            asset_path = state.get("tilemap_asset")
+            if asset_path:
+                node.load_tilemap_asset(str(asset_path), assets)
+            else:
+                tilemap = TileMap.from_state(dict(state["tilemap"]))
+                tileset = TileSet.from_state(dict(state["tileset"]))
+                node.set_map_from_assets(tilemap, tileset, assets)
 
             node.centered = bool(
                 state.get(
@@ -1747,4 +1817,51 @@ class NodeFactoryRegistry:
             TileMapNode,
             dump_state=dump_tilemap_node,
             load_state=load_tilemap_node,
+        )
+
+        # ==========================================================
+        # Cutscene player
+        # ==========================================================
+
+        def dump_cutscene_player(
+            node: CutscenePlayerNode,
+        ) -> dict[str, Any]:
+            return {
+                "asset_path": node.asset_path,
+                "autoplay": bool(node.autoplay),
+                "play_on_enter": bool(node.play_on_enter),
+                "loop": bool(node.loop),
+            }
+
+        def load_cutscene_player(
+            node: CutscenePlayerNode,
+            state: dict[str, Any],
+            context: dict[str, Any],
+        ) -> None:
+            asset_path = state.get("asset_path")
+            node.asset_path = None if asset_path is None else str(asset_path)
+            node.autoplay = bool(state.get("autoplay", False))
+            node.play_on_enter = bool(state.get("play_on_enter", node.autoplay))
+            node.loop = bool(state.get("loop", False))
+
+            renderer = context.get("renderer")
+            assets = context.get("assets")
+            if node.asset_path and renderer is not None and assets is not None:
+                node.build(
+                    renderer=renderer,
+                    assets=assets,
+                    audio=context.get("audio"),
+                    scene=context.get("scene"),
+                    scene_path=context.get("scene_path"),
+                    signing_key=(
+                        context.get("scene_signing_key")
+                        or context.get("save_signing_key")
+                    ),
+                )
+
+        self.register(
+            "CutscenePlayerNode",
+            CutscenePlayerNode,
+            dump_state=dump_cutscene_player,
+            load_state=load_cutscene_player,
         )

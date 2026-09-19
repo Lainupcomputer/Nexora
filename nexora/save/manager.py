@@ -85,6 +85,7 @@ class SaveManager:
         autosave_enabled: bool = True,
         autosave_slots: int = 3,
         autosave_prefix: str = "autosave",
+        create_directory: bool = True,
     ) -> None:
         # ======================================================
         # Validation
@@ -159,6 +160,10 @@ class SaveManager:
             )
         )
 
+        self._create_save_directory = bool(
+            create_directory
+        )
+
         # ======================================================
         # Save path
         # ======================================================
@@ -166,7 +171,8 @@ class SaveManager:
         self._save_path = Path()
 
         self.set_save_path(
-            save_path
+            save_path,
+            create_directory=self._create_save_directory,
         )
 
         # ======================================================
@@ -199,23 +205,33 @@ class SaveManager:
     def set_save_path(
         self,
         value: str | Path,
+        *,
+        create_directory: bool | None = None,
     ) -> Path:
         """
         Change the directory used for save files.
 
-        The directory is created automatically.
+        Directory creation can be disabled for read-only tool
+        applications such as the standalone editors.
         """
 
         path = Path(
             value
         ).expanduser()
 
-        path.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        if create_directory is None:
+            create_directory = self._create_save_directory
 
-        if not path.is_dir():
+        if create_directory:
+            path.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+        # Read-only tool applications may intentionally point at a
+        # directory that does not exist. It must remain absent until a
+        # caller explicitly enables persistence.
+        if path.exists() and not path.is_dir():
             raise NotADirectoryError(
                 str(path)
             )

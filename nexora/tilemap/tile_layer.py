@@ -7,6 +7,26 @@ from nexora.tilemap.constants import EMPTY_TILE
 from nexora.tilemap.tile_chunk import TileChunk
 
 
+LAYER_ROLES = (
+    "ground",
+    "decoration",
+    "objects",
+    "foreground",
+    "background",
+    "collision",
+    "trigger",
+    "navigation",
+    "custom",
+)
+
+
+def normalize_layer_role(role: str | None, *, name: str = "") -> str:
+    value = str(role or "").strip().lower().replace(" ", "_")
+    if not value:
+        value = str(name).strip().lower().replace(" ", "_")
+    return value if value in LAYER_ROLES else "custom"
+
+
 class TileLayer:
     """
     Stores one 2D layer of tile IDs.
@@ -54,6 +74,7 @@ class TileLayer:
         chunk_size: int = DEFAULT_CHUNK_SIZE,
         render_layer: int = 0,
         y_sort: bool = False,
+        role: str | None = None,
     ) -> None:
         width = int(
             width
@@ -112,6 +133,7 @@ class TileLayer:
 
         self.render_layer = int(render_layer)
         self.y_sort = bool(y_sort)
+        self.role = normalize_layer_role(role, name=name)
 
         # ======================================================
         # Chunk grid
@@ -1021,6 +1043,7 @@ class TileLayer:
             "chunk_size": self.chunk_size,
             "render_layer": self.render_layer,
             "y_sort": self.y_sort,
+            "role": self.role,
             "tiles": list(self.tiles),
         }
 
@@ -1042,6 +1065,7 @@ class TileLayer:
             ),
             render_layer=int(state.get("render_layer", 0)),
             y_sort=bool(state.get("y_sort", False)),
+            role=state.get("role", state.get("layer_type")),
         )
         tiles = list(state.get("tiles", ()))
         if tiles:
@@ -1054,4 +1078,3 @@ class TileLayer:
                 y = index // layer.width
                 layer.set_tile(x, y, int(tile_id))
         return layer
-

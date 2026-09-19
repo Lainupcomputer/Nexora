@@ -125,6 +125,7 @@ class EngineSettings:
         self,
         *,
         project_name: str = "Nexora",
+        settings_path=...,
         autosave: bool = True,
     ) -> None:
         # ======================================================
@@ -135,7 +136,8 @@ class EngineSettings:
             EngineSettingsStore(
                 project_name=(
                     project_name
-                )
+                ),
+                settings_path=settings_path,
             )
         )
 

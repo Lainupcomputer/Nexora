@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from collections.abc import Callable
 
-from nexora.animation.player import AnimationPlayer
 
 
 Condition = Callable[[], bool]
@@ -20,11 +19,15 @@ class AnimationTransition:
 
 
 class AnimationStateMachine:
-    """Small runtime state machine layered over AnimationPlayer."""
+    """Small runtime state machine layered over an animation driver.
+
+    The driver only needs ``play()`` and ``create_signal()``. This allows the
+    same state machine to drive either an AnimationPlayer or an AnimatedSprite.
+    """
 
     ANY = "*"
 
-    def __init__(self, player: AnimationPlayer) -> None:
+    def __init__(self, player) -> None:
         self.player = player
         self._states: dict[str, str] = {}
         self._transitions: list[AnimationTransition] = []

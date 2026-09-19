@@ -150,7 +150,12 @@ class Engine:
         autosave_enabled: bool = True,
         autosave_slots: int = 3,
         autosave_prefix: str = "autosave",
+        editor_mode: bool = False,
     ) -> None:
+        # Editor applications share the engine runtime but must not
+        # create game data or compile project-local shaders.
+        self.editor_mode = bool(editor_mode)
+
         # ======================================================
         # Main thread
         # ======================================================
@@ -183,7 +188,8 @@ class Engine:
             )
         )
 
-        self.paths.ensure()
+        if not self.editor_mode:
+            self.paths.ensure()
 
         # ======================================================
         # Core services
@@ -202,24 +208,33 @@ class Engine:
         # directory. No nexora/shaders/bin -> Documents copy step.
         # ======================================================
 
-        shader_build = ShaderCompiler(
-            source_dir=(
-                self.paths.shader_source_dir
-            ),
-            output_dir=(
-                self.paths.shader_bin
-            ),
-            dxc_path=(
-                self.paths.shader_compiler
-            ),
-        ).compile_all()
-
-        if shader_build.built_count:
-            self.logger.info(
-                "Compiled "
-                f"{shader_build.built_count} shader(s) "
-                f"to {self.paths.shader_bin}"
+        if self.editor_mode:
+            # The repository contains a validated, read-only shader set
+            # for editor tools. Do not create Documents/.../shaders/bin.
+            self.shader_dir = (
+                self.paths.engine_shader_dir / "bin"
             )
+        else:
+            shader_build = ShaderCompiler(
+                source_dir=(
+                    self.paths.shader_source_dir
+                ),
+                output_dir=(
+                    self.paths.shader_bin
+                ),
+                dxc_path=(
+                    self.paths.shader_compiler
+                ),
+            ).compile_all()
+
+            if shader_build.built_count:
+                self.logger.info(
+                    "Compiled "
+                    f"{shader_build.built_count} shader(s) "
+                    f"to {self.paths.shader_bin}"
+                )
+
+            self.shader_dir = self.paths.shader_bin
 
         self.assets = (
             AssetManager()
@@ -233,7 +248,13 @@ class Engine:
             EngineSettings(
                 project_name=(
                     self.project_name
-                )
+                ),
+                settings_path=(
+                    None if self.editor_mode else ...
+                ),
+                autosave=(
+                    not self.editor_mode
+                ),
             )
         )
 
@@ -311,7 +332,7 @@ class Engine:
                 ),
 
                 quick_save_enabled=(
-                    quick_save_enabled
+                    quick_save_enabled and not self.editor_mode
                 ),
 
                 quick_save_slot=(
@@ -319,7 +340,7 @@ class Engine:
                 ),
 
                 autosave_enabled=(
-                    autosave_enabled
+                    autosave_enabled and not self.editor_mode
                 ),
 
                 autosave_slots=(
@@ -328,6 +349,9 @@ class Engine:
 
                 autosave_prefix=(
                     autosave_prefix
+                ),
+                create_directory=(
+                    not self.editor_mode
                 ),
             )
         )
@@ -340,7 +364,13 @@ class Engine:
             GraphicsSettings(
                 project_name=(
                     self.project_name
-                )
+                ),
+                settings_path=(
+                    None if self.editor_mode else ...
+                ),
+                autosave=(
+                    not self.editor_mode
+                ),
             )
         )
 
@@ -491,7 +521,7 @@ class Engine:
                 self.gpu_context,
 
                 shader_dir=(
-                    self.paths.shader_bin
+                    self.shader_dir
                 ),
 
                 font=(
@@ -530,6 +560,9 @@ class Engine:
                 project_name=(
                     self.project_name
                 ),
+                settings_path=(
+                    None if self.editor_mode else ...
+                ),
             )
         )
 
@@ -541,7 +574,13 @@ class Engine:
             AudioSettings(
                 project_name=(
                     self.project_name
-                )
+                ),
+                settings_path=(
+                    None if self.editor_mode else ...
+                ),
+                autosave=(
+                    not self.editor_mode
+                ),
             )
         )
 
