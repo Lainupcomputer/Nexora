@@ -78,6 +78,7 @@ class EditorApp(Game):
             width=1440,
             height=900,
             resizable=True,
+            editor_mode=True,
         )
 
         self.editor_scene = None
@@ -87,6 +88,13 @@ class EditorApp(Game):
     def initialize(
         self,
     ) -> None:
+        icon_path = self.editor_project_path / "assets" / "icon.png"
+        if self.window is not None and icon_path.is_file():
+            try:
+                self.window.set_icon(icon_path)
+            except Exception:
+                pass
+
         self.editor_project = ProjectModel(
             self.editor_project_path
         )

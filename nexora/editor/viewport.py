@@ -1085,7 +1085,10 @@ class EditorViewportCanvas(UINode):
         if editor is None:
             return
 
-        model = editor._selected_tilemap_editor_model()
+        get_model = getattr(editor, "_selected_tilemap_editor_model", None)
+        if not callable(get_model):
+            return
+        model = get_model()
         cell = getattr(editor, "_tilemap_hover_cell", None)
         if model is None or cell is None:
             return

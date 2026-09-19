@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from nexora.tilemap import EMPTY_TILE, TileProjection
+from nexora.tilemap.tile_layer import normalize_layer_role
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +15,42 @@ class TileMapCellEdit:
     y: int
     before: int
     after: int
+
+
+class TileMapAssetCommand:
+    """Undoable assignment of a portable ``.tilemap.net`` asset."""
+
+    def __init__(self, node, asset_path: str, assets) -> None:
+        self.node = node
+        self.asset_path = str(asset_path).replace("\\", "/")
+        self.assets = assets
+        self.previous_asset = node.tilemap_asset
+        self.previous_tilemap = node.tilemap
+        self.previous_tileset = node.tileset
+        self.previous_texture = node.texture
+        self.label = f"Assign TileMap Asset: {self.asset_path}"
+
+    def execute(self):
+        self.node.load_tilemap_asset(self.asset_path, self.assets)
+        return self.node
+
+    def undo(self):
+        if self.previous_tilemap is None or self.previous_tileset is None:
+            self.node.tilemap = self.previous_tilemap
+            self.node.tileset = self.previous_tileset
+            self.node.texture = self.previous_texture
+            self.node.tilemap_asset = self.previous_asset
+            clear_caches = getattr(self.node, "clear_chunk_caches", None)
+            if callable(clear_caches):
+                clear_caches()
+        else:
+            self.node.set_map(
+                self.previous_tilemap,
+                self.previous_tileset,
+                self.previous_texture,
+            )
+            self.node.tilemap_asset = self.previous_asset
+        return self.node
 
 
 class TileMapPaintCommand:
@@ -138,3 +175,83 @@ class TileMapProjectionCommand:
 
     def undo(self):
         return self._apply(self.old_projection)
+
+
+class TileMapLayerAddCommand:
+    """Undoable creation of a layer in a TileMap asset."""
+
+    def __init__(self, tilemap, name: str) -> None:
+        self.tilemap = tilemap
+        self.name = str(name).strip()
+        if not self.name:
+            raise ValueError("Layer name cannot be empty.")
+        self.layer = None
+        self.label = f"Add Layer: {self.name}"
+
+    def execute(self):
+        self.layer = self.tilemap.create_layer(self.name)
+        return self.layer
+
+    def undo(self):
+        if self.layer is not None:
+            self.tilemap.remove_layer(self.layer)
+        return self.layer
+
+
+class TileMapLayerRemoveCommand:
+    """Undoable removal of a layer, retaining its painted cells."""
+
+    def __init__(self, tilemap, name: str) -> None:
+        self.tilemap = tilemap
+        self.name = str(name)
+        self.layer = tilemap.require_layer(self.name)
+        self.index = tilemap.layer_index(self.name)
+        self.label = f"Remove Layer: {self.name}"
+
+    def execute(self):
+        self.tilemap.remove_layer(self.layer)
+        return self.layer
+
+    def undo(self):
+        self.tilemap.add_layer(self.layer, index=self.index)
+        return self.layer
+
+
+class TileMapLayerRenameCommand:
+    """Undoable layer rename that keeps TileMap lookup indexes valid."""
+
+    def __init__(self, tilemap, layer, new_name: str) -> None:
+        self.tilemap = tilemap
+        self.layer = layer
+        self.old_name = str(layer.name)
+        self.new_name = str(new_name).strip()
+        if not self.new_name:
+            raise ValueError("Layer name cannot be empty.")
+        self.label = f"Rename Layer: {self.new_name}"
+
+    def execute(self):
+        return self.tilemap.rename_layer(self.layer, self.new_name)
+
+    def undo(self):
+        return self.tilemap.rename_layer(self.layer, self.old_name)
+
+
+class TileMapLayerPropertyCommand:
+    """Undoable assignment of a layer property."""
+
+    def __init__(self, layer, property_name: str, value) -> None:
+        self.layer = layer
+        self.property_name = str(property_name)
+        self.value = value
+        self.previous = getattr(layer, self.property_name)
+        self.label = f"Set Layer {self.property_name}"
+
+    def execute(self):
+        if self.property_name == "role":
+            self.value = normalize_layer_role(self.value)
+        setattr(self.layer, self.property_name, self.value)
+        return self.layer
+
+    def undo(self):
+        setattr(self.layer, self.property_name, self.previous)
+        return self.layer

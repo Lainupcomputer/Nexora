@@ -77,11 +77,13 @@ def create_default_inspector_registry(node_type: type) -> InspectorRegistry:
     from nexora.nodes.entity.area_2d import Area2D
     from nexora.nodes.entity.body_2d import Body2D
     from nexora.nodes.entity.character_body_2d import CharacterBody2D
+    from nexora.nodes.entity.character_controller_2d import CharacterController2D
     from nexora.nodes.entity.collision_shape_2d import CollisionShape2D
     from nexora.nodes.entity.ray_cast_2d import RayCast2D
     from nexora.nodes.navigation.navigation_agent_2d import NavigationAgent2D
     from nexora.nodes.navigation.navigation_obstacle_2d import NavigationObstacle2D
     from nexora.nodes.texture.animated_sprite import AnimatedSprite
+    from nexora.nodes.world.tilemap_node import TileMapNode
 
     registry = InspectorRegistry()
 
@@ -168,6 +170,22 @@ def create_default_inspector_registry(node_type: type) -> InspectorRegistry:
     )
 
     # ------------------------------------------------------------------
+    # TileMap
+    # ------------------------------------------------------------------
+
+    registry.register(
+        TileMapNode,
+        InspectorProperty(
+            "tilemap_asset",
+            "TileMap Asset",
+            "tilemap_asset",
+            kind="text",
+            group="TileMap",
+            editable=False,
+        ),
+    )
+
+    # ------------------------------------------------------------------
     # Physics bodies
     # ------------------------------------------------------------------
 
@@ -214,6 +232,19 @@ def create_default_inspector_registry(node_type: type) -> InspectorRegistry:
             group="Motion",
             decimals=3,
         ),
+    )
+
+    registry.register(
+        CharacterController2D,
+        InspectorProperty("walk_speed", "Walk Speed", "walk_speed", kind="float", group="Controller", decimals=2),
+        InspectorProperty("run_speed", "Run Speed", "run_speed", kind="float", group="Controller", decimals=2),
+        InspectorProperty("acceleration", "Acceleration", "acceleration", kind="float", group="Controller", decimals=2),
+        InspectorProperty("friction", "Friction", "friction", kind="float", group="Controller", decimals=2),
+        InspectorProperty("roll_speed", "Roll Speed", "roll_speed", kind="float", group="Controller", decimals=2),
+        InspectorProperty("roll_duration", "Roll Duration", "roll_duration", kind="float", group="Controller", decimals=3),
+        InspectorProperty("max_health", "Max Health", "max_health", kind="float", group="Combat", decimals=1),
+        InspectorProperty("health", "Health", "health", kind="float", group="Combat", decimals=1),
+        InspectorProperty("floor_type", "Floor Type", "floor_type", kind="text", group="Audio"),
     )
 
     registry.register(

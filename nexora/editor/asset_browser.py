@@ -33,6 +33,14 @@ PREFAB_EXTENSIONS = {
     ".nxprefab",
 }
 
+TILEMAP_EXTENSIONS = {
+    ".tilemap.net",
+}
+
+ITEM_EXTENSIONS = {
+    ".nitem",
+}
+
 FONT_EXTENSIONS = {
     ".ttf",
     ".otf",
@@ -79,6 +87,7 @@ class AssetEntry:
         icon = {
             "scene": "[SCN]",
             "prefab": "[PFB]",
+            "tilemap": "[MAP]",
             "image": "[IMG]",
             "audio": "[AUD]",
             "font": "[FNT]",
@@ -121,6 +130,12 @@ def classify_asset(path: Path) -> str:
 
     if suffix in PREFAB_EXTENSIONS:
         return "prefab"
+
+    if str(path).lower().endswith(".tilemap.net"):
+        return "tilemap"
+
+    if suffix in ITEM_EXTENSIONS:
+        return "item"
 
     if suffix in IMAGE_EXTENSIONS:
         return "image"

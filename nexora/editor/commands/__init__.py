@@ -14,6 +14,11 @@ from .property_command import SetPropertyCommand
 from .stack import CommandStack, EditorCommand
 from .tilemap_commands import (
     TileMapCellEdit,
+    TileMapAssetCommand,
+    TileMapLayerAddCommand,
+    TileMapLayerPropertyCommand,
+    TileMapLayerRemoveCommand,
+    TileMapLayerRenameCommand,
     TileMapPaintCommand,
     TileMapProjectionCommand,
 )
@@ -35,6 +40,11 @@ __all__ = [
     "RenameNodeCommand",
     "SetPropertyCommand",
     "TileMapCellEdit",
+    "TileMapAssetCommand",
+    "TileMapLayerAddCommand",
+    "TileMapLayerPropertyCommand",
+    "TileMapLayerRemoveCommand",
+    "TileMapLayerRenameCommand",
     "TileMapPaintCommand",
     "TileMapProjectionCommand",
     "TransformNodeCommand",
