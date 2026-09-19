@@ -159,3 +159,27 @@ def test_file_dialog_save_adds_extension(tmp_path: Path) -> None:
 
     assert selected == [tmp_path / "level_01.nxscene"]
     assert dialog.is_open is False
+
+
+def test_file_dialog_can_select_a_directory(tmp_path: Path) -> None:
+    project = tmp_path / "MyGame"
+    project.mkdir()
+
+    scene = create_scene()
+    dialog = scene.ui.create_child("Projects", node_type=FileDialog)
+    dialog.configure(
+        mode="open",
+        root_path=tmp_path,
+        title="Choose Project Folder",
+    )
+    dialog.allow_directories = True
+    dialog.open()
+
+    selected: list[Path] = []
+    dialog.file_selected.connect(lambda _dialog, path: selected.append(path))
+    index = dialog.file_list.items.index("[MyGame]")
+    dialog._on_list_change(index, "[MyGame]")
+    dialog.confirm()
+
+    assert selected == [project]
+    assert dialog.is_open is False
