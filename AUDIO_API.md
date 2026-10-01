@@ -2560,27 +2560,7 @@ The built-in asset path currently loads/streams WAV audio. Do not assume MP3/OGG
 
 ---
 
-## 24. README link
 
-Place this file in the repository root as:
-
-```text
-AUDIO_API.md
-```
-
-Then link it from `README.md` with:
-
-```markdown
-[Audio API](AUDIO_API.md)
-```
-
-For example, the README navigation can become:
-
-```markdown
-[Getting Started](#getting-started) · [API Reference](README_API.md) · [Audio API](AUDIO_API.md) · [Features](#features) · [Examples](#examples)
-```
-
----
 
 ## Minimal complete example
 
