@@ -21,9 +21,14 @@ def test_classify_asset(tmp_path: Path):
     prefab = tmp_path / "enemy.nxprefab"
     prefab.write_text("{}", encoding="utf-8")
 
+    tilemap = tmp_path / "world.ntmap"
+    tilemap.write_text("{}", encoding="utf-8")
+
     assert classify_asset(image) == "image"
     assert classify_asset(scene) == "scene"
     assert classify_asset(prefab) == "prefab"
+    assert classify_asset(tilemap) == "tilemap"
+    assert classify_asset(tmp_path / "world.mapdata") == "file"
     assert classify_asset(tmp_path) == "folder"
 
 

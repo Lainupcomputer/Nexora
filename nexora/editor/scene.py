@@ -25,6 +25,7 @@ from nexora.editor.asset_browser import (
 
 from nexora.editor.model import (
     EditorDocument,
+    EditorProjectContext,
     ProjectModel,
     SelectionService,
 )
@@ -97,11 +98,13 @@ class EditorScene(Scene):
         project: ProjectModel,
         document: EditorDocument,
         selection: SelectionService,
+        project_context: EditorProjectContext | None = None,
     ) -> None:
         super().__init__("NexoraEditor")
 
         self.game = game
-        self.project_path = Path(project_path).resolve()
+        self.project_context = project_context or EditorProjectContext.from_path(project_path)
+        self.project_path = self.project_context.root
         self.project = project
         self.document = document
         self.selection = selection
@@ -445,7 +448,7 @@ class EditorScene(Scene):
         self._run_after_dirty_check(self._open_scene_file_dialog)
 
     def _scene_start_directory(self) -> Path:
-        scenes = self.project_path / "scenes"
+        scenes = self.project_context.scenes_root
         if scenes.is_dir():
             return scenes
         return self.project_path
@@ -494,9 +497,9 @@ class EditorScene(Scene):
             self.status_label.text = "Select a node to save as a prefab first"
             return
 
-        start = self.project_path / "prefabs"
+        start = self.project_context.prefabs_root
         if not start.is_dir():
-            start = self.project_path / "assets"
+            start = self.project_context.assets_root
         if not start.is_dir():
             start = self.project_path
 
@@ -706,7 +709,7 @@ class EditorScene(Scene):
             (
                 candidate
                 for candidate in candidates
-                if (self.project_path / "assets" / candidate).is_file()
+                if self.project_context.resolve_asset(candidate).is_file()
             ),
             None,
         )

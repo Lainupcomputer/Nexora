@@ -9,6 +9,7 @@ from nexora.editor.scene import (
 )
 from nexora.editor.model import (
     EditorDocument,
+    EditorProjectContext,
     ProjectModel,
     SelectionService,
 )
@@ -63,11 +64,10 @@ class EditorApp(Game):
         *,
         project_path: str | Path | None = None,
     ) -> None:
-        self.editor_project_path = (
-            resolve_project_path(
-                project_path
-            )
+        self.editor_project_context = EditorProjectContext.from_path(
+            resolve_project_path(project_path)
         )
+        self.editor_project_path = self.editor_project_context.root
 
         super().__init__(
             project_name="NexoraEditor",
@@ -88,7 +88,7 @@ class EditorApp(Game):
     def initialize(
         self,
     ) -> None:
-        icon_path = self.editor_project_path / "assets" / "icon.png"
+        icon_path = self.editor_project_context.icon_path
         if self.window is not None and icon_path.is_file():
             try:
                 self.window.set_icon(icon_path)
@@ -108,6 +108,7 @@ class EditorApp(Game):
             project=self.editor_project,
             document=self.editor_document,
             selection=self.editor_selection,
+            project_context=self.editor_project_context,
         )
         self.scene = self.editor_scene
 

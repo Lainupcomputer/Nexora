@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Portable TileMap authoring assets.
 
-The ``.tilemap.net`` format is deliberately independent from ``.nxscene``.
+The ``.ntmap`` format is deliberately independent from ``.nxscene``.
 It stores the tileset layout and the painted map layers, while a scene only
 needs to reference the asset from its :class:`TileMapNode`.
 """
@@ -17,7 +17,7 @@ from .tileset import TileSet
 
 TILEMAP_ASSET_FORMAT = "nexora_tilemap"
 TILEMAP_ASSET_VERSION = 1
-TILEMAP_ASSET_SUFFIX = ".tilemap.net"
+TILEMAP_ASSET_SUFFIX = ".ntmap"
 
 
 class TileMapAsset:

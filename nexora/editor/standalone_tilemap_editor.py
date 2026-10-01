@@ -6,7 +6,8 @@ from pathlib import Path
 
 from nexora import Game
 from nexora.editor.commands import CommandStack, TileMapCellEdit, TileMapPaintCommand
-from nexora.editor.standalone_ui import (
+from nexora.editor.model import EditorProjectContext
+from nexora.editor.ui import (
     Button,
     CheckBox,
     Dropdown,
@@ -15,10 +16,14 @@ from nexora.editor.standalone_ui import (
     Rect,
     TextField,
     UITheme,
+    FileBrowserModel,
+    centered_rect,
+    close_other_menus,
     draw_outline,
     draw_rect,
     draw_text,
     rgba,
+    sync_browser_list,
 )
 from nexora.editor.app import resolve_project_path
 from nexora.scene import Scene
@@ -36,10 +41,16 @@ class StandaloneTileMapEditorScene(Scene):
     BOTTOM_HEIGHT = 188.0
     GAP = 1.0
 
-    def __init__(self, game, project_path: Path) -> None:
+    def __init__(
+        self,
+        game,
+        project_path: Path,
+        project_context: EditorProjectContext | None = None,
+    ) -> None:
         super().__init__("StandaloneTileMapEditor")
         self.game = game
-        self.project_path = Path(project_path).resolve()
+        self.project_context = project_context or EditorProjectContext.from_path(project_path)
+        self.project_path = self.project_context.root
         self.theme = UITheme()
         self.viewport = Rect(0.0, 0.0, 1.0, 1.0)
         self.left_panel = Rect(0.0, 0.0, 1.0, 1.0)
@@ -73,6 +84,7 @@ class StandaloneTileMapEditorScene(Scene):
         self.browser_root = self.project_path
         self.browser_path = self._asset_root()
         self.browser_entries: list[Path] = []
+        self.file_browser = FileBrowserModel()
         self.browser_list = ListBox(Rect(0, 0, 1, 1), self._browser_selected)
         self.browser_cancel_button = Button(Rect(0, 0, 1, 1), "Cancel", self._close_modal)
         self.browser_save_button = Button(Rect(0, 0, 1, 1), "Save", self._save_from_browser)
@@ -150,18 +162,13 @@ class StandaloneTileMapEditorScene(Scene):
     # ------------------------------------------------------------------
 
     def _asset_root(self) -> Path:
-        path = self.project_path / "assets"
-        return path if path.is_dir() else self.project_path
+        return self.project_context.assets_root
 
     def _asset_relative(self, path: Path) -> str:
-        try:
-            return path.resolve().relative_to(self._asset_root().resolve()).as_posix()
-        except ValueError:
-            return path.name
+        return self.project_context.relative_asset(path, root=self._asset_root())
 
     def _asset_path(self, relative: str | Path) -> Path:
-        path = Path(relative)
-        return path if path.is_absolute() else self._asset_root() / path
+        return self.project_context.resolve_asset(relative)
 
     # ------------------------------------------------------------------
     # Documents
@@ -244,46 +251,31 @@ class StandaloneTileMapEditorScene(Scene):
     def _open_browser(self, mode: str) -> None:
         self.modal = "browser"
         self.browser_mode = mode
-        # Start in assets, while allowing ``[..]`` to navigate back to the
-        # project root and then through its folders.
         self.browser_root = self.project_path
-        self.browser_path = self._asset_root()
+        extensions = (
+            (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+            if mode == "tileset"
+            else (TILEMAP_ASSET_SUFFIX,)
+        )
+        self.file_browser.open(
+            self.project_path,
+            start=self._asset_root(),
+            extensions=extensions,
+        )
+        self.browser_path = self.file_browser.path
         self.browser_name.set_text("")
         self._refresh_browser()
 
     def _refresh_browser(self) -> None:
-        try:
-            entries = list(self.browser_path.iterdir())
-        except (OSError, FileNotFoundError):
-            entries = []
-        directories = sorted((item for item in entries if item.is_dir() and item.name not in {".git", ".venv", "__pycache__", "build", "dist", "Bruch", "MyGame"}), key=lambda item: item.name.lower())
-        extensions = (".png", ".jpg", ".jpeg", ".bmp", ".webp") if self.browser_mode == "tileset" else (TILEMAP_ASSET_SUFFIX,)
-        files = sorted((item for item in entries if item.is_file() and item.name.lower().endswith(extensions)), key=lambda item: item.name.lower())
-        self.browser_entries = []
-        labels: list[str] = []
-        if self.browser_path != self.browser_root:
-            self.browser_entries.append(self.browser_path.parent)
-            labels.append("[..]")
-        self.browser_entries.extend(directories)
-        labels.extend(f"[{item.name}]" for item in directories)
-        self.browser_entries.extend(files)
-        labels.extend(item.name for item in files)
-        self.browser_list.set_items(labels)
-        self.browser_list.selected = -1
+        self.file_browser.refresh()
+        self.browser_path = self.file_browser.path
+        self.browser_entries = list(self.file_browser.entries)
+        sync_browser_list(self.file_browser, self.browser_list)
 
     def _browser_selected(self, index: int) -> None:
-        if not (0 <= index < len(self.browser_entries)):
-            return
-        # The parent entry is the only navigation control in the browser.
-        # Handle it explicitly instead of relying on Path.is_dir(), so the
-        # ``[..]`` row remains reliable across platforms and path variants.
-        if self.browser_path != self.browser_root and index == 0:
-            self._browser_up()
-            return
-        path = self.browser_entries[index]
-        if path.is_dir():
-            self.browser_path = path.resolve()
-            self._refresh_browser()
+        path = self.file_browser.select(index)
+        self._refresh_browser()
+        if path is None:
             return
         if self.browser_mode == "tileset":
             self._begin_tileset_setup(path)
@@ -298,8 +290,7 @@ class StandaloneTileMapEditorScene(Scene):
             self._close_modal()
 
     def _browser_up(self) -> None:
-        if self.browser_path != self.browser_root:
-            self.browser_path = self.browser_path.parent
+        if self.file_browser.go_up():
             self._refresh_browser()
 
     def _save_from_browser(self) -> None:
@@ -496,9 +487,7 @@ class StandaloneTileMapEditorScene(Scene):
         self.status = f"Layer moved down: {self.active_layer_name}"
 
     def _menu_opened(self, active_menu: Menu) -> None:
-        for menu in self.menus:
-            if menu is not active_menu:
-                menu.open = False
+        close_other_menus(self.menus, active_menu)
 
     def _quit_editor(self) -> None:
         self.game.stop()
@@ -529,7 +518,7 @@ class StandaloneTileMapEditorScene(Scene):
                 "2. Configure tile size, gap and margin",
                 "3. Create and arrange layers",
                 "4. Paint the map and assign layer roles",
-                "5. Save it as a .tilemap.net asset",
+                "5. Save it as a .ntmap asset",
             ),
         )
 
@@ -539,7 +528,7 @@ class StandaloneTileMapEditorScene(Scene):
             (
                 "Nexora Standalone TileMap Editor",
                 "Version 0.10",
-                "A portable editor for Nexora .tilemap.net assets.",
+                "A portable editor for Nexora .ntmap assets.",
             ),
         )
 
@@ -696,6 +685,11 @@ class StandaloneTileMapEditorScene(Scene):
         width = float(self.game.renderer.width)
         height = float(self.game.renderer.height)
         if (width, height) == self._layout_size:
+            # Modal controls also depend on the current browser mode.  The
+            # window size can stay unchanged while switching from the open
+            # dialog to Save As, so they must be refreshed even when the
+            # main layout is cached.
+            self._layout_modal_controls(width, height)
             return width, height
         self._layout_size = (width, height)
         body_top = self.TOOLBAR_HEIGHT
@@ -782,7 +776,7 @@ class StandaloneTileMapEditorScene(Scene):
             self.setup_fields[name].rect = Rect(x, y + 18.0, 300.0, 30.0)
         self.setup_cancel_button.rect = Rect(window.x + window.width - 244.0, window.y + window.height - 52.0, 108.0, 32.0)
         self.setup_apply_button.rect = Rect(window.x + window.width - 124.0, window.y + window.height - 52.0, 108.0, 32.0)
-        info_window = Rect(width / 2.0 - 330.0, height / 2.0 - 190.0, 660.0, 380.0)
+        info_window = centered_rect((width, height), 660.0, 380.0)
         self.info_close_button.rect = Rect(info_window.x + info_window.width - 126.0, info_window.y + info_window.height - 52.0, 108.0, 32.0)
 
     def _viewport_cell(self, mouse_x: float, mouse_y: float) -> tuple[int, int] | None:
@@ -1165,6 +1159,7 @@ class StandaloneTileMapEditorApp(Game):
 
     def __init__(self, *, project_path: str | Path | None = None, tilemap_path: str | Path | None = None) -> None:
         self.tilemap_project_path = resolve_project_path(project_path)
+        self.tilemap_project_context = EditorProjectContext.from_path(self.tilemap_project_path)
         self.tilemap_asset_path = tilemap_path
         super().__init__(
             project_name="NexoraStandaloneTileMapEditor",
@@ -1178,15 +1173,18 @@ class StandaloneTileMapEditorApp(Game):
 
     def initialize(self) -> None:
         if self.engine is not None:
-            assets_root = self.tilemap_project_path / "assets"
-            self.engine.assets.root = assets_root if assets_root.is_dir() else self.tilemap_project_path
-        icon_path = self.tilemap_project_path / "assets" / "icon.png"
+            self.engine.assets.root = self.tilemap_project_context.assets_root
+        icon_path = self.tilemap_project_context.icon_path
         if self.window is not None and icon_path.is_file():
             try:
                 self.window.set_icon(icon_path)
             except Exception:
                 pass
-        scene = StandaloneTileMapEditorScene(self, self.tilemap_project_path)
+        scene = StandaloneTileMapEditorScene(
+            self,
+            self.tilemap_project_path,
+            self.tilemap_project_context,
+        )
         self.editor_scene = scene
         self.scene = scene
         if self.tilemap_asset_path is not None:
@@ -1195,8 +1193,8 @@ class StandaloneTileMapEditorApp(Game):
                 asset_path = raw_path
             else:
                 candidates = (
-                    self.tilemap_project_path / "assets" / raw_path,
-                    self.tilemap_project_path / raw_path,
+                    self.tilemap_project_context.resolve_asset(raw_path),
+                    self.tilemap_project_context.resolve_project_file(raw_path),
                     Path.cwd() / raw_path,
                 )
                 asset_path = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])

@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--tilemap",
         default=None,
         metavar="ASSET",
-        help="Open this .tilemap.net asset in the standalone TileMap Editor.",
+        help="Open this .ntmap asset in the standalone TileMap Editor.",
     )
 
     parser.add_argument(
@@ -180,9 +180,9 @@ def main(
         )
 
     if args.tilemapedit is not None:
-        from nexora.editor import run_tilemap_editor
+        from nexora.editor import run_standalone_tilemap_editor
 
-        return run_tilemap_editor(
+        return run_standalone_tilemap_editor(
             project_path=args.tilemapedit,
             tilemap_path=selected_tilemap,
         )

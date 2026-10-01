@@ -18,7 +18,7 @@ class TileMapCellEdit:
 
 
 class TileMapAssetCommand:
-    """Undoable assignment of a portable ``.tilemap.net`` asset."""
+    """Undoable assignment of a portable ``.ntmap`` asset."""
 
     def __init__(self, node, asset_path: str, assets) -> None:
         self.node = node

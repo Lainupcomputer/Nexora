@@ -29,7 +29,7 @@ def test_tilemap_asset_roundtrip_preserves_tileset_layout_and_layers(tmp_path: P
     )
     loaded_map, loaded_tileset = TileMapAsset.load(path).build()
 
-    assert path.name == "world.tilemap.net"
+    assert path.name == "world.ntmap"
     assert loaded_map.projection.value == "angled_2d"
     assert loaded_map.require_layer("ground").get_tile(2, 1) == 7
     assert loaded_map.require_layer("objects").render_layer == 20
@@ -57,13 +57,13 @@ def test_tilemap_node_loads_tilemap_asset_from_assets(tmp_path: Path) -> None:
     tilemap = TileMap(width=1, height=1, tile_width=16, tile_height=16)
     tilemap.create_layer("ground").set_tile(0, 0, 2)
     tileset = TileSet(columns=2, rows=1, tile_width=16, tile_height=16, texture_asset="tiles.png")
-    asset_path = TileMapAsset.from_components(tilemap, tileset).save(assets_root / "world.tilemap.net")
+    asset_path = TileMapAsset.from_components(tilemap, tileset).save(assets_root / "world.ntmap")
 
     assets = _FakeAssets(assets_root)
     node = TileMapNode("World", World())
-    node.load_tilemap_asset("world.tilemap.net", assets)
+    node.load_tilemap_asset("world.ntmap", assets)
 
-    assert node.tilemap_asset == "world.tilemap.net"
+    assert node.tilemap_asset == "world.ntmap"
     assert node.tilemap.require_layer("ground").get_tile(0, 0) == 2
     assert assets.calls == ["tiles.png"]
 

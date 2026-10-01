@@ -6,6 +6,7 @@ import sys
 
 from nexora import Game
 from nexora.editor.app import resolve_project_path
+from nexora.editor.model import EditorProjectContext
 from nexora.editor.theme import (
     ACCENT,
     BUTTON_BACKGROUND,
@@ -25,10 +26,16 @@ class EditorToolsScene(Scene):
     CARD_WIDTH = 560.0
     CARD_HEIGHT = 520.0
 
-    def __init__(self, game, project_path: Path) -> None:
+    def __init__(
+        self,
+        game,
+        project_path: Path,
+        project_context: EditorProjectContext | None = None,
+    ) -> None:
         super().__init__("NexoraEditorTools")
         self.game = game
-        self.project_path = Path(project_path).resolve()
+        self.project_context = project_context or EditorProjectContext.from_path(project_path)
+        self.project_path = self.project_context.root
         self._last_viewport = (-1.0, -1.0)
         self._build_ui()
 
@@ -228,6 +235,9 @@ class EditorToolsApp(Game):
 
     def __init__(self, *, project_path: str | Path | None = None) -> None:
         self.editor_tools_project_path = resolve_project_path(project_path)
+        self.editor_tools_project_context = EditorProjectContext.from_path(
+            self.editor_tools_project_path
+        )
         super().__init__(
             project_name="NexoraEditorTools",
             title=f"Nexora Editor Tools - {self.editor_tools_project_path.name}",
@@ -239,7 +249,7 @@ class EditorToolsApp(Game):
         self.editor_tools_scene: EditorToolsScene | None = None
 
     def initialize(self) -> None:
-        icon_path = self.editor_tools_project_path / "assets" / "icon.png"
+        icon_path = self.editor_tools_project_context.icon_path
         if self.window is not None and icon_path.is_file():
             try:
                 self.window.set_icon(icon_path)
@@ -249,6 +259,7 @@ class EditorToolsApp(Game):
         self.editor_tools_scene = EditorToolsScene(
             self,
             self.editor_tools_project_path,
+            self.editor_tools_project_context,
         )
         self.scene = self.editor_tools_scene
 

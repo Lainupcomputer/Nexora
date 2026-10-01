@@ -6,7 +6,8 @@ from pathlib import Path
 
 from nexora import Game
 from nexora.editor.app import resolve_project_path
-from nexora.editor.standalone_ui import (
+from nexora.editor.model import EditorProjectContext
+from nexora.editor.ui import (
     Button,
     CategorizedListBox,
     CheckBox,
@@ -16,18 +17,19 @@ from nexora.editor.standalone_ui import (
     Rect,
     TextField,
     UITheme,
+    FileBrowserModel,
+    centered_rect,
+    close_other_menus,
     draw_outline,
     draw_rect,
     draw_text,
+    sync_browser_list,
 )
 from nexora.items import ITEM_ASSET_SUFFIX, ItemAsset, ItemDefinition
 from nexora.scene import Scene
 
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
-ITEM_DIRECTORIES = {".git", ".venv", "__pycache__", "build", "dist", "Bruch", "MyGame"}
-
-
 def _number(value: str, default: float = 0.0) -> float:
     try:
         return float(value.strip())
@@ -50,12 +52,19 @@ class ItemEditorScene(Scene):
     LEFT_WIDTH = 300.0
     PREVIEW_WIDTH = 320.0
 
-    def __init__(self, game, project_path: Path, item_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        game,
+        project_path: Path,
+        item_path: str | Path | None = None,
+        project_context: EditorProjectContext | None = None,
+    ) -> None:
         super().__init__("StandaloneItemEditor")
         self.game = game
-        self.project_path = Path(project_path).resolve()
-        self.assets_root = self._asset_root()
-        self.items_root = self.project_path / "items"
+        self.project_context = project_context or EditorProjectContext.from_path(project_path)
+        self.project_path = self.project_context.root
+        self.assets_root = self.project_context.assets_root
+        self.items_root = self.project_context.items_root
         self.theme = UITheme()
         self.item = ItemDefinition()
         self.document_path: Path | None = None
@@ -66,6 +75,7 @@ class ItemEditorScene(Scene):
         self.browser_root = self.project_path
         self.browser_path = self._item_start_path()
         self.browser_entries: list[Path] = []
+        self.file_browser = FileBrowserModel()
         self.icon_texture = None
         self._layout_size = (-1.0, -1.0)
         self._loading = False
@@ -216,33 +226,25 @@ class ItemEditorScene(Scene):
     # ------------------------------------------------------------------
 
     def _asset_root(self) -> Path:
-        path = self.project_path / "assets"
-        return path if path.is_dir() else self.project_path
+        return self.project_context.assets_root
 
     def _item_start_path(self) -> Path:
-        return self.items_root if self.items_root.is_dir() else self.project_path
+        return self.project_context.items_root if self.items_root.is_dir() else self.project_path
 
     def _asset_relative(self, path: Path) -> str:
-        try:
-            return path.resolve().relative_to(self.assets_root.resolve()).as_posix()
-        except ValueError:
-            return path.name
+        return self.project_context.relative_asset(path, root=self.assets_root)
 
     def _asset_path(self, value: str | Path) -> Path:
-        path = Path(value)
-        return path if path.is_absolute() else self.assets_root / path
+        return self.project_context.resolve_asset(value)
 
     def _resolve_requested_path(self, value: str | Path) -> Path:
         path = Path(value).expanduser()
         if path.is_absolute():
             return path
-        candidates = (
-            self.project_path / path,
-            self.items_root / path,
-            self.assets_root / path,
-            Path.cwd() / path,
+        return self.project_context.resolve_project_file(
+            path,
+            roots=(self.items_root, self.assets_root),
         )
-        return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
 
     # ------------------------------------------------------------------
     # Item state
@@ -551,10 +553,7 @@ class ItemEditorScene(Scene):
             self.status = f"Could not save item: {exc}"
 
     def _project_relative(self, path: Path) -> str:
-        try:
-            return path.resolve().relative_to(self.project_path.resolve()).as_posix()
-        except ValueError:
-            return str(path)
+        return self.project_context.relative_asset(path, root=self.project_path)
 
     def _validation_problems(self, item: ItemDefinition | None = None) -> list[str]:
         item = item or self._collect_item()
@@ -650,43 +649,27 @@ class ItemEditorScene(Scene):
         self.modal = "browser"
         self.browser_mode = mode
         self.browser_root = self.project_path
-        self.browser_path = self._item_start_path() if mode in {"open", "save"} else self.assets_root
+        start = self._item_start_path() if mode in {"open", "save"} else self.assets_root
+        extensions = (
+            (ITEM_ASSET_SUFFIX,)
+            if mode in {"open", "save"}
+            else IMAGE_EXTENSIONS
+        )
+        self.file_browser.open(self.project_path, start=start, extensions=extensions)
+        self.browser_path = self.file_browser.path
         self.browser_name.set_text(f"{self.item.item_id}{ITEM_ASSET_SUFFIX}" if mode == "save" else "")
         self._refresh_browser()
 
     def _refresh_browser(self) -> None:
-        try:
-            entries = list(self.browser_path.iterdir())
-        except (OSError, FileNotFoundError):
-            entries = []
-        directories = sorted((entry for entry in entries if entry.is_dir() and entry.name not in ITEM_DIRECTORIES), key=lambda path: path.name.lower())
-        if self.browser_mode in {"open", "save"}:
-            files = sorted((entry for entry in entries if entry.is_file() and entry.name.lower().endswith(ITEM_ASSET_SUFFIX)), key=lambda path: path.name.lower())
-        else:
-            files = sorted((entry for entry in entries if entry.is_file() and entry.suffix.lower() in IMAGE_EXTENSIONS), key=lambda path: path.name.lower())
-        self.browser_entries = []
-        labels: list[str] = []
-        if self.browser_path != self.browser_root:
-            self.browser_entries.append(self.browser_path.parent)
-            labels.append("[..]")
-        self.browser_entries.extend(directories)
-        labels.extend(f"[{entry.name}]" for entry in directories)
-        self.browser_entries.extend(files)
-        labels.extend(entry.name for entry in files)
-        self.browser_list.set_items(labels)
-        self.browser_list.selected = -1
+        self.file_browser.refresh()
+        self.browser_path = self.file_browser.path
+        self.browser_entries = list(self.file_browser.entries)
+        sync_browser_list(self.file_browser, self.browser_list)
 
     def _browser_selected(self, index: int) -> None:
-        if not 0 <= index < len(self.browser_entries):
-            return
-        if self.browser_path != self.browser_root and index == 0:
-            self.browser_path = self.browser_path.parent
-            self._refresh_browser()
-            return
-        path = self.browser_entries[index]
-        if path.is_dir():
-            self.browser_path = path.resolve()
-            self._refresh_browser()
+        path = self.file_browser.select(index)
+        self._refresh_browser()
+        if path is None:
             return
         if self.browser_mode == "icon":
             self.fields["icon"].set_text(self._asset_relative(path))
@@ -733,9 +716,7 @@ class ItemEditorScene(Scene):
     # ------------------------------------------------------------------
 
     def _menu_opened(self, opened: Menu) -> None:
-        for menu in self.menus:
-            if menu is not opened:
-                menu.open = False
+        close_other_menus(self.menus, opened)
 
     def _show_about(self) -> None:
         self.info_title = "Nexora Item Assets"
@@ -910,7 +891,7 @@ class ItemEditorScene(Scene):
             self.browser_cancel_button.rect = Rect(inner_right - 100.0, footer_y, 100.0, 32.0)
             self.browser_save_button.rect = Rect(inner_right - 100.0, footer_y, 100.0, 32.0)
         self.browser_name.rect = Rect(inner_x, footer_y, max(180.0, self.browser_cancel_button.rect.x - inner_x - 14.0), 32.0)
-        info_window = Rect(width / 2.0 - 330.0, height / 2.0 - 170.0, 660.0, 340.0)
+        info_window = centered_rect((width, height), 660.0, 340.0)
         self.info_close_button.rect = Rect(info_window.x + info_window.width - 126.0, info_window.y + info_window.height - 52.0, 108.0, 32.0)
 
     def _update_controls(self, controls: list, mouse_x: float, mouse_y: float) -> None:
@@ -1039,7 +1020,7 @@ class ItemEditorScene(Scene):
     def _render_info(self, renderer, viewport_size: tuple[float, float]) -> None:
         width, height = viewport_size
         draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport_size)
-        window = Rect(width / 2.0 - 330.0, height / 2.0 - 170.0, 660.0, 340.0)
+        window = centered_rect(viewport_size, 660.0, 340.0)
         draw_rect(renderer, window, self.theme.panel, viewport_size, radius=6.0)
         draw_outline(renderer, window, self.theme.border, viewport_size)
         draw_text(renderer, self.info_title, window.x + 22.0, window.y + 20.0, viewport_size, scale=0.86)
@@ -1071,6 +1052,7 @@ class ItemEditorApp(Game):
 
     def __init__(self, *, project_path: str | Path | None = None, item_path: str | Path | None = None) -> None:
         self.item_project_path = resolve_project_path(project_path)
+        self.item_project_context = EditorProjectContext.from_path(self.item_project_path)
         self.item_asset_path = item_path
         super().__init__(
             project_name="NexoraStandaloneItemEditor",
@@ -1084,15 +1066,19 @@ class ItemEditorApp(Game):
 
     def initialize(self) -> None:
         if self.engine is not None:
-            assets_root = self.item_project_path / "assets"
-            self.engine.assets.root = assets_root if assets_root.is_dir() else self.item_project_path
-        icon_path = self.item_project_path / "assets" / "icon.png"
+            self.engine.assets.root = self.item_project_context.assets_root
+        icon_path = self.item_project_context.icon_path
         if self.window is not None and icon_path.is_file():
             try:
                 self.window.set_icon(icon_path)
             except Exception:
                 pass
-        self.editor_scene = ItemEditorScene(self, self.item_project_path, self.item_asset_path)
+        self.editor_scene = ItemEditorScene(
+            self,
+            self.item_project_path,
+            self.item_asset_path,
+            self.item_project_context,
+        )
         self.scene = self.editor_scene
 
 

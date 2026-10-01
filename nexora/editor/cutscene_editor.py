@@ -17,7 +17,8 @@ from nexora.cutscene import (
     TRACK_TYPES,
 )
 from nexora.editor.app import resolve_project_path
-from nexora.editor.standalone_ui import (
+from nexora.editor.model import EditorProjectContext
+from nexora.editor.ui import (
     Button,
     CheckBox,
     Dropdown,
@@ -26,25 +27,20 @@ from nexora.editor.standalone_ui import (
     Rect,
     TextField,
     UITheme,
+    FileBrowserModel,
+    centered_rect,
+    close_other_menus,
     draw_outline,
     draw_rect,
     draw_text,
     rgba,
+    sync_browser_list,
 )
 from nexora.scene import Scene
 
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
 AUDIO_EXTENSIONS = (".wav", ".ogg", ".mp3", ".flac")
-HIDDEN_DIRECTORIES = {
-    ".git",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-    "Bruch",
-    "MyGame",
-}
 DEFAULT_SIGNING_KEY = (
     b"nexora-default-save-signing-key-"
     b"change-this-for-your-game"
@@ -72,10 +68,12 @@ class CutsceneEditorScene(Scene):
         game,
         project_path: Path,
         cutscene_path: str | Path | None = None,
+        project_context: EditorProjectContext | None = None,
     ) -> None:
         super().__init__("StandaloneCutsceneEditor")
         self.game = game
-        self.project_path = Path(project_path).resolve()
+        self.project_context = project_context or EditorProjectContext.from_path(project_path)
+        self.project_path = self.project_context.root
         self.requested_cutscene_path = Path(cutscene_path).expanduser() if cutscene_path is not None else None
         self.assets_root = self._asset_root()
         self.theme = UITheme()
@@ -91,6 +89,7 @@ class CutsceneEditorScene(Scene):
         self.browser_root = self.project_path
         self.browser_path = self.project_path
         self.browser_entries: list[Path] = []
+        self.file_browser = FileBrowserModel()
         self.preview_texture = None
         self.preview_reference = ""
         self.preview_error = ""
@@ -208,52 +207,22 @@ class CutsceneEditorScene(Scene):
     # ------------------------------------------------------------------
 
     def _asset_root(self) -> Path:
-        cutscene_assets = []
-        if self.requested_cutscene_path is not None:
-            requested = self.requested_cutscene_path
-            if not requested.is_absolute():
-                requested = self.project_path / requested
-            requested = requested.resolve()
-            for parent in requested.parents:
-                if parent.name.lower() == "mygame":
-                    cutscene_assets.append(parent / "assets")
-                    break
-        candidates = (
-            *cutscene_assets,
-            self.project_path / "assets",
-            self.project_path / "MyGame" / "assets",
-        )
-        return next((path for path in candidates if path.is_dir()), self.project_path)
+        return self.project_context.asset_root_for(self.requested_cutscene_path)
 
     def _asset_relative(self, path: Path) -> str:
-        try:
-            return path.resolve().relative_to(self.assets_root.resolve()).as_posix()
-        except ValueError:
-            return path.name
+        return self.project_context.relative_asset(path, root=self.assets_root)
 
     def _resolve_asset_path(self, value: str | Path) -> Path:
-        path = Path(value).expanduser()
-        if path.is_absolute():
-            return path
-        candidates = (
-            self.assets_root / path,
-            self.project_path / path,
-            self.project_path / "MyGame" / "assets" / path,
-            Path.cwd() / path,
-            Path.cwd() / "MyGame" / "assets" / path,
+        return self.project_context.resolve_asset(
+            value,
+            reference=self.requested_cutscene_path,
         )
-        return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
 
     def _resolve_requested_path(self, value: str | Path) -> Path:
-        path = Path(value).expanduser()
-        if path.is_absolute():
-            return path
-        candidates = (
-            self.project_path / path,
-            self.project_path / "cutscenes" / path,
-            Path.cwd() / path,
+        return self.project_context.resolve_project_file(
+            value,
+            roots=(self.project_context.cutscenes_root,),
         )
-        return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
 
     def _signing_key(self):
         return getattr(self.game, "_scene_signing_key", DEFAULT_SIGNING_KEY)
@@ -683,14 +652,10 @@ class CutsceneEditorScene(Scene):
             if normalized_lower.startswith(prefix):
                 normalized = normalized[len(prefix):]
                 break
-        candidates = (
-            self.assets_root / normalized,
-            self.project_path / normalized,
-            self.project_path / "MyGame" / "assets" / normalized,
-            Path.cwd() / normalized,
-            Path.cwd() / "MyGame" / "assets" / normalized,
+        return self.project_context.resolve_asset(
+            normalized,
+            reference=self.requested_cutscene_path,
         )
-        return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
 
     def _audio_reference(self, value: str) -> str:
         return str(self._resolve_audio_path(value).resolve())
@@ -945,56 +910,30 @@ class CutsceneEditorScene(Scene):
         self.browser_action_button.visible = mode == "save"
         self.browser_root = self.project_path
         if mode in {"image", "audio"}:
-            self.browser_path = self.assets_root
+            start = self.assets_root
         elif mode == "save" and (self.project_path / "cutscenes").is_dir():
-            self.browser_path = self.project_path / "cutscenes"
+            start = self.project_path / "cutscenes"
         else:
-            self.browser_path = self.project_path
+            start = self.project_path
+        extensions = {
+            "image": IMAGE_EXTENSIONS,
+            "audio": AUDIO_EXTENSIONS,
+        }.get(mode, (CUTSCENE_ASSET_SUFFIX,))
+        self.file_browser.open(self.project_path, start=start, extensions=extensions)
+        self.browser_path = self.file_browser.path
         self.browser_name.set_text(f"{self.document_name}{CUTSCENE_ASSET_SUFFIX}" if mode == "save" else "")
         self._refresh_browser()
 
     def _refresh_browser(self) -> None:
-        try:
-            entries = list(self.browser_path.iterdir())
-        except (OSError, FileNotFoundError):
-            entries = []
-        directories = sorted(
-            (item for item in entries if item.is_dir() and item.name not in HIDDEN_DIRECTORIES),
-            key=lambda item: item.name.lower(),
-        )
-        if self.browser_mode in {"image"}:
-            extensions = IMAGE_EXTENSIONS
-        elif self.browser_mode == "audio":
-            extensions = AUDIO_EXTENSIONS
-        else:
-            extensions = (CUTSCENE_ASSET_SUFFIX,)
-        files = sorted(
-            (item for item in entries if item.is_file() and item.name.lower().endswith(extensions)),
-            key=lambda item: item.name.lower(),
-        )
-        self.browser_entries = []
-        labels: list[str] = []
-        if self.browser_path != self.browser_root:
-            self.browser_entries.append(self.browser_path.parent)
-            labels.append("[..]")
-        self.browser_entries.extend(directories)
-        labels.extend(f"[{item.name}]" for item in directories)
-        self.browser_entries.extend(files)
-        labels.extend(item.name for item in files)
-        self.browser_list.set_items(labels)
-        self.browser_list.selected = -1
+        self.file_browser.refresh()
+        self.browser_path = self.file_browser.path
+        self.browser_entries = list(self.file_browser.entries)
+        sync_browser_list(self.file_browser, self.browser_list)
 
     def _browser_selected(self, index: int) -> None:
-        if not 0 <= index < len(self.browser_entries):
-            return
-        if self.browser_path != self.browser_root and index == 0:
-            self.browser_path = self.browser_path.parent
-            self._refresh_browser()
-            return
-        path = self.browser_entries[index]
-        if path.is_dir():
-            self.browser_path = path.resolve()
-            self._refresh_browser()
+        path = self.file_browser.select(index)
+        self._refresh_browser()
+        if path is None:
             return
         if self.browser_mode == "open":
             self._load_asset(path)
@@ -1028,9 +967,7 @@ class CutsceneEditorScene(Scene):
         self.status = "Ready"
 
     def _menu_opened(self, opened: Menu) -> None:
-        for menu in self.menus:
-            if menu is not opened:
-                menu.open = False
+        close_other_menus(self.menus, opened)
 
     def _show_help(self) -> None:
         self.modal = "info"
@@ -1387,7 +1324,7 @@ class CutsceneEditorScene(Scene):
     def _render_info(self, renderer, viewport_size: tuple[float, float]) -> None:
         width, height = viewport_size
         draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport_size)
-        window = Rect(width / 2.0 - 360.0, height / 2.0 - 170.0, 720.0, 340.0)
+        window = centered_rect(viewport_size, 720.0, 340.0)
         draw_rect(renderer, window, self.theme.panel, viewport_size, radius=6.0)
         draw_outline(renderer, window, self.theme.border, viewport_size)
         draw_text(renderer, self.info_title, window.x + 22.0, window.y + 20.0, viewport_size, scale=0.86)
@@ -1417,6 +1354,7 @@ class CutsceneEditorApp(Game):
 
     def __init__(self, *, project_path: str | Path | None = None, cutscene_path: str | Path | None = None) -> None:
         self.cutscene_project_path = resolve_project_path(project_path)
+        self.cutscene_project_context = EditorProjectContext.from_path(self.cutscene_project_path)
         self.cutscene_asset_path = cutscene_path
         super().__init__(
             project_name="NexoraStandaloneCutsceneEditor",
@@ -1430,32 +1368,23 @@ class CutsceneEditorApp(Game):
 
     def initialize(self) -> None:
         if self.engine is not None:
-            assets_candidates = [self.cutscene_project_path / "assets"]
-            if self.cutscene_asset_path is not None:
-                requested = Path(self.cutscene_asset_path).expanduser()
-                if not requested.is_absolute():
-                    requested = self.cutscene_project_path / requested
-                requested = requested.resolve()
-                mygame_parts = [index for index, part in enumerate(requested.parts) if part.lower() == "mygame"]
-                if mygame_parts:
-                    mygame_index = mygame_parts[0]
-                    assets_candidates.insert(
-                        0,
-                        Path(*requested.parts[:mygame_index + 1]) / "assets",
-                    )
-            assets_candidates.append(self.cutscene_project_path / "MyGame" / "assets")
-            assets_root = next(
-                (path for path in assets_candidates if path.is_dir()),
-                self.cutscene_project_path,
+            self.engine.assets.root = self.cutscene_project_context.asset_root_for(
+                self.cutscene_asset_path
             )
-            self.engine.assets.root = assets_root
-        icon_path = self.engine.assets.root / "icon.png" if self.engine is not None else None
+        icon_path = self.cutscene_project_context.asset_root_for(
+            self.cutscene_asset_path
+        ) / "icon.png"
         if self.window is not None and icon_path is not None and icon_path.is_file():
             try:
                 self.window.set_icon(icon_path)
             except Exception:
                 pass
-        scene = CutsceneEditorScene(self, self.cutscene_project_path, self.cutscene_asset_path)
+        scene = CutsceneEditorScene(
+            self,
+            self.cutscene_project_path,
+            self.cutscene_asset_path,
+            self.cutscene_project_context,
+        )
         self.editor_scene = scene
         self.scene = scene
 

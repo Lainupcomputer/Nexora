@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from nexora.nodes.ui.containers.panel import Panel
+from nexora.tilemap import TILEMAP_ASSET_SUFFIX
 
 
 IMAGE_EXTENSIONS = {
@@ -34,7 +35,7 @@ PREFAB_EXTENSIONS = {
 }
 
 TILEMAP_EXTENSIONS = {
-    ".tilemap.net",
+    TILEMAP_ASSET_SUFFIX,
 }
 
 ITEM_EXTENSIONS = {
@@ -131,7 +132,7 @@ def classify_asset(path: Path) -> str:
     if suffix in PREFAB_EXTENSIONS:
         return "prefab"
 
-    if str(path).lower().endswith(".tilemap.net"):
+    if suffix in TILEMAP_EXTENSIONS:
         return "tilemap"
 
     if suffix in ITEM_EXTENSIONS:

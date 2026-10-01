@@ -57,8 +57,8 @@ class TileMapNode(Node):
         self.tilemap: TileMap | None = None
         self.tileset: TileSet | None = None
         self.texture = None
-        # Project-assets-relative path to a .tilemap.net file.  Inline maps
-        # from older .nxscene files keep this as None for compatibility.
+        # Project-assets-relative path to a .ntmap file.  Inline maps in
+        # scenes keep this as None.
         self.tilemap_asset: str | None = None
 
         # Shared navigation state. Every TileNavigation created from this
@@ -191,7 +191,7 @@ class TileMapNode(Node):
         return self.layers_with_role("trigger")
 
     def load_tilemap_asset(self, asset_path: str, assets) -> None:
-        """Load and bind a ``.tilemap.net`` asset from the project assets."""
+        """Load and bind an ``.ntmap`` asset from the project assets."""
         if assets is None:
             raise RuntimeError("Loading a TileMap asset requires an AssetManager.")
         asset = TileMapAsset.load(assets.resolve(asset_path))
