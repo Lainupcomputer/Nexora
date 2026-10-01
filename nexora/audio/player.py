@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from threading import RLock
+
+import numpy as np
+
 from .device import AudioDevice
 from .listener import AudioListener
 from .mixer import AudioMixer
@@ -82,6 +86,22 @@ class AudioPlayer:
         self._sources: list[
             AudioSource
         ] = []
+        self._sources_lock = RLock()
+
+        # Reuse the hot output buffer instead of allocating a new ndarray on
+        # every game update. ``mix()`` owns this buffer while the source lock
+        # is held, which also makes this safe when Nexora runs free-threaded.
+        self._mix_buffer = np.zeros(
+            self._max_update_frames * self.output_channels,
+            dtype=np.float32,
+        )
+
+        # Per-bus work buffers make real hierarchical DSP possible. Sources
+        # are mixed into their assigned bus first; buses are then processed
+        # deepest-first and routed into their parent. Buffers are retained and
+        # reused to avoid allocations in the real-time path.
+        self._bus_buffers: dict[str, np.ndarray] = {}
+        self._send_buffer = np.zeros_like(self._mix_buffer)
 
     # ==========================================================
     # OUTPUT FORMAT
@@ -182,29 +202,32 @@ class AudioPlayer:
         AudioSource,
         ...
     ]:
-        return tuple(
-            self._sources
-        )
+        with self._sources_lock:
+            return tuple(
+                self._sources
+            )
 
     def add(
         self,
         source: AudioSource,
     ) -> None:
-        if source not in self._sources:
-            self._sources.append(
-                source
-            )
+        with self._sources_lock:
+            if source not in self._sources:
+                self._sources.append(
+                    source
+                )
 
     def remove(
         self,
         source: AudioSource,
     ) -> None:
-        if source in self._sources:
-            self._sources.remove(
-                source
-            )
+        with self._sources_lock:
+            if source in self._sources:
+                self._sources.remove(
+                    source
+                )
 
-        source._close_stream_reader()
+            source._close_stream_reader()
 
     # ==========================================================
     # PLAYBACK CONTROL
@@ -214,36 +237,72 @@ class AudioPlayer:
         self,
         source: AudioSource,
     ) -> None:
-        if source not in self._sources:
-            self.add(
-                source
-            )
-
-        source.play()
+        with self._sources_lock:
+            if source not in self._sources:
+                self._sources.append(source)
+            source.play()
 
     def pause(
         self,
         source: AudioSource,
     ) -> None:
-        source.pause()
+        with self._sources_lock:
+            source.pause()
 
     def resume(
         self,
         source: AudioSource,
     ) -> None:
-        source.resume()
+        with self._sources_lock:
+            source.resume()
 
     def stop(
         self,
         source: AudioSource,
     ) -> None:
-        source.stop()
+        with self._sources_lock:
+            source.stop()
 
     def stop_all(
         self,
     ) -> None:
+        with self._sources_lock:
+            for source in self._sources:
+                source.stop()
+            self._prune_stopped_sources_locked()
+
+    def _prune_stopped_sources_locked(self) -> int:
+        """Drop stopped sources while ``_sources_lock`` is already held.
+
+        Audio sources are short-lived runtime objects. Keeping naturally
+        finished or explicitly stopped sources in the player retains their
+        Sound/StreamedSound references and, for streams, can also retain a
+        decoded NumPy window. This helper makes source ownership bounded.
+        Paused sources are intentionally kept.
+        """
+
+        if not self._sources:
+            return 0
+
+        survivors: list[AudioSource] = []
+        removed = 0
         for source in self._sources:
-            source.stop()
+            if source.state == AudioSourceState.STOPPED:
+                source._close_stream_reader()
+                removed += 1
+            else:
+                survivors.append(source)
+
+        if removed:
+            self._sources[:] = survivors
+
+        return removed
+
+    def prune_stopped_sources(self) -> int:
+        """Remove finished/stopped sources and return the number removed."""
+
+        with self._sources_lock:
+            return self._prune_stopped_sources_locked()
 
     # ==========================================================
     # ACTIVE SOURCES
@@ -253,11 +312,12 @@ class AudioPlayer:
     def has_playing_sources(
         self,
     ) -> bool:
-        return any(
-            source.state
-            == AudioSourceState.PLAYING
-            for source in self._sources
-        )
+        with self._sources_lock:
+            return any(
+                source.state
+                == AudioSourceState.PLAYING
+                for source in self._sources
+            )
 
     # ==========================================================
     # MIX
@@ -288,33 +348,168 @@ class AudioPlayer:
                 "stereo output only."
             )
 
-        mixed = [
-            0.0
-        ] * (
-            frame_count
-            * self.output_channels
-        )
+        sample_count = frame_count * self.output_channels
+        if sample_count > self._mix_buffer.size:
+            # Grow geometrically so an occasional larger request does not
+            # cause repeated reallocations on subsequent updates.
+            new_size = max(sample_count, self._mix_buffer.size * 2)
+            self._mix_buffer = np.zeros(new_size, dtype=np.float32)
 
-        for source in self._sources:
-            if (
-                source.state
-                != AudioSourceState.PLAYING
-            ):
-                continue
+        mixed = self._mix_buffer[:sample_count]
+        mixed.fill(0.0)
 
-            self._mix_source(
-                source,
+        # Source state and the shared work buffers are owned for the duration
+        # of one mix. Sources first write into their assigned bus. The bus
+        # graph is processed afterwards so DSP order is deterministic:
+        # source -> bus effects -> bus gain -> parent -> ... -> master.
+        with self._sources_lock:
+            bus_buffers = self._prepare_bus_buffers(sample_count)
+
+            for source in self._sources:
+                if source.state != AudioSourceState.PLAYING:
+                    continue
+
+                bus = self.mixer.resolve_bus(source.bus)
+                self._mix_source(
+                    source,
+                    bus_buffers[bus.id][:sample_count],
+                    frame_count,
+                )
+
+            self._process_bus_graph(
+                bus_buffers,
                 mixed,
                 frame_count,
+                sample_count,
             )
 
-        self._clamp(
-            mixed
-        )
+            # Sources can finish naturally during the block above. Release
+            # them immediately instead of waiting for another update tick.
+            self._prune_stopped_sources_locked()
 
-        return encode_float32(
-            mixed
-        )
+        self._clamp(mixed)
+        return encode_float32(mixed)
+
+    def _prepare_bus_buffers(
+        self,
+        sample_count: int,
+    ) -> dict[str, np.ndarray]:
+        """Return zeroed reusable work buffers keyed by stable bus id."""
+
+        active_keys: set[str] = set()
+        for bus in self.mixer.buses:
+            key = bus.id
+            active_keys.add(key)
+            buffer = self._bus_buffers.get(key)
+            if buffer is None or buffer.size < sample_count:
+                old_size = 0 if buffer is None else buffer.size
+                new_size = max(sample_count, old_size * 2, self._mix_buffer.size)
+                buffer = np.zeros(new_size, dtype=np.float32)
+                self._bus_buffers[key] = buffer
+            buffer[:sample_count].fill(0.0)
+
+        for key in tuple(self._bus_buffers):
+            if key not in active_keys:
+                del self._bus_buffers[key]
+
+        if self._send_buffer.size < sample_count:
+            new_size = max(sample_count, self._send_buffer.size * 2, self._mix_buffer.size)
+            self._send_buffer = np.zeros(new_size, dtype=np.float32)
+
+        return self._bus_buffers
+
+    def _route_send(
+        self,
+        block: np.ndarray,
+        target: np.ndarray,
+        amount: float,
+        sample_count: int,
+    ) -> None:
+        if amount <= 0.0:
+            return
+        if amount == 1.0:
+            np.add(target, block, out=target)
+            return
+        scratch = self._send_buffer[:sample_count]
+        np.multiply(block, amount, out=scratch)
+        np.add(target, scratch, out=target)
+
+    def _process_bus_graph(
+        self,
+        bus_buffers: dict[str, np.ndarray],
+        output: np.ndarray,
+        frame_count: int,
+        sample_count: int,
+    ) -> None:
+        """Process the acyclic routing graph including pre/post-fader sends."""
+
+        for bus in self.mixer.processing_order():
+            block = bus_buffers[bus.id][:sample_count]
+            frames = block.reshape(frame_count, self.output_channels)
+
+            if bus.muted or not self.mixer.is_bus_audible(bus):
+                block.fill(0.0)
+                bus.reset_meter(clear_hold=False)
+            else:
+                # Headroom is a Master pre-DSP stage so the complete master
+                # chain, including a limiter, sees the reserved level.
+                if bus is self.mixer.master:
+                    headroom = self.mixer.headroom_gain
+                    if headroom != 1.0:
+                        np.multiply(block, headroom, out=block)
+
+                bus.process_effects(
+                    frames,
+                    sample_rate=self.output_frequency,
+                    channels=self.output_channels,
+                )
+
+                # Pre-fader sends branch after bus DSP but before fader/pan.
+                for send in self.mixer.get_sends_from(bus):
+                    if not send.enabled or not send.pre_fader:
+                        continue
+                    target = bus_buffers[send.target_bus_id][:sample_count]
+                    self._route_send(block, target, send.amount, sample_count)
+
+                if bus.volume != 1.0:
+                    np.multiply(block, bus.volume, out=block)
+
+                if bus.pan != 0.0:
+                    left_gain, right_gain = calculate_pan_gains(bus.pan)
+                    np.multiply(frames[:, 0], left_gain, out=frames[:, 0])
+                    np.multiply(frames[:, 1], right_gain, out=frames[:, 1])
+
+                # Optional dedicated safety limiter is always the final Master
+                # DSP stage, after the Master fader/pan and before metering.
+                if bus is self.mixer.master:
+                    limiter = self.mixer.master_limiter
+                    if limiter is not None and limiter.enabled:
+                        limiter_scratch = self._send_buffer[:sample_count].reshape(
+                            frame_count, self.output_channels
+                        )
+                        limiter.process_mixed(
+                            frames,
+                            limiter_scratch,
+                            sample_rate=self.output_frequency,
+                            channels=self.output_channels,
+                        )
+
+                bus.update_meter(frames)
+
+                # Post-fader sends receive exactly what this bus contributes to
+                # its regular parent route.
+                for send in self.mixer.get_sends_from(bus):
+                    if not send.enabled or send.pre_fader:
+                        continue
+                    target = bus_buffers[send.target_bus_id][:sample_count]
+                    self._route_send(block, target, send.amount, sample_count)
+
+            if bus is self.mixer.master:
+                np.copyto(output, block)
+            else:
+                parent_bus = bus.parent or self.mixer.master
+                parent = bus_buffers[parent_bus.id][:sample_count]
+                np.add(parent, block, out=parent)
 
     # ==========================================================
     # MIX SOURCE
@@ -323,7 +518,7 @@ class AudioPlayer:
     def _mix_source(
         self,
         source: AudioSource,
-        output: list[float],
+        output: np.ndarray,
         frame_count: int,
     ) -> None:
         if getattr(source.sound, "streaming", False):
@@ -374,9 +569,7 @@ class AudioPlayer:
             return
 
         volume = (
-            source.get_effective_volume(
-                self.mixer
-            )
+            source.get_source_volume()
         )
 
         (
@@ -590,7 +783,7 @@ class AudioPlayer:
     def _mix_source_fast(
         self,
         source: AudioSource,
-        output: list[float],
+        output: np.ndarray,
         frame_count: int,
     ) -> None:
         """Mix an unpitched, non-fading PCM source without interpolation."""
@@ -602,12 +795,16 @@ class AudioPlayer:
             return
 
         total_frames = len(samples) // source_channels
+        frames = samples[: total_frames * source_channels].reshape(
+            total_frames,
+            source_channels,
+        )
 
         if total_frames <= 0:
             source.stop()
             return
 
-        volume = source.get_effective_volume(self.mixer)
+        volume = source.get_source_volume()
         spatial_volume, pan = source.get_spatial_parameters(
             self.listener.position,
         )
@@ -634,24 +831,18 @@ class AudioPlayer:
                 total_frames - frame,
             )
 
-            if source_channels == 1:
-                for index in range(count):
-                    sample = samples[frame + index]
-                    output[output_index] += sample * left_scale
-                    output[output_index + 1] += sample * right_scale
-                    output_index += 2
-            else:
-                sample_index = frame * source_channels
+            out = output[output_index:output_index + count * 2].reshape(-1, 2)
 
-                for _ in range(count):
-                    output[output_index] += (
-                        samples[sample_index] * left_scale
-                    )
-                    output[output_index + 1] += (
-                        samples[sample_index + 1] * right_scale
-                    )
-                    output_index += 2
-                    sample_index += source_channels
+            chunk = frames[frame:frame + count]
+            if source_channels == 1:
+                mono = chunk[:, 0]
+                out[:, 0] += mono * left_scale
+                out[:, 1] += mono * right_scale
+            else:
+                out[:, 0] += chunk[:, 0] * left_scale
+                out[:, 1] += chunk[:, 1] * right_scale
+
+            output_index += count * 2
 
             frame += count
             remaining -= count
@@ -665,7 +856,7 @@ class AudioPlayer:
     def _mix_stream_source(
         self,
         source: AudioSource,
-        output: list[float],
+        output: np.ndarray,
         frame_count: int,
     ) -> None:
         """Mix a bounded WAV window without creating a full PCM cache."""
@@ -690,7 +881,7 @@ class AudioPlayer:
             )
             return
 
-        volume = source.get_effective_volume(self.mixer)
+        volume = source.get_source_volume()
         spatial_volume, pan = source.get_spatial_parameters(
             self.listener.position,
         )
@@ -746,7 +937,7 @@ class AudioPlayer:
     def _mix_stream_source_fast(
         self,
         source: AudioSource,
-        output: list[float],
+        output: np.ndarray,
         frame_count: int,
     ) -> None:
         """Mix sequential streamed PCM with one bounded chunk lookup."""
@@ -763,7 +954,7 @@ class AudioPlayer:
             source.stop()
             return
 
-        volume = source.get_effective_volume(self.mixer)
+        volume = source.get_source_volume()
         spatial_volume, pan = source.get_spatial_parameters(
             self.listener.position,
         )
@@ -804,26 +995,20 @@ class AudioPlayer:
                 source._finish()
                 break
 
-            samples = reader._cache
-            sample_index = (frame - cache_start) * source_channels
+            cache_frames = reader._cache.reshape(-1, source_channels)
+            cache_offset = frame - cache_start
+            chunk = cache_frames[cache_offset:cache_offset + count]
+            out = output[output_index:output_index + count * 2].reshape(-1, 2)
 
             if source_channels == 1:
-                for _ in range(count):
-                    sample = samples[sample_index]
-                    output[output_index] += sample * left_scale
-                    output[output_index + 1] += sample * right_scale
-                    output_index += 2
-                    sample_index += 1
+                mono = chunk[:, 0]
+                out[:, 0] += mono * left_scale
+                out[:, 1] += mono * right_scale
             else:
-                for _ in range(count):
-                    output[output_index] += (
-                        samples[sample_index] * left_scale
-                    )
-                    output[output_index + 1] += (
-                        samples[sample_index + 1] * right_scale
-                    )
-                    output_index += 2
-                    sample_index += source_channels
+                out[:, 0] += chunk[:, 0] * left_scale
+                out[:, 1] += chunk[:, 1] * right_scale
+
+            output_index += count * 2
 
             frame += count
             remaining -= count
@@ -840,23 +1025,9 @@ class AudioPlayer:
 
     @staticmethod
     def _clamp(
-        samples: list[float],
+        samples: np.ndarray,
     ) -> None:
-        for (
-            index,
-            sample,
-        ) in enumerate(
-            samples
-        ):
-            if sample > 1.0:
-                samples[
-                    index
-                ] = 1.0
-
-            elif sample < -1.0:
-                samples[
-                    index
-                ] = -1.0
+        np.clip(samples, -1.0, 1.0, out=samples)
 
     # ==========================================================
     # UPDATE
@@ -897,10 +1068,15 @@ class AudioPlayer:
         # Nothing playing
         # ======================================================
 
-        active_source_count = sum(
-            source.state == AudioSourceState.PLAYING
-            for source in self._sources
-        )
+        with self._sources_lock:
+            # Finished one-shot SFX/voices must not accumulate forever. Do
+            # this before the early return below so a player containing only
+            # stopped sources still releases them immediately.
+            self._prune_stopped_sources_locked()
+            active_source_count = sum(
+                source.state == AudioSourceState.PLAYING
+                for source in self._sources
+            )
 
         if active_source_count <= 0:
             return

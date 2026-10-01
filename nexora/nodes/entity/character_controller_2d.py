@@ -569,8 +569,8 @@ class CharacterController2D(CharacterBody2D):
             sound = self.audio.load(sound)
         if sound is None:
             return
-        from nexora.audio import AudioChannel, AudioSource
-        source = AudioSource(sound, channel=AudioChannel.SFX, position=self.world_position)
+        from nexora.audio import AudioSource
+        source = AudioSource(sound, bus="SFX", position=self.world_position)
         player = getattr(self.audio, "player", None)
         if player is not None and callable(getattr(player, "play", None)):
             player.play(source)

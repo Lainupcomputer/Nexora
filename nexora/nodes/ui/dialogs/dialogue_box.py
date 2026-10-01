@@ -7,7 +7,7 @@ from typing import Any
 
 import sdl3
 
-from nexora.audio import AudioChannel, AudioSource
+from nexora.audio import AudioSource
 from nexora.nodes.effects import Light2D
 from nexora.nodes.ui.containers.panel import Panel
 from nexora.nodes.ui.controls.button import Button
@@ -803,7 +803,7 @@ class DialogueBox(UINode):
             if self._typing_source is None:
                 self._typing_source = AudioSource(
                     self._typing_sound,
-                    channel=AudioChannel.SFX,
+                    bus="SFX",
                     volume=self.typing_sound_volume,
                     loop=False,
                 )

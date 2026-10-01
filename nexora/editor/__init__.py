@@ -16,6 +16,11 @@ from nexora.editor.tools import (
     EditorToolsScene,
     run_editor_tools,
 )
+from nexora.editor.audio_mixer_editor import (
+    AudioMixerEditorApp,
+    AudioMixerEditorScene,
+    run_audio_mixer_editor,
+)
 from nexora.editor.cutscene_editor import (
     CutsceneEditorApp,
     CutsceneEditorScene,
@@ -40,6 +45,9 @@ __all__ = [
     "EditorToolsApp",
     "EditorToolsScene",
     "run_editor_tools",
+    "AudioMixerEditorApp",
+    "AudioMixerEditorScene",
+    "run_audio_mixer_editor",
     "CutsceneEditorApp",
     "CutsceneEditorScene",
     "run_cutscene_editor",

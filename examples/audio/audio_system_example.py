@@ -3,7 +3,6 @@ from __future__ import annotations
 from nexora import Game
 
 from nexora.audio import (
-    AudioChannel,
     AudioSource,
     RepeatMode,
 )
@@ -25,7 +24,7 @@ class AudioSystemExample(Game):
         - fade in / fade out
         - 2D spatial audio
         - listener movement
-        - channel volume
+        - bus volume
         - audio bus volume
         - audio bus mute
         - master volume
@@ -361,7 +360,6 @@ class AudioSystemExample(Game):
         self.source = AudioSource(
             self.sound,
 
-            channel=AudioChannel.SFX,
 
             volume=1.0,
 
@@ -381,7 +379,6 @@ class AudioSystemExample(Game):
         self.spatial_source = AudioSource(
             self.sound,
 
-            channel=AudioChannel.SFX,
 
             volume=1.0,
 
@@ -943,8 +940,8 @@ class AudioSystemExample(Game):
                 - 0.1,
             )
 
-            self.audio.set_volume(
-                AudioChannel.MASTER,
+            self.audio.set_bus_volume(
+                "Master",
                 self.master_volume,
             )
 
@@ -962,8 +959,8 @@ class AudioSystemExample(Game):
                 + 0.1,
             )
 
-            self.audio.set_volume(
-                AudioChannel.MASTER,
+            self.audio.set_bus_volume(
+                "Master",
                 self.master_volume,
             )
 

@@ -41,14 +41,17 @@ class Sound:
     def pcm(self) -> PcmSamples:
         """Return decoded PCM samples, decoding only once.
 
-        Long clips use a packed float array so a multi-minute WAV does not
-        expand into millions of Python float objects.
+        PCM is cached as one contiguous NumPy float32 array so the mixer can
+        slice it without per-update conversion or Python sample objects.
         """
 
         if self._pcm_cache is None:
-            self._pcm_cache = decode_pcm(
-                self.buffer
-            )
+            pcm = decode_pcm(self.buffer)
+            # Decoded assets are shared by all playback instances. Keep them
+            # immutable so concurrent free-threaded mixers can safely read the
+            # same cache without accidental in-place edits.
+            pcm.setflags(write=False)
+            self._pcm_cache = pcm
 
         return self._pcm_cache
 

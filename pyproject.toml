@@ -23,6 +23,7 @@ dependencies = [
     "PySDL3>=0.9.12b1",
     "psutil>=7.0",
     "nvidia-ml-py>=13.0",
+    "numpy>=2.3",
 ]
 
 

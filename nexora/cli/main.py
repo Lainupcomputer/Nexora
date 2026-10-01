@@ -61,6 +61,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--audioedit",
+        nargs="?",
+        const=".",
+        default=None,
+        metavar="PROJECT",
+        help=(
+            "Start the standalone Audio Mixer Editor. "
+            "Without PROJECT the current directory is opened."
+        ),
+    )
+
+    parser.add_argument(
         "--cutsceneedit",
         "--cutscene-editor",
         dest="cutsceneedit",
@@ -141,6 +153,7 @@ def main(
             ("--editor-tools", args.editor_tools),
             ("--tilemapedit", args.tilemapedit),
             ("--itemedit", args.itemedit),
+            ("--audioedit", args.audioedit),
             ("--cutsceneedit", args.cutsceneedit),
         )
         if value is not None
@@ -193,6 +206,13 @@ def main(
         return run_item_editor(
             project_path=args.itemedit,
             item_path=args.item,
+        )
+
+    if args.audioedit is not None:
+        from nexora.editor import run_audio_mixer_editor
+
+        return run_audio_mixer_editor(
+            project_path=args.audioedit,
         )
 
     if args.cutsceneedit is not None:

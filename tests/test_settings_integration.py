@@ -105,13 +105,6 @@ def make_audio_defaults(
     return write_text(
         root / "audio.toml",
         """
-[volume]
-master = 1.0
-music = 1.0
-sfx = 1.0
-ambient = 1.0
-voice = 1.0
-
 [buses.master]
 volume = 1.0
 muted = false
@@ -484,13 +477,6 @@ def test_audio_settings_load_and_write_only_override(
     settings._data = {}
     settings._user_data = {}
 
-    settings.volume = (
-        AudioSection(
-            settings,
-            "volume",
-        )
-    )
-
     settings.buses = (
         AudioSection(
             settings,
@@ -501,7 +487,7 @@ def test_audio_settings_load_and_write_only_override(
     settings.reload()
 
     assert (
-        settings.volume.master
+        settings.buses.master.volume
         == 1.0
     )
 
@@ -515,10 +501,10 @@ def test_audio_settings_load_and_write_only_override(
         is False
     )
 
-    settings.volume.music = 0.5
+    settings.buses.music.volume = 0.5
 
     assert (
-        settings.volume.music
+        settings.buses.music.volume
         == 0.5
     )
 
@@ -529,17 +515,17 @@ def test_audio_settings_load_and_write_only_override(
     )
 
     assert (
-        "[volume]"
+        "[buses.music]"
         in text
     )
 
     assert (
-        "music = 0.5"
+        "volume = 0.5"
         in text
     )
 
     assert (
-        "master ="
+        "[buses.master]"
         not in text
     )
 
@@ -577,13 +563,6 @@ def test_audio_bus_override_and_reset(
     settings.autosave = True
     settings._data = {}
     settings._user_data = {}
-
-    settings.volume = (
-        AudioSection(
-            settings,
-            "volume",
-        )
-    )
 
     settings.buses = (
         AudioSection(
@@ -790,13 +769,6 @@ def test_settings_systems_do_not_overwrite_each_other(
     audio._data = {}
     audio._user_data = {}
 
-    audio.volume = (
-        AudioSection(
-            audio,
-            "volume",
-        )
-    )
-
     audio.buses = (
         AudioSection(
             audio,
@@ -807,7 +779,7 @@ def test_settings_systems_do_not_overwrite_each_other(
     audio.reload()
 
     graphics.window.width = 1600
-    audio.volume.music = 0.4
+    audio.buses.music.volume = 0.4
 
     graphics_text = (
         graphics.store.user_path.read_text(
@@ -827,12 +799,12 @@ def test_settings_systems_do_not_overwrite_each_other(
     )
 
     assert (
-        "music = 0.4"
+        "volume = 0.4"
         not in graphics_text
     )
 
     assert (
-        "music = 0.4"
+        "volume = 0.4"
         in audio_text
     )
 

@@ -5,15 +5,27 @@ import math
 import struct
 import wave
 
-
+import numpy as np
 import pytest
 
 pytestmark = pytest.mark.audio
 from nexora.audio import (
     AudioBuffer,
     AudioBus,
-    AudioChannel,
     AudioMixer,
+    GainEffect,
+    LimiterEffect,
+    LowPassFilterEffect,
+    HighPassFilterEffect,
+    ParametricEQEffect,
+    CompressorEffect,
+    DelayEffect,
+    ReverbEffect,
+    DistortionEffect,
+    NoiseGateEffect,
+    StereoWidthEffect,
+    AudioPreset,
+    AudioPresetRegistry,
     AudioPlayer,
     AudioSource,
     AudioSourceState,
@@ -314,121 +326,72 @@ def test_sound_load_normalizes_path(monkeypatch, tmp_path):
 
 
 # ============================================================
-# AudioMixer
+# AudioMixer / dynamic bus graph
 # ============================================================
 
 
 def test_audio_mixer_defaults():
     mixer = AudioMixer()
+    assert mixer.master.name == "Master"
+    assert mixer.master.volume == 1.0
+    assert mixer.master.parent is None
 
-    for channel in AudioChannel:
-        assert mixer.get_volume(channel) == 1.0
 
-
-def test_audio_mixer_set_volume():
+def test_audio_mixer_create_hierarchical_bus():
     mixer = AudioMixer()
+    sfx = mixer.get_bus("SFX")
+    sfx.volume = 0.8
+    weapons = mixer.create_bus("Weapons", parent="SFX", volume=0.5)
+    mixer.master.volume = 0.5
 
-    mixer.set_volume(
-        AudioChannel.MUSIC,
-        0.5,
-    )
-
-    assert mixer.get_volume(
-        AudioChannel.MUSIC
-    ) == 0.5
+    assert weapons.parent is sfx
+    assert weapons.effective_volume == pytest.approx(0.2)
 
 
-def test_audio_mixer_volume_lower_bound():
+def test_audio_mixer_bus_names_are_case_insensitive():
     mixer = AudioMixer()
-
-    mixer.set_volume(
-        AudioChannel.SFX,
-        0.0,
-    )
-
-    assert mixer.get_volume(
-        AudioChannel.SFX
-    ) == 0.0
+    bus = mixer.get_bus("Music")
+    assert mixer.get_bus("music") is bus
+    assert mixer.has_bus("MUSIC")
 
 
-def test_audio_mixer_volume_upper_bound():
+def test_audio_mixer_rejects_duplicate_bus():
     mixer = AudioMixer()
-
-    mixer.set_volume(
-        AudioChannel.SFX,
-        1.0,
-    )
-
-    assert mixer.get_volume(
-        AudioChannel.SFX
-    ) == 1.0
-
-
-@pytest.mark.parametrize(
-    "value",
-    [-0.1, 1.1, 2.0],
-)
-def test_audio_mixer_invalid_volume(value):
-    mixer = AudioMixer()
-
     with pytest.raises(ValueError):
-        mixer.set_volume(
-            AudioChannel.SFX,
-            value,
-        )
+        mixer.create_bus("sfx")
 
 
-def test_audio_mixer_effective_volume():
+def test_audio_mixer_rejects_bus_cycles():
     mixer = AudioMixer()
-
-    mixer.set_volume(
-        AudioChannel.MASTER,
-        0.5,
-    )
-
-    mixer.set_volume(
-        AudioChannel.MUSIC,
-        0.8,
-    )
-
-    assert math.isclose(
-        mixer.get_effective_volume(
-            AudioChannel.MUSIC
-        ),
-        0.4,
-    )
+    a = mixer.create_bus("A")
+    mixer.create_bus("B", parent="A")
+    with pytest.raises(ValueError):
+        mixer.set_bus_parent("A", "B")
 
 
-def test_audio_mixer_master_effective_volume():
+def test_audio_mixer_remove_bus_reparents_children():
     mixer = AudioMixer()
+    child = mixer.create_bus("Weapons", parent="SFX")
+    mixer.remove_bus("SFX", reparent_children_to="Master")
+    assert child.parent is mixer.master
 
-    mixer.set_volume(
-        AudioChannel.MASTER,
-        0.25,
-    )
 
-    assert mixer.get_effective_volume(
-        AudioChannel.MASTER
-    ) == 0.25
+def test_audio_mixer_master_cannot_be_removed():
+    mixer = AudioMixer()
+    with pytest.raises(ValueError):
+        mixer.remove_bus("Master")
 
 
 def test_audio_mixer_reset():
     mixer = AudioMixer()
-
-    mixer.set_volume(
-        AudioChannel.MASTER,
-        0.2,
-    )
-
-    mixer.set_volume(
-        AudioChannel.MUSIC,
-        0.4,
-    )
-
+    bus = mixer.get_bus("Music")
+    bus.volume = 0.4
+    bus.muted = True
+    mixer.master.volume = 0.2
     mixer.reset()
-
-    for channel in AudioChannel:
-        assert mixer.get_volume(channel) == 1.0
+    assert mixer.master.volume == 1.0
+    assert bus.volume == 1.0
+    assert not bus.muted
 
 
 # ============================================================
@@ -585,29 +548,13 @@ def test_audio_source_loop(tmp_path):
 
 def test_audio_source_effective_volume(tmp_path):
     sound = create_sound(tmp_path)
-
     mixer = AudioMixer()
+    mixer.get_bus("SFX").volume = 0.8
+    mixer.master.volume = 0.5
 
-    mixer.set_volume(
-        AudioChannel.MASTER,
-        0.5,
-    )
+    source = AudioSource(sound, bus="SFX", volume=0.5)
 
-    mixer.set_volume(
-        AudioChannel.SFX,
-        0.8,
-    )
-
-    source = AudioSource(
-        sound,
-        channel=AudioChannel.SFX,
-        volume=0.5,
-    )
-
-    assert math.isclose(
-        source.get_effective_volume(mixer),
-        0.2,
-    )
+    assert math.isclose(source.get_effective_volume(mixer), 0.2)
 
 
 # ============================================================
@@ -811,6 +758,7 @@ def test_audio_player_source_finishes(tmp_path):
 
     assert source.stopped
     assert source.position == sound.buffer.sample_count
+    assert player.sources == ()
 
     player.mix(1)
 
@@ -1043,38 +991,18 @@ def test_audio_system_initial_state():
     assert audio.music is not None
 
 
-def test_audio_system_volume():
+def test_audio_system_bus_volume():
     audio = AudioSystem()
-
-    audio.set_volume(
-        AudioChannel.MUSIC,
-        0.4,
-    )
-
-    assert audio.get_volume(
-        AudioChannel.MUSIC
-    ) == 0.4
+    audio.set_bus_volume("Music", 0.4)
+    assert audio.get_bus_volume("Music") == 0.4
 
 
-def test_audio_system_effective_volume():
+def test_audio_system_dynamic_hierarchical_bus():
     audio = AudioSystem()
-
-    audio.set_volume(
-        AudioChannel.MASTER,
-        0.5,
-    )
-
-    audio.set_volume(
-        AudioChannel.SFX,
-        0.8,
-    )
-
-    assert math.isclose(
-        audio.get_effective_volume(
-            AudioChannel.SFX
-        ),
-        0.4,
-    )
+    audio.set_bus_volume("Master", 0.5)
+    audio.set_bus_volume("SFX", 0.8)
+    weapons = audio.create_bus("Weapons", parent="SFX", volume=0.5)
+    assert weapons.effective_volume == pytest.approx(0.2)
 
 
 def test_audio_system_initialize():
@@ -1586,7 +1514,10 @@ def test_sound_pcm_cache_contains_decoded_samples():
 
     samples = sound.pcm
 
-    assert isinstance(samples, list)
+    assert isinstance(samples, np.ndarray)
+    assert samples.dtype == np.float32
+    assert samples.flags.c_contiguous
+    assert not samples.flags.writeable
     assert len(samples) == 100
 
 
@@ -2920,74 +2851,74 @@ def test_audio_mixer_has_master_bus():
 def test_audio_mixer_buses_contains_master():
     mixer = AudioMixer()
 
-    assert mixer.buses == (
-        mixer.master,
+    assert tuple(bus.name for bus in mixer.buses) == (
+        "Master",
+        "Music",
+        "SFX",
+        "Ambient",
+        "Voice",
     )
 
 
 def test_audio_mixer_add_bus():
     mixer = AudioMixer()
 
-    music = AudioBus(
-        "Music",
+    weapons = AudioBus(
+        "Weapons",
         volume=0.75,
     )
 
-    mixer.add_bus(music)
+    mixer.add_bus(weapons)
 
-    assert mixer.get_bus("Music") is music
-    assert mixer.buses == (
-        mixer.master,
-        music,
-    )
+    assert mixer.get_bus("Weapons") is weapons
+    assert mixer.buses[-1] is weapons
 
 
 def test_audio_mixer_add_multiple_buses():
     mixer = AudioMixer()
 
-    music = AudioBus("Music")
-    sfx = AudioBus("SFX")
-    voice = AudioBus("Voice")
+    weapons = AudioBus("Weapons")
+    footsteps = AudioBus("Footsteps")
+    radio = AudioBus("Radio")
 
-    mixer.add_bus(music)
-    mixer.add_bus(sfx)
-    mixer.add_bus(voice)
+    mixer.add_bus(weapons)
+    mixer.add_bus(footsteps)
+    mixer.add_bus(radio)
 
-    assert mixer.buses == (
-        mixer.master,
-        music,
-        sfx,
-        voice,
+    assert mixer.buses[-3:] == (
+        weapons,
+        footsteps,
+        radio,
     )
 
 
 def test_audio_mixer_get_bus():
     mixer = AudioMixer()
 
-    music = AudioBus("Music")
+    weapons = AudioBus("Weapons")
 
-    mixer.add_bus(music)
+    mixer.add_bus(weapons)
 
-    assert mixer.get_bus("Music") is music
+    assert mixer.get_bus("Weapons") is weapons
 
 
 def test_audio_mixer_get_unknown_bus():
     mixer = AudioMixer()
 
     with pytest.raises(KeyError):
-        mixer.get_bus("Music")
+        mixer.get_bus("Missing")
 
 
 def test_audio_mixer_duplicate_bus():
     mixer = AudioMixer()
 
     mixer.add_bus(
-        AudioBus("Music")
+        AudioBus("Weapons")
     )
 
     with pytest.raises(ValueError):
         mixer.add_bus(
-            AudioBus("Music")
+            AudioBus("Weapons")
         )
 
 
@@ -3004,13 +2935,13 @@ def test_audio_mixer_remove_bus():
     mixer = AudioMixer()
 
     mixer.add_bus(
-        AudioBus("Music")
+        AudioBus("Weapons")
     )
 
-    mixer.remove_bus("Music")
+    mixer.remove_bus("Weapons")
 
     with pytest.raises(KeyError):
-        mixer.get_bus("Music")
+        mixer.get_bus("Weapons")
 
 
 def test_audio_mixer_cannot_remove_master():
@@ -3024,7 +2955,7 @@ def test_audio_mixer_remove_unknown_bus():
     mixer = AudioMixer()
 
     with pytest.raises(KeyError):
-        mixer.remove_bus("Music")
+        mixer.remove_bus("Missing")
 
 
 # ============================================================
@@ -3037,7 +2968,7 @@ def test_audio_source_default_bus():
 
     source = AudioSource(sound)
 
-    assert source.bus is None
+    assert source.bus == "Master"
 
 
 def test_audio_source_bus_constructor():
@@ -3080,19 +3011,13 @@ def test_audio_source_bus_can_be_cleared():
 def test_audio_source_effective_volume_includes_bus():
     sound = make_test_sound()
     mixer = AudioMixer()
+    mixer.master.volume = 0.5
+    bus = mixer.get_bus("Music")
+    bus.volume = 0.5
 
-    bus = AudioBus("Music", volume=0.5)
+    source = AudioSource(sound, volume=0.8, bus=bus)
 
-    source = AudioSource(
-        sound,
-        channel=AudioChannel.SFX,
-        volume=0.8,
-        bus=bus,
-    )
-
-    mixer.set_volume(AudioChannel.SFX, 0.5)
-
-    assert source.get_effective_volume(mixer) == 0.2
+    assert source.get_effective_volume(mixer) == pytest.approx(0.2)
 
 
 def test_audio_source_effective_volume_respects_bus_mute():
@@ -3362,6 +3287,28 @@ def test_audio_player_stops_source_when_sound_finishes():
 
     assert source.stopped
     assert source.position == sound.buffer.sample_count
+
+
+
+
+def test_audio_player_stop_all_releases_stopped_sources():
+    sound = make_test_sound(value=16384, frames=48000)
+    source_a = AudioSource(sound)
+    source_b = AudioSource(sound)
+
+    device = AudioDevice()
+    mixer = AudioMixer()
+    player = AudioPlayer(device, mixer)
+
+    player.play(source_a)
+    player.play(source_b)
+    assert len(player.sources) == 2
+
+    player.stop_all()
+
+    assert source_a.stopped
+    assert source_b.stopped
+    assert player.sources == ()
 
 
 def test_audio_player_loops_source_when_sound_finishes():
@@ -3646,3 +3593,618 @@ def test_audio_player_spatial_center_source():
 
     assert left == pytest.approx(right)
     assert left > 0.0
+
+# ============================================================
+# Bus DSP routing
+# ============================================================
+
+
+def test_audio_bus_effect_stack_order():
+    bus = AudioBus("Test")
+    first = GainEffect(0.5)
+    second = GainEffect(0.25)
+
+    bus.add_effect(first)
+    bus.add_effect(second)
+
+    assert bus.effects == (first, second)
+
+    bus.remove_effect(first)
+    assert bus.effects == (second,)
+
+
+def test_audio_player_processes_child_bus_before_parent(tmp_path):
+    player = create_audio_player()
+    player.mixer.create_bus("Weapons", parent="SFX")
+    player.mixer.get_bus("Weapons").add_effect(GainEffect(0.5))
+    player.mixer.get_bus("SFX").add_effect(GainEffect(0.5))
+
+    sound = create_sound(
+        tmp_path,
+        channels=1,
+        frames=4,
+        value=16384,
+    )
+    source = AudioSource(sound, bus="Weapons")
+    player.play(source)
+
+    data = player.mix(1)
+    left, right = struct.unpack("<2f", data)
+    expected = (16384 / 32768) * 0.5 * 0.5
+    assert math.isclose(left, expected, rel_tol=1e-5)
+    assert math.isclose(right, expected, rel_tol=1e-5)
+
+
+def test_audio_bus_volume_applied_once_per_hierarchy_level(tmp_path):
+    player = create_audio_player()
+    weapons = player.mixer.create_bus("Weapons", parent="SFX", volume=0.5)
+    player.mixer.get_bus("SFX").volume = 0.5
+    player.mixer.master.volume = 0.5
+
+    sound = create_sound(
+        tmp_path,
+        channels=1,
+        frames=4,
+        value=16384,
+    )
+    source = AudioSource(sound, bus=weapons)
+    player.play(source)
+
+    data = player.mix(1)
+    left, right = struct.unpack("<2f", data)
+    expected = (16384 / 32768) * 0.5 * 0.5 * 0.5
+    assert math.isclose(left, expected, rel_tol=1e-5)
+    assert math.isclose(right, expected, rel_tol=1e-5)
+
+
+def test_audio_bus_limiter_runs_before_parent(tmp_path):
+    player = create_audio_player()
+    hot = player.mixer.create_bus("Hot", parent="Master")
+    hot.add_effect(LimiterEffect(0.25))
+
+    sound = create_sound(
+        tmp_path,
+        channels=1,
+        frames=4,
+        value=32767,
+    )
+    player.play(AudioSource(sound, bus="Hot"))
+
+    data = player.mix(1)
+    left, right = struct.unpack("<2f", data)
+    assert math.isclose(left, 0.25, rel_tol=1e-5)
+    assert math.isclose(right, 0.25, rel_tol=1e-5)
+
+# ============================================================
+# Mixer controls: pan / solo / metering
+# ============================================================
+
+
+def test_audio_bus_pan_validation():
+    bus = AudioBus("Music")
+    bus.pan = -1.0
+    assert bus.pan == -1.0
+    bus.pan = 1.0
+    assert bus.pan == 1.0
+
+    with pytest.raises(ValueError):
+        bus.pan = -1.01
+    with pytest.raises(ValueError):
+        bus.pan = 1.01
+
+
+def test_audio_player_applies_bus_pan(tmp_path):
+    player = create_audio_player()
+    player.mixer.get_bus("SFX").pan = 1.0
+
+    sound = create_sound(
+        tmp_path,
+        channels=1,
+        frames=4,
+        value=16384,
+    )
+    player.play(AudioSource(sound, bus="SFX"))
+
+    data = player.mix(1)
+    left, right = struct.unpack("<2f", data)
+    assert left == pytest.approx(0.0, abs=1e-7)
+    assert right == pytest.approx(16384 / 32768, rel=1e-5)
+
+
+def test_audio_mixer_solo_keeps_selected_branch_audible(tmp_path):
+    player = create_audio_player()
+    player.mixer.get_bus("SFX").solo = True
+
+    sound = create_sound(
+        tmp_path,
+        channels=1,
+        frames=4,
+        value=8192,
+    )
+    player.play(AudioSource(sound, bus="SFX"))
+    player.play(AudioSource(sound, bus="Music"))
+
+    data = player.mix(1)
+    left, right = struct.unpack("<2f", data)
+    expected = 8192 / 32768
+    assert left == pytest.approx(expected, rel=1e-5)
+    assert right == pytest.approx(expected, rel=1e-5)
+
+
+def test_audio_mixer_solo_parent_keeps_child_audible():
+    mixer = AudioMixer()
+    weapons = mixer.create_bus("Weapons", parent="SFX")
+    mixer.get_bus("SFX").solo = True
+
+    assert mixer.is_bus_audible(weapons) is True
+    assert mixer.is_bus_audible(mixer.get_bus("SFX")) is True
+    assert mixer.is_bus_audible(mixer.master) is True
+    assert mixer.is_bus_audible(mixer.get_bus("Music")) is False
+
+
+def test_audio_bus_peak_and_rms_metering(tmp_path):
+    player = create_audio_player()
+    sound = create_sound(
+        tmp_path,
+        channels=1,
+        frames=4,
+        value=16384,
+    )
+    player.play(AudioSource(sound, bus="SFX"))
+
+    player.mix(2)
+    bus = player.mixer.get_bus("SFX")
+    expected = 16384 / 32768
+
+    assert bus.peak[0] == pytest.approx(expected, rel=1e-5)
+    assert bus.peak[1] == pytest.approx(expected, rel=1e-5)
+    assert bus.rms[0] == pytest.approx(expected, rel=1e-5)
+    assert bus.rms[1] == pytest.approx(expected, rel=1e-5)
+
+    bus.mute()
+    player.mix(1)
+    assert bus.peak == (0.0, 0.0)
+    assert bus.rms == (0.0, 0.0)
+
+
+def test_audio_bus_ids_survive_rename():
+    mixer = AudioMixer()
+    bus = mixer.create_bus("Weapons", parent="SFX")
+    bus_id = bus.id
+
+    mixer.rename_bus("Weapons", "Guns")
+
+    assert mixer.get_bus("Guns") is bus
+    assert mixer.get_bus_by_id(bus_id) is bus
+    assert bus.id == bus_id
+    with pytest.raises(KeyError):
+        mixer.get_bus("Weapons")
+
+
+def test_audio_send_rejects_feedback_cycle():
+    mixer = AudioMixer()
+    mixer.create_bus("Weapons", parent="SFX")
+    mixer.create_bus("Reverb", parent="Master")
+    mixer.add_send("Weapons", "Reverb")
+
+    with pytest.raises(ValueError, match="feedback cycles"):
+        mixer.add_send("Reverb", "Weapons")
+
+
+def test_audio_player_post_fader_send(tmp_path):
+    player = create_audio_player()
+    player.mixer.get_bus("SFX").volume = 0.5
+    player.mixer.create_bus("Reverb", parent="Master", volume=0.5)
+    player.mixer.add_send("SFX", "Reverb", amount=1.0, pre_fader=False)
+    sound = create_sound(tmp_path, channels=1, frames=4, value=16384)
+    player.play(AudioSource(sound, bus="SFX"))
+
+    left, right = struct.unpack("<2f", player.mix(1))
+    # source=.5; direct=.25; post send=.25 * return .5=.125
+    assert left == pytest.approx(0.375, rel=1e-5)
+    assert right == pytest.approx(0.375, rel=1e-5)
+
+
+def test_audio_player_pre_fader_send(tmp_path):
+    player = create_audio_player()
+    player.mixer.get_bus("SFX").volume = 0.5
+    player.mixer.create_bus("Reverb", parent="Master", volume=0.5)
+    player.mixer.add_send("SFX", "Reverb", amount=1.0, pre_fader=True)
+    sound = create_sound(tmp_path, channels=1, frames=4, value=16384)
+    player.play(AudioSource(sound, bus="SFX"))
+
+    left, right = struct.unpack("<2f", player.mix(1))
+    # source=.5; direct=.25; pre send=.5 * return .5=.25
+    assert left == pytest.approx(0.5, rel=1e-5)
+    assert right == pytest.approx(0.5, rel=1e-5)
+
+
+def test_audio_effect_wet_dry_and_bypass(tmp_path):
+    player = create_audio_player()
+    effect = GainEffect(0.0, wet=0.5)
+    player.mixer.get_bus("SFX").add_effect(effect)
+
+    # One frame keeps the two assertions isolated: after each mix the
+    # one-shot source is naturally finished and pruned. Using a longer sound
+    # here would intentionally overlap both sources on the second assertion,
+    # because AudioPlayer supports additive polyphonic playback.
+    sound = create_sound(tmp_path, channels=1, frames=1, value=16384)
+    player.play(AudioSource(sound, bus="SFX"))
+
+    left, _ = struct.unpack("<2f", player.mix(1))
+    assert left == pytest.approx(0.25, rel=1e-5)
+
+    effect.bypassed = True
+    player.play(AudioSource(sound, bus="SFX"))
+    left, _ = struct.unpack("<2f", player.mix(1))
+    assert left == pytest.approx(0.5, rel=1e-5)
+
+
+def test_audio_bus_effect_chain_bypass(tmp_path):
+    player = create_audio_player()
+    bus = player.mixer.get_bus("SFX")
+    bus.add_effect(GainEffect(0.0))
+    bus.effects_bypassed = True
+    sound = create_sound(tmp_path, channels=1, frames=4, value=16384)
+    player.play(AudioSource(sound, bus="SFX"))
+
+    left, _ = struct.unpack("<2f", player.mix(1))
+    assert left == pytest.approx(0.5, rel=1e-5)
+
+
+def test_audio_effect_runtime_parameters():
+    effect = GainEffect(1.0)
+    effect.set_parameter("gain", 0.25)
+    effect.set_parameter("wet", 0.75)
+
+    assert effect.get_parameter("gain") == pytest.approx(0.25)
+    assert effect.get_parameter("wet") == pytest.approx(0.75)
+    with pytest.raises(KeyError):
+        effect.set_parameter("does_not_exist", 1)
+
+
+def test_audio_master_headroom_and_limiter(tmp_path):
+    player = create_audio_player()
+    player.mixer.headroom_db = -6.0
+    player.mixer.enable_master_limiter(0.2)
+    sound = create_sound(tmp_path, channels=1, frames=4, value=16384)
+    player.play(AudioSource(sound, bus="Master"))
+
+    left, right = struct.unpack("<2f", player.mix(1))
+    assert left == pytest.approx(0.2, rel=1e-5)
+    assert right == pytest.approx(0.2, rel=1e-5)
+
+
+def test_audio_extended_metering_peak_hold_clip_and_dbfs():
+    bus = AudioBus("Test")
+    block = np.array([[0.5, -1.1], [-0.25, 0.25]], dtype=np.float32)
+    bus.update_meter(block)
+
+    assert bus.peak == pytest.approx((0.5, 1.1))
+    assert bus.peak_hold == pytest.approx((0.5, 1.1))
+    assert bus.clipped is True
+    assert bus.peak_dbfs[0] == pytest.approx(20.0 * math.log10(0.5))
+
+    bus.update_meter(np.array([[0.1, 0.1]], dtype=np.float32))
+    assert bus.peak_hold == pytest.approx((0.5, 1.1))
+    bus.clear_peak_hold()
+    assert bus.peak_hold == (0.0, 0.0)
+    assert bus.clipped is False
+
+
+def test_audio_solo_keeps_send_return_audible():
+    mixer = AudioMixer()
+    mixer.create_bus("Weapons", parent="SFX")
+    reverb = mixer.create_bus("Reverb", parent="Master")
+    mixer.add_send("Weapons", "Reverb")
+    mixer.get_bus("Weapons").solo = True
+
+    assert mixer.is_bus_audible(reverb) is True
+    assert mixer.is_bus_audible(mixer.get_bus("Music")) is False
+
+
+def test_audio_mixer_snapshot_restores_topology_sends_and_effects():
+    mixer = AudioMixer()
+    weapons = mixer.create_bus("Weapons", parent="SFX", volume=0.7, pan=-0.2)
+    weapons.add_effect(GainEffect(0.5, wet=0.4))
+    mixer.create_bus("Reverb", parent="Master", volume=0.8)
+    mixer.add_send("Weapons", "Reverb", amount=0.25, pre_fader=True)
+    mixer.headroom_db = -3.0
+    mixer.enable_master_limiter(0.9)
+    snapshot = mixer.create_snapshot()
+
+    mixer.rename_bus("Weapons", "Changed")
+    mixer.get_bus("Changed").volume = 0.1
+    mixer.headroom_db = 0.0
+    mixer.restore_snapshot(snapshot)
+
+    restored = mixer.get_bus("Weapons")
+    assert restored.id == weapons.id
+    assert restored.volume == pytest.approx(0.7)
+    assert restored.pan == pytest.approx(-0.2)
+    assert isinstance(restored.effects[0], GainEffect)
+    assert restored.effects[0].gain == pytest.approx(0.5)
+    assert restored.effects[0].wet == pytest.approx(0.4)
+    assert len(mixer.sends) == 1
+    assert mixer.sends[0].amount == pytest.approx(0.25)
+    assert mixer.sends[0].pre_fader is True
+    assert mixer.headroom_db == pytest.approx(-3.0)
+    assert mixer.master_limiter is not None
+    assert mixer.master_limiter.threshold == pytest.approx(0.9)
+
+
+# ============================================================
+# Built-in DSP effects
+# ============================================================
+
+
+def test_lowpass_filter_attenuates_high_frequency_signal():
+    effect = LowPassFilterEffect(cutoff_hz=500.0)
+    signal = np.ones((4096, 2), dtype=np.float32)
+    signal[1::2] *= -1.0
+    before = float(np.sqrt(np.mean(signal * signal)))
+    effect.process(signal, sample_rate=48_000, channels=2)
+    after = float(np.sqrt(np.mean(signal * signal)))
+    assert after < before * 0.2
+
+
+def test_highpass_filter_rejects_dc_after_settling():
+    effect = HighPassFilterEffect(cutoff_hz=200.0)
+    signal = np.ones((8192, 2), dtype=np.float32)
+    effect.process(signal, sample_rate=48_000, channels=2)
+    assert float(np.max(np.abs(signal[-1024:]))) < 0.01
+
+
+def test_parametric_eq_zero_db_is_neutral():
+    effect = ParametricEQEffect(frequency_hz=1_000.0, gain_db=0.0, q=1.0)
+    source = np.linspace(-0.8, 0.8, 512, dtype=np.float32)
+    signal = np.column_stack((source, source)).astype(np.float32)
+    expected = signal.copy()
+    effect.process(signal, sample_rate=48_000, channels=2)
+    assert np.allclose(signal, expected, atol=1e-5)
+
+
+def test_compressor_reduces_hot_signal():
+    effect = CompressorEffect(
+        threshold_db=-12.0,
+        ratio=8.0,
+        attack_ms=0.0,
+        release_ms=100.0,
+    )
+    signal = np.full((256, 2), 0.9, dtype=np.float32)
+    effect.process(signal, sample_rate=48_000, channels=2)
+    assert float(np.max(np.abs(signal))) < 0.5
+    assert effect.gain_reduction_db < 0.0
+
+
+def test_delay_effect_keeps_state_between_blocks():
+    effect = DelayEffect(delay_seconds=4 / 48_000, feedback=0.0, wet=1.0)
+    first = np.zeros((4, 2), dtype=np.float32)
+    first[0] = 1.0
+    effect.process(first, sample_rate=48_000, channels=2)
+    assert np.allclose(first, 0.0)
+
+    second = np.zeros((4, 2), dtype=np.float32)
+    effect.process(second, sample_rate=48_000, channels=2)
+    assert np.allclose(second[0], 1.0)
+    assert np.allclose(second[1:], 0.0)
+
+
+def test_reverb_effect_produces_tail_after_impulse():
+    effect = ReverbEffect(room_size=0.2, damping=0.2, decay=0.7, wet=1.0)
+    impulse = np.zeros((1, 2), dtype=np.float32)
+    impulse[0] = 1.0
+    effect.process(impulse, sample_rate=48_000, channels=2)
+    assert np.allclose(impulse, 0.0)
+
+    tail = np.zeros((3000, 2), dtype=np.float32)
+    effect.process(tail, sample_rate=48_000, channels=2)
+    assert float(np.max(np.abs(tail))) > 0.0
+
+
+def test_dsp_effect_state_roundtrip_through_snapshot():
+    mixer = AudioMixer()
+    bus = mixer.get_bus("SFX")
+    bus.add_effect(LowPassFilterEffect(4500.0, q=0.8, wet=0.7))
+    bus.add_effect(CompressorEffect(-18.0, 3.0, 5.0, 150.0, 2.0))
+    bus.add_effect(DelayEffect(0.15, 0.4, wet=0.3))
+
+    snapshot = mixer.create_snapshot()
+    mixer.restore_snapshot(snapshot)
+
+    effects = mixer.get_bus("SFX").effects
+    assert isinstance(effects[0], LowPassFilterEffect)
+    assert effects[0].cutoff_hz == pytest.approx(4500.0)
+    assert effects[0].wet == pytest.approx(0.7)
+    assert isinstance(effects[1], CompressorEffect)
+    assert effects[1].ratio == pytest.approx(3.0)
+    assert isinstance(effects[2], DelayEffect)
+    assert effects[2].feedback == pytest.approx(0.4)
+
+
+def test_distortion_soft_saturation_and_hard_clip():
+    soft = DistortionEffect(drive=4.0, mode="soft")
+    signal = np.array([[0.5, -0.5]], dtype=np.float32)
+    soft.process(signal, sample_rate=48_000, channels=2)
+    assert 0.5 < float(signal[0, 0]) < 1.0
+    assert -1.0 < float(signal[0, 1]) < -0.5
+
+    hard = DistortionEffect(drive=4.0, mode="hard")
+    signal = np.array([[0.5, -0.5]], dtype=np.float32)
+    hard.process(signal, sample_rate=48_000, channels=2)
+    assert np.allclose(signal, [[1.0, -1.0]])
+
+
+def test_noise_gate_closes_below_threshold_and_opens_above_it():
+    gate = NoiseGateEffect(
+        threshold_db=-20.0,
+        attack_ms=0.0,
+        hold_ms=0.0,
+        release_ms=0.0,
+    )
+    quiet = np.full((8, 2), 0.01, dtype=np.float32)
+    gate.process(quiet, sample_rate=48_000, channels=2)
+    assert np.allclose(quiet, 0.0)
+
+    loud = np.full((8, 2), 0.5, dtype=np.float32)
+    gate.process(loud, sample_rate=48_000, channels=2)
+    assert np.allclose(loud, 0.5)
+    assert gate.gain == pytest.approx(1.0)
+
+
+def test_noise_gate_hold_keeps_gate_open_across_samples():
+    gate = NoiseGateEffect(
+        threshold_db=-20.0,
+        attack_ms=0.0,
+        hold_ms=2.0,
+        release_ms=0.0,
+    )
+    first = np.array([[0.5, 0.5]], dtype=np.float32)
+    gate.process(first, sample_rate=1_000, channels=2)
+    assert np.allclose(first, 0.5)
+
+    # 2 ms at 1 kHz = two held samples after the trigger.
+    held = np.full((2, 2), 0.01, dtype=np.float32)
+    gate.process(held, sample_rate=1_000, channels=2)
+    assert np.allclose(held, 0.01)
+
+    closed = np.full((1, 2), 0.01, dtype=np.float32)
+    gate.process(closed, sample_rate=1_000, channels=2)
+    assert np.allclose(closed, 0.0)
+
+
+def test_stereo_width_zero_collapses_to_mono_and_one_is_neutral():
+    source = np.array([[1.0, 0.0], [0.25, -0.25]], dtype=np.float32)
+    effect = StereoWidthEffect(width=0.0)
+    signal = source.copy()
+    effect.process(signal, sample_rate=48_000, channels=2)
+    assert np.allclose(signal[:, 0], signal[:, 1])
+
+    effect.width = 1.0
+    signal = source.copy()
+    effect.process(signal, sample_rate=48_000, channels=2)
+    assert np.allclose(signal, source)
+
+
+def test_new_dsp_effects_roundtrip_through_snapshot():
+    mixer = AudioMixer()
+    bus = mixer.get_bus("SFX")
+    bus.add_effect(DistortionEffect(3.0, -2.0, "hard", wet=0.6))
+    bus.add_effect(NoiseGateEffect(-35.0, 1.0, 20.0, 100.0))
+    bus.add_effect(StereoWidthEffect(1.4, wet=0.8))
+
+    snapshot = mixer.create_snapshot()
+    mixer.restore_snapshot(snapshot)
+    effects = mixer.get_bus("SFX").effects
+
+    assert isinstance(effects[0], DistortionEffect)
+    assert effects[0].drive == pytest.approx(3.0)
+    assert effects[0].output_gain_db == pytest.approx(-2.0)
+    assert effects[0].mode == "hard"
+    assert effects[0].wet == pytest.approx(0.6)
+    assert isinstance(effects[1], NoiseGateEffect)
+    assert effects[1].threshold_db == pytest.approx(-35.0)
+    assert effects[1].hold_ms == pytest.approx(20.0)
+    assert isinstance(effects[2], StereoWidthEffect)
+    assert effects[2].width == pytest.approx(1.4)
+    assert effects[2].wet == pytest.approx(0.8)
+
+
+
+# ============================================================
+# DSP preset system
+# ============================================================
+
+
+def test_audio_preset_registry_contains_builtins():
+    registry = AudioPresetRegistry()
+    assert registry.has("Radio")
+    assert registry.has("Telephone")
+    assert registry.has("Underwater")
+    assert registry.has("Cave")
+    assert registry.has("Hall")
+    assert registry.has("Distorted Speaker")
+    assert registry.has("Wide Music")
+
+
+def test_audio_preset_apply_creates_fresh_effect_instances():
+    registry = AudioPresetRegistry(include_builtins=False)
+    registry.register_effects(
+        "Test",
+        (LowPassFilterEffect(2500.0), DelayEffect(0.1, 0.2, wet=0.3)),
+    )
+    first = AudioBus("First")
+    second = AudioBus("Second")
+
+    first_effects = registry.apply("Test", first)
+    second_effects = registry.apply("Test", second)
+
+    assert len(first.effects) == 2
+    assert len(second.effects) == 2
+    assert first_effects[0] is not second_effects[0]
+    assert first_effects[1] is not second_effects[1]
+
+
+def test_audio_preset_apply_replace_and_append():
+    registry = AudioPresetRegistry(include_builtins=False)
+    registry.register_effects("Gain", (GainEffect(0.5),))
+    bus = AudioBus("Bus")
+    bus.add_effect(LimiterEffect(0.9))
+
+    registry.apply("Gain", bus, replace=False)
+    assert isinstance(bus.effects[0], LimiterEffect)
+    assert isinstance(bus.effects[1], GainEffect)
+
+    registry.apply("Gain", bus, replace=True)
+    assert len(bus.effects) == 1
+    assert isinstance(bus.effects[0], GainEffect)
+
+
+def test_audio_preset_capture_bus_roundtrip():
+    registry = AudioPresetRegistry(include_builtins=False)
+    bus = AudioBus("Voice")
+    bus.add_effect(HighPassFilterEffect(300.0, wet=0.8))
+    bus.add_effect(CompressorEffect(-18.0, 4.0, 5.0, 100.0, 1.0))
+
+    preset = registry.capture_bus("Voice FX", bus)
+    target = AudioBus("Target")
+    registry.apply("Voice FX", target)
+
+    assert preset.name == "Voice FX"
+    assert isinstance(target.effects[0], HighPassFilterEffect)
+    assert target.effects[0].cutoff_hz == pytest.approx(300.0)
+    assert target.effects[0].wet == pytest.approx(0.8)
+    assert isinstance(target.effects[1], CompressorEffect)
+    assert target.effects[1].ratio == pytest.approx(4.0)
+
+
+def test_audio_preset_json_save_load(tmp_path):
+    registry = AudioPresetRegistry(include_builtins=False)
+    registry.register_effects(
+        "My Preset",
+        (DistortionEffect(2.5, -2.0, "soft", wet=0.4), StereoWidthEffect(1.2)),
+        description="Custom test preset",
+    )
+    path = tmp_path / "my_preset.json"
+    registry.save("My Preset", path)
+
+    loaded_registry = AudioPresetRegistry(include_builtins=False)
+    preset = loaded_registry.load(path)
+
+    assert preset.name == "My Preset"
+    assert preset.description == "Custom test preset"
+    bus = AudioBus("Target")
+    loaded_registry.apply("My Preset", bus)
+    assert isinstance(bus.effects[0], DistortionEffect)
+    assert bus.effects[0].drive == pytest.approx(2.5)
+    assert bus.effects[0].wet == pytest.approx(0.4)
+    assert isinstance(bus.effects[1], StereoWidthEffect)
+    assert bus.effects[1].width == pytest.approx(1.2)
+
+
+def test_audio_preset_registration_is_case_insensitive():
+    registry = AudioPresetRegistry(include_builtins=False)
+    registry.register(AudioPreset.from_effects("Radio FX", (GainEffect(0.8),)))
+    assert registry.get("radio fx").name == "Radio FX"
+    with pytest.raises(ValueError):
+        registry.register(AudioPreset.from_effects("RADIO FX", (GainEffect(1.0),)))

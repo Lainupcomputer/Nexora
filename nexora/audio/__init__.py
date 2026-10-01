@@ -1,8 +1,23 @@
 from .audio import AudioSystem
 from .buffer import AudioBuffer
 from .bus import AudioBus
-from .channel import AudioChannel
 from .device import AudioDevice
+from .effects import (
+    AudioEffect,
+    GainEffect,
+    LimiterEffect,
+    LowPassFilterEffect,
+    HighPassFilterEffect,
+    ParametricEQEffect,
+    CompressorEffect,
+    DelayEffect,
+    ReverbEffect,
+    DistortionEffect,
+    NoiseGateEffect,
+    StereoWidthEffect,
+)
+from .send import AudioSend
+from .preset import AudioPreset, AudioPresetRegistry, create_builtin_presets
 from .mixer import AudioMixer
 from .player import AudioPlayer
 from .sound import Sound
@@ -16,8 +31,23 @@ __all__ = [
     "AudioSystem",
     "AudioBuffer",
     "AudioBus",
-    "AudioChannel",
     "AudioDevice",
+    "AudioEffect",
+    "GainEffect",
+    "LimiterEffect",
+    "LowPassFilterEffect",
+    "HighPassFilterEffect",
+    "ParametricEQEffect",
+    "CompressorEffect",
+    "DelayEffect",
+    "ReverbEffect",
+    "DistortionEffect",
+    "NoiseGateEffect",
+    "StereoWidthEffect",
+    "AudioSend",
+    "AudioPreset",
+    "AudioPresetRegistry",
+    "create_builtin_presets",
     "AudioMixer",
     "MusicPlayer",
     "AudioPlayer",

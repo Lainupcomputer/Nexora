@@ -5,7 +5,6 @@ from pathlib import Path
 from nexora.assets import AssetManager
 
 from nexora.audio import (
-    AudioChannel,
     AudioSystem,
 )
 
@@ -974,84 +973,38 @@ class Engine:
     def _apply_audio_settings(
         self,
     ) -> None:
-        """
-        Apply effective audio.toml values to AudioSystem.
-        """
+        """Apply the dynamic bus graph from audio.toml."""
 
-        # ======================================================
-        # Mixer channel volumes
-        # ======================================================
+        buses = self.audio_settings.get("buses", {})
+        if not isinstance(buses, dict):
+            return
 
-        channel_map = {
-            "master": (
-                AudioChannel.MASTER
-            ),
-            "music": (
-                AudioChannel.MUSIC
-            ),
-            "sfx": (
-                AudioChannel.SFX
-            ),
-            "ambient": (
-                AudioChannel.AMBIENT
-            ),
-            "voice": (
-                AudioChannel.VOICE
-            ),
-        }
+        # Create every bus first so parent assignment is independent of TOML
+        # declaration order. Existing runtime/default buses are reused.
+        for name, config in buses.items():
+            if str(name).casefold() == "master":
+                continue
+            if not self.audio.has_bus(str(name)):
+                self.audio.create_bus(str(name), parent="Master")
 
-        for (
-            name,
-            channel,
-        ) in channel_map.items():
-            volume = float(
-                self.audio_settings.get(
-                    f"volume.{name}"
-                )
-            )
+        # Apply parent relationships before volume/mute state.
+        for name, config in buses.items():
+            if not isinstance(config, dict):
+                continue
+            bus_name = str(name)
+            if bus_name.casefold() == "master":
+                continue
+            parent = config.get("parent", "Master")
+            self.audio.set_bus_parent(bus_name, str(parent))
 
-            self.audio.set_volume(
-                channel,
-                volume,
-            )
-
-        # ======================================================
-        # Audio buses
-        # ======================================================
-
-        bus_map = {
-            "master": "Master",
-            "music": "Music",
-            "sfx": "SFX",
-            "ambient": "Ambient",
-            "voice": "Voice",
-        }
-
-        for (
-            setting_name,
-            bus_name,
-        ) in bus_map.items():
-            bus = (
-                self.audio.get_bus(
-                    bus_name
-                )
-            )
-
-            bus.volume = float(
-                self.audio_settings.get(
-                    f"buses."
-                    f"{setting_name}."
-                    f"volume"
-                )
-            )
-
-            bus.muted = bool(
-                self.audio_settings.get(
-                    f"buses."
-                    f"{setting_name}."
-                    f"muted"
-                )
-            )
+        for name, config in buses.items():
+            if not isinstance(config, dict):
+                continue
+            bus = self.audio.get_bus(str(name))
+            if "volume" in config:
+                bus.volume = float(config["volume"])
+            if "muted" in config:
+                bus.muted = bool(config["muted"])
 
     def apply_audio_settings(
         self,

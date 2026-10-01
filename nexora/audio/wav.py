@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import math
 import struct
+
+import numpy as np
 import wave
 from pathlib import Path
 
@@ -113,37 +114,23 @@ class WavLoader:
                 f"Invalid float WAV data: {path}"
             )
 
-        sample_count = data_size // 4
+        # Convert the complete float WAV payload in native NumPy loops.
+        # This avoids a Python iteration and one Python float allocation per
+        # sample when loading long 32-bit-float recordings.
+        samples = np.frombuffer(
+            memoryview(raw_file)[data_start:data_end],
+            dtype="<f4",
+        ).astype(np.float32, copy=True)
+        np.nan_to_num(samples, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        np.clip(samples, -1.0, 1.0, out=samples)
 
-        pcm_data = bytearray(sample_count * 2)
-
-        # Do not use struct.unpack here. It creates one Python float object
-        # per sample and keeps all of them alive at once. iter_unpack keeps
-        # the conversion bounded while the destination remains compact.
-        data_view = memoryview(raw_file)[data_start:data_end]
-
-        for index, (sample,) in enumerate(
-            struct.iter_unpack("<f", data_view)
-        ):
-            if not math.isfinite(sample):
-                sample = 0.0
-
-            sample = max(-1.0, min(1.0, sample))
-
-            if sample < 0.0:
-                pcm_sample = int(sample * 32768.0)
-            else:
-                pcm_sample = int(sample * 32767.0)
-
-            struct.pack_into(
-                "<h",
-                pcm_data,
-                index * 2,
-                pcm_sample,
-            )
+        positive = samples >= 0.0
+        scaled = samples * np.float32(32768.0)
+        scaled[positive] = samples[positive] * np.float32(32767.0)
+        pcm_data = scaled.astype("<i2").tobytes(order="C")
 
         return AudioBuffer(
-            data=bytes(pcm_data),
+            data=pcm_data,
             frequency=frequency,
             channels=channels,
             bytes_per_sample=2,

@@ -27,6 +27,7 @@ class DebugOverlay:
         self.engine = engine
 
         self.visible = False
+        self.audio_visible = False
 
         self.metrics = (
             DebugMetrics()
@@ -75,6 +76,25 @@ class DebugOverlay:
     ) -> None:
         self.visible = False
 
+    def toggle_audio(
+        self,
+    ) -> bool:
+        self.audio_visible = (
+            not self.audio_visible
+        )
+
+        return self.audio_visible
+
+    def show_audio(
+        self,
+    ) -> None:
+        self.audio_visible = True
+
+    def hide_audio(
+        self,
+    ) -> None:
+        self.audio_visible = False
+
     # ==========================================================
     # UPDATE
     # ==========================================================
@@ -83,7 +103,10 @@ class DebugOverlay:
         self,
         delta_time: float,
     ) -> None:
-        if not self.visible:
+        if not (
+            self.visible
+            or self.audio_visible
+        ):
             return
 
         self.metrics.update(
@@ -119,28 +142,42 @@ class DebugOverlay:
         # Debug information overlay
         # ======================================================
 
-        if not self.visible:
+        if not (
+            self.visible
+            or self.audio_visible
+        ):
             return
 
-        left_lines = (
-            self._build_left_lines()
-        )
-
-        right_lines = (
-            self._build_right_lines(
-                renderer
+        if self.visible:
+            left_lines = (
+                self._build_left_lines()
             )
-        )
 
-        self._draw_left(
-            renderer,
-            left_lines,
-        )
+            right_lines = (
+                self._build_right_lines(
+                    renderer
+                )
+            )
 
-        self._draw_right(
-            renderer,
-            right_lines,
-        )
+            self._draw_left(
+                renderer,
+                left_lines,
+            )
+
+            self._draw_right(
+                renderer,
+                right_lines,
+            )
+
+        if self.audio_visible:
+            audio_lines = (
+                self._build_audio_mixer_lines()
+            )
+
+            self._draw_audio_mixer_bottom_left(
+                renderer,
+                audio_lines,
+            )
 
     # ==========================================================
     # LEFT SIDE
@@ -208,7 +245,7 @@ class DebugOverlay:
             else "<none>"
         )
 
-        return [
+        lines = [
             (
                 "FPS: "
                 f"{data.fps:.0f} / "
@@ -249,6 +286,450 @@ class DebugOverlay:
                 f"{scene_name}"
             ),
         ]
+
+        return lines
+
+    # ==========================================================
+    # AUDIO MIXER DEBUG
+    # ==========================================================
+
+    def _build_audio_mixer_lines(
+        self,
+    ) -> list[str]:
+        """Build a compact, read-only live view of Nexora's audio mixer."""
+
+        audio = getattr(
+            self.engine,
+            "audio",
+            None,
+        )
+
+        if audio is None:
+            return []
+
+        try:
+            buses = tuple(
+                audio.get_buses()
+            )
+        except Exception:
+            return [
+                "",
+                "Audio Mixer",
+                "------------------------",
+                "Unavailable",
+            ]
+
+        player = getattr(
+            audio,
+            "player",
+            None,
+        )
+
+        device = getattr(
+            audio,
+            "device",
+            None,
+        )
+
+        # ------------------------------------------------------
+        # Sources / sends / device queue
+        # ------------------------------------------------------
+
+        try:
+            source_count = len(
+                player.sources
+            ) if player is not None else 0
+        except Exception:
+            source_count = 0
+
+        try:
+            send_count = len(
+                audio.get_sends()
+            )
+        except Exception:
+            send_count = 0
+
+        queue_text = "N/A"
+
+        if (
+            device is not None
+            and getattr(
+                device,
+                "initialized",
+                False,
+            )
+        ):
+            try:
+                queued_frames = int(
+                    device.queued_frames()
+                )
+
+                frequency = int(
+                    getattr(
+                        device,
+                        "frequency",
+                        0,
+                    )
+                )
+
+                if frequency > 0:
+                    queue_ms = (
+                        queued_frames
+                        / frequency
+                        * 1000.0
+                    )
+
+                    queue_text = (
+                        f"{queue_ms:.1f} ms"
+                    )
+
+                else:
+                    queue_text = (
+                        f"{queued_frames} frames"
+                    )
+
+            except Exception:
+                queue_text = "N/A"
+
+        lines = [
+            "",
+            "Audio Mixer",
+            "------------------------",
+            (
+                f"Sources: {source_count}   "
+                f"Buses: {len(buses)}   "
+                f"Sends: {send_count}"
+            ),
+            (
+                "Queue: "
+                f"{queue_text}"
+            ),
+        ]
+
+        if not buses:
+            lines.append(
+                "No buses"
+            )
+            return lines
+
+        # ------------------------------------------------------
+        # Keep the debug overlay compact. Master is always first,
+        # followed by the hierarchy in mixer order.
+        # ------------------------------------------------------
+
+        max_buses = 8
+        visible_buses = buses[:max_buses]
+
+        for bus in visible_buses:
+            try:
+                peak_left, peak_right = (
+                    bus.peak_dbfs
+                )
+            except Exception:
+                peak_left = peak_right = float(
+                    "-inf"
+                )
+
+            depth = self._audio_bus_depth(
+                bus
+            )
+
+            indent = "  " * min(
+                depth,
+                4,
+            )
+
+            flags: list[str] = []
+
+            if getattr(
+                bus,
+                "muted",
+                False,
+            ):
+                flags.append("M")
+
+            if getattr(
+                bus,
+                "solo",
+                False,
+            ):
+                flags.append("S")
+
+            if getattr(
+                bus,
+                "clipped",
+                False,
+            ):
+                flags.append("CLIP")
+
+            state = (
+                "[" + " ".join(flags) + "]"
+                if flags
+                else ""
+            )
+
+            effect_count = len(
+                getattr(
+                    bus,
+                    "effects",
+                    (),
+                )
+            )
+
+            outgoing_sends = 0
+            try:
+                outgoing_sends = sum(
+                    1
+                    for send in audio.get_sends()
+                    if getattr(
+                        send,
+                        "source_bus_id",
+                        None,
+                    ) == bus.id
+                )
+            except Exception:
+                outgoing_sends = 0
+
+            lines.append(
+                (
+                    f"{indent}{bus.name}: "
+                    f"V {bus.volume:.2f}  "
+                    f"P {bus.pan:+.2f}  "
+                    f"FX {effect_count}  "
+                    f"Send {outgoing_sends}"
+                    f" {state}"
+                ).rstrip()
+            )
+
+        hidden = (
+            len(buses)
+            - len(visible_buses)
+        )
+
+        if hidden > 0:
+            lines.append(
+                f"... +{hidden} buses"
+            )
+
+        return lines
+
+    @staticmethod
+    def _audio_bus_depth(
+        bus,
+    ) -> int:
+        depth = 0
+        current = getattr(
+            bus,
+            "parent",
+            None,
+        )
+        seen: set[int] = set()
+
+        while current is not None:
+            identity = id(
+                current
+            )
+
+            if identity in seen:
+                break
+
+            seen.add(
+                identity
+            )
+            depth += 1
+            current = getattr(
+                current,
+                "parent",
+                None,
+            )
+
+        return depth
+
+    @staticmethod
+    def _format_dbfs(
+        value: float,
+    ) -> str:
+        if value == float(
+            "-inf"
+        ):
+            return "-inf"
+
+        if value < -99.9:
+            return "<-99"
+
+        return f"{value:.1f}"
+
+
+    # ==========================================================
+    # AUDIO MIXER BOTTOM-LEFT
+    # ==========================================================
+
+    def _draw_audio_mixer_bottom_left(
+        self,
+        renderer,
+        lines: list[str],
+    ) -> None:
+        """Draw the complete audio debug block anchored to the bottom-left."""
+
+        if not lines:
+            return
+
+        half_width = renderer.width * 0.5
+        half_height = renderer.height * 0.5
+        line_height = self._line_height(renderer)
+        baseline = renderer.text_baseline(scale=self.text_scale)
+
+        # Keep the complete block inside the viewport regardless of the
+        # amount of regular debug text shown at the top-left.
+        block_height = max(0.0, (len(lines) - 1) * line_height) + baseline
+        x = -half_width + self.margin
+        y = half_height - self.margin - block_height + baseline
+
+        bus_row_indices: list[int] = []
+        try:
+            mixer_index = lines.index("Audio Mixer")
+            first_bus_index = mixer_index + 4
+            audio = getattr(self.engine, "audio", None)
+            buses = tuple(audio.get_buses())[:8] if audio is not None else ()
+            bus_row_indices = [first_bus_index + i for i in range(len(buses))]
+        except Exception:
+            buses = ()
+
+        for index, line in enumerate(lines):
+            if line:
+                renderer.text(
+                    line,
+                    x,
+                    y + index * line_height,
+                    scale=self.text_scale,
+                )
+
+        if not buses:
+            return
+
+        # Meters sit on the right edge of the left half, but stay vertically
+        # aligned with the bus text rows in this bottom-left block.
+        meter_width = max(
+            120.0,
+            min(260.0, half_width * 0.30),
+        )
+        meter_x = -self.margin - meter_width
+        meter_height = max(
+            3.0,
+            min(5.0, line_height * 0.22),
+        )
+        channel_gap = 2.0
+
+        for bus, row_index in zip(buses, bus_row_indices):
+            row_y = y + row_index * line_height
+            top = row_y - baseline + 2.0
+
+            try:
+                peak_left, peak_right = bus.peak_dbfs
+            except Exception:
+                peak_left = peak_right = float("-inf")
+
+            try:
+                hold_left, hold_right = bus.peak_hold_dbfs
+            except Exception:
+                hold_left = peak_left
+                hold_right = peak_right
+
+            clipped = bool(getattr(bus, "clipped", False))
+
+            self._draw_stereo_meter_channel(
+                renderer, meter_x, top, meter_width, meter_height,
+                peak_left, hold_left, clipped, "L",
+            )
+            self._draw_stereo_meter_channel(
+                renderer, meter_x, top + meter_height + channel_gap,
+                meter_width, meter_height, peak_right, hold_right, clipped, "R",
+            )
+
+    def _draw_stereo_meter_channel(
+        self,
+        renderer,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        peak_dbfs: float,
+        hold_dbfs: float,
+        clipped: bool,
+        channel: str,
+    ) -> None:
+        label_width, _ = renderer.text_measure(channel, scale=0.72)
+        renderer.text(
+            channel,
+            x - label_width - 5.0,
+            y + height + 1.0,
+            scale=0.72,
+        )
+
+        renderer.rect(
+            x, y, width, height,
+            color=(0.08, 0.09, 0.10, 0.92),
+            origin=(0.0, 0.0),
+            radius=1.5,
+        )
+
+        fill_width = width * self._dbfs_to_meter(peak_dbfs)
+        if fill_width > 0.0:
+            green_end = width * self._dbfs_to_meter(-12.0)
+            yellow_end = width * self._dbfs_to_meter(-3.0)
+
+            green_width = min(fill_width, green_end)
+            if green_width > 0.0:
+                renderer.rect(
+                    x, y, green_width, height,
+                    color=(0.18, 0.82, 0.28, 1.0),
+                    origin=(0.0, 0.0), radius=1.5,
+                )
+
+            yellow_width = max(0.0, min(fill_width, yellow_end) - green_end)
+            if yellow_width > 0.0:
+                renderer.rect(
+                    x + green_end, y, yellow_width, height,
+                    color=(0.92, 0.78, 0.16, 1.0),
+                    origin=(0.0, 0.0),
+                )
+
+            red_width = max(0.0, fill_width - yellow_end)
+            if red_width > 0.0:
+                renderer.rect(
+                    x + yellow_end, y, red_width, height,
+                    color=(0.95, 0.24, 0.18, 1.0),
+                    origin=(0.0, 0.0), radius=1.5,
+                )
+
+        hold = self._dbfs_to_meter(hold_dbfs)
+        if hold > 0.0:
+            hold_x = x + min(width - 1.0, width * hold)
+            renderer.rect(
+                hold_x, y, 1.5, height,
+                color=(1.0, 1.0, 1.0, 0.95),
+                origin=(0.0, 0.0),
+            )
+
+        if clipped:
+            renderer.rect(
+                x + width + 3.0, y, 4.0, height,
+                color=(1.0, 0.12, 0.08, 1.0),
+                origin=(0.0, 0.0), radius=1.0,
+            )
+
+    @staticmethod
+    def _dbfs_to_meter(
+        value: float,
+        floor_db: float = -60.0,
+    ) -> float:
+        if value == float("-inf"):
+            return 0.0
+        if value <= floor_db:
+            return 0.0
+        if value >= 0.0:
+            return 1.0
+        return (value - floor_db) / (-floor_db)
 
     # ==========================================================
     # RIGHT SIDE

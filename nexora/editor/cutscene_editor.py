@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from nexora import Game
-from nexora.audio import AudioChannel, AudioSource
+from nexora.audio import AudioSource
 from nexora.cutscene import (
     CUTSCENE_ASSET_SUFFIX,
     CutsceneAsset,
@@ -723,7 +723,7 @@ class CutsceneEditorScene(Scene):
                 return
 
         channel_name = str(value.get("channel", "sfx")).lower()
-        channel = next((item for item in AudioChannel if item.value == channel_name), AudioChannel.SFX)
+        bus = channel_name or "Master"
         bus_name = str(value.get("bus", channel_name.title()))
         try:
             bus = audio.get_bus(bus_name)
@@ -731,7 +731,6 @@ class CutsceneEditorScene(Scene):
             bus = None
         source = AudioSource(
             sound,
-            channel=channel,
             volume=max(0.0, min(1.0, _float(value.get("volume", 1.0), 1.0))),
             loop=bool(value.get("loop", False)),
             bus=bus,

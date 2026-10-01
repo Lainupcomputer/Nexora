@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from array import array
 from dataclasses import dataclass
-import math
 from pathlib import Path
 import struct
+
+import numpy as np
 
 
 STREAM_CHUNK_FRAMES = 8192
@@ -112,14 +112,20 @@ def _read_wav_stream_info(path: Path) -> WavStreamInfo:
     )
 
 
-def _decode_24bit(data: bytes):
-    for offset in range(0, len(data), 3):
-        value = int.from_bytes(
-            data[offset:offset + 3],
-            byteorder="little",
-            signed=True,
-        )
-        yield value / 8388608.0
+def _decode_24bit(data: bytes) -> np.ndarray:
+    raw = np.frombuffer(data, dtype=np.uint8)
+    usable = (raw.size // 3) * 3
+    if usable == 0:
+        return np.empty(0, dtype=np.float32)
+
+    triplets = raw[:usable].reshape(-1, 3)
+    values = (
+        triplets[:, 0].astype(np.int32)
+        | (triplets[:, 1].astype(np.int32) << 8)
+        | (triplets[:, 2].astype(np.int32) << 16)
+    )
+    values = (values ^ 0x00800000) - 0x00800000
+    return values.astype(np.float32) * np.float32(1.0 / 8388608.0)
 
 
 def _decode_samples(
@@ -127,49 +133,36 @@ def _decode_samples(
     *,
     format_tag: int,
     bytes_per_sample: int,
-) -> array:
-    """Decode one bounded stream chunk into packed float samples."""
+) -> np.ndarray:
+    """Decode one bounded stream chunk into contiguous float32 samples."""
 
     if not data:
-        return array("f")
+        return np.empty(0, dtype=np.float32)
 
     if format_tag == 3:
-        values = array(
-            "f",
-            (
-                sample
-                if math.isfinite(sample)
-                else 0.0
-                for (sample,) in struct.iter_unpack("<f", data)
-            ),
-        )
-        for index, sample in enumerate(values):
-            values[index] = max(-1.0, min(1.0, sample))
+        values = np.frombuffer(data, dtype="<f4").astype(np.float32, copy=True)
+        np.nan_to_num(values, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+        np.clip(values, -1.0, 1.0, out=values)
         return values
 
     if bytes_per_sample == 1:
-        return array("f", ((sample - 128) / 128.0 for sample in data))
+        values = np.frombuffer(data, dtype=np.uint8).astype(np.float32)
+        values -= np.float32(128.0)
+        values *= np.float32(1.0 / 128.0)
+        return values
 
     if bytes_per_sample == 2:
-        return array(
-            "f",
-            (
-                sample / 32768.0
-                for (sample,) in struct.iter_unpack("<h", data)
-            ),
-        )
+        values = np.frombuffer(data, dtype="<i2").astype(np.float32)
+        values *= np.float32(1.0 / 32768.0)
+        return values
 
     if bytes_per_sample == 3:
-        return array("f", _decode_24bit(data))
+        return _decode_24bit(data)
 
     if bytes_per_sample == 4:
-        return array(
-            "f",
-            (
-                sample / 2147483648.0
-                for (sample,) in struct.iter_unpack("<i", data)
-            ),
-        )
+        values = np.frombuffer(data, dtype="<i4").astype(np.float32)
+        values *= np.float32(1.0 / 2147483648.0)
+        return values
 
     raise ValueError(f"Unsupported WAV sample width: {bytes_per_sample}")
 
@@ -182,7 +175,7 @@ class WavStreamReader:
         self._file = info.path.open("rb")
         self._cache_start = -1
         self._cache_frames = 0
-        self._cache = array("f")
+        self._cache = np.empty(0, dtype=np.float32)
 
     def close(self) -> None:
         if not self._file.closed:
@@ -192,14 +185,14 @@ class WavStreamReader:
         frame = max(0, min(int(frame), self.info.sample_count))
         self._cache_start = -1
         self._cache_frames = 0
-        self._cache = array("f")
+        self._cache = np.empty(0, dtype=np.float32)
 
     def _fill(self, frame: int) -> None:
         frame = max(0, min(int(frame), self.info.sample_count))
         if frame >= self.info.sample_count:
             self._cache_start = frame
             self._cache_frames = 0
-            self._cache = array("f")
+            self._cache = np.empty(0, dtype=np.float32)
             return
 
         frames_to_read = min(

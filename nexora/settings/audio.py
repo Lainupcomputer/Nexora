@@ -77,8 +77,7 @@ class AudioSettings:
 
     Example:
 
-        audio.volume.master = 0.8
-
+        audio.buses.master.volume = 0.8
         audio.buses.music.volume = 0.5
         audio.buses.music.muted = False
     """
@@ -112,13 +111,6 @@ class AudioSettings:
             str,
             Any,
         ] = {}
-
-        self.volume = (
-            AudioSection(
-                self,
-                "volume",
-            )
-        )
 
         self.buses = (
             AudioSection(

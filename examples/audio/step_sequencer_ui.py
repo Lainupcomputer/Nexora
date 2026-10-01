@@ -7,7 +7,6 @@ from pathlib import Path
 import sdl3
 
 from nexora.audio import (
-    AudioChannel,
     AudioSource,
     AudioSystem,
 )
@@ -219,7 +218,6 @@ def main() -> None:
 
         kick_source = AudioSource(
             kick_sound,
-            channel=AudioChannel.SFX,
             volume=1.0,
             pitch=1.0,
             bus=sfx_bus,
@@ -227,7 +225,6 @@ def main() -> None:
 
         hat_source = AudioSource(
             hat_sound,
-            channel=AudioChannel.SFX,
             volume=0.8,
             pitch=1.0,
             bus=sfx_bus,
@@ -235,7 +232,6 @@ def main() -> None:
 
         snare_source = AudioSource(
             snare_sound,
-            channel=AudioChannel.SFX,
             volume=1.0,
             pitch=1.0,
             bus=sfx_bus,
@@ -569,8 +565,8 @@ def main() -> None:
             emit=False,
         )
 
-        audio.set_volume(
-            AudioChannel.MASTER,
+        audio.set_bus_volume(
+            "Master",
             master_volume,
         )
 
@@ -974,8 +970,8 @@ def main() -> None:
 
             master_volume = value
 
-            audio.set_volume(
-                AudioChannel.MASTER,
+            audio.set_bus_volume(
+                "Master",
                 value,
             )
 

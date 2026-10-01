@@ -167,3 +167,19 @@ def test_resolve_project_path_rejects_file(
         resolve_project_path(
             file_path
         )
+
+
+def test_cli_audio_editor_defaults_to_current_directory() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["--audioedit"])
+
+    assert args.audioedit == "."
+    assert args.command is None
+
+
+def test_cli_audio_editor_accepts_project_path() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["--audioedit", "MyProject"])
+
+    assert args.audioedit == "MyProject"
+    assert args.command is None

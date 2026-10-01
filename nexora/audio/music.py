@@ -5,7 +5,6 @@ from collections import deque
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from .channel import AudioChannel
 from .sound import Sound
 from .source import AudioSource, AudioSourceState
 
@@ -109,7 +108,6 @@ class MusicPlayer:
 
         source = AudioSource(
             sound,
-            channel=AudioChannel.MUSIC,
             bus=self.audio.mixer.get_bus("Music"),
         )
 
@@ -155,7 +153,6 @@ class MusicPlayer:
 
         source = AudioSource(
             previous,
-            channel=AudioChannel.MUSIC,
             bus=self.audio.mixer.get_bus("Music"),
         )
 

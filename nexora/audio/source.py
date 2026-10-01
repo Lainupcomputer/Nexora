@@ -3,7 +3,6 @@ from __future__ import annotations
 from enum import Enum
 
 from .bus import AudioBus
-from .channel import AudioChannel
 from .mixer import AudioMixer
 from .sound import Sound
 from .spatial import (
@@ -26,18 +25,15 @@ class AudioSource:
         self,
         sound: Sound,
         *,
-        channel: AudioChannel = AudioChannel.SFX,
         volume: float = 1.0,
         loop: bool = False,
         position: tuple[float, float] = (0.0, 0.0),
         min_distance: float = 1.0,
         max_distance: float = 1000.0,
         pitch: float = 1.0,
-        bus: AudioBus | None = None,
+        bus: AudioBus | str | None = "Master",
     ) -> None:
         self.sound = sound
-        self.channel = channel
-
         self._volume = 1.0
         self._loop = bool(loop)
         self._state = AudioSourceState.STOPPED
@@ -160,7 +156,7 @@ class AudioSource:
     # ------------------------------------------------------------------
 
     @property
-    def bus(self) -> AudioBus | None:
+    def bus(self) -> AudioBus | str | None:
         """Return the audio bus."""
 
         return self._bus
@@ -168,7 +164,7 @@ class AudioSource:
     @bus.setter
     def bus(
         self,
-        value: AudioBus | None,
+        value: AudioBus | str | None,
     ) -> None:
         """Set the audio bus."""
 
@@ -372,6 +368,7 @@ class AudioSource:
                 self._state = AudioSourceState.STOPPED
                 self._position = 0
                 self._playback_position = 0.0
+                self._close_stream_reader()
 
             return
 
@@ -443,6 +440,7 @@ class AudioSource:
                 self._state = AudioSourceState.STOPPED
                 self._position = 0
                 self._playback_position = 0.0
+                self._close_stream_reader()
 
     def _clear_fade(self) -> None:
         """Clear the current fade state."""
@@ -496,25 +494,42 @@ class AudioSource:
     # Mixing
     # ------------------------------------------------------------------
 
+    def get_source_volume(self) -> float:
+        """Return the source/fade gain before bus processing."""
+
+        return self._get_fade_volume()
+
     def get_effective_volume(
         self,
         mixer: AudioMixer,
     ) -> float:
-        """Return the final volume after channel and bus mixing."""
+        """Return source gain multiplied by the hierarchical bus volume.
 
-        volume = (
-            self._get_fade_volume()
-            * mixer.get_effective_volume(self.channel)
-        )
+        This compatibility helper is useful for inspection. The real-time
+        player routes sources through bus buffers and therefore applies bus
+        gain later, after that bus' DSP chain.
+        """
 
-        # Master bus affects every audio source.
-        volume *= mixer.master.effective_volume
+        # Preserve the state of an explicitly supplied AudioBus object.
+        # ``AudioMixer.resolve_bus()`` intentionally canonicalizes bus objects
+        # by name for the realtime routing graph, but this inspection helper
+        # must still report the gain represented by the source's actual bus
+        # reference (including mute). A detached custom bus is implicitly
+        # routed through Master, matching the realtime bus graph semantics.
+        if isinstance(self._bus, AudioBus):
+            bus = self._bus
+            volume = bus.effective_volume
 
-        # Assigned bus affects only sources using that bus.
-        if self._bus is not None:
-            volume *= self._bus.effective_volume
+            if (
+                bus is not mixer.master
+                and bus.parent is None
+            ):
+                volume *= mixer.master.effective_volume
 
-        return volume
+            return self.get_source_volume() * volume
+
+        bus = mixer.resolve_bus(self._bus)
+        return self.get_source_volume() * bus.effective_volume
 
     def get_spatial_volume(
         self,

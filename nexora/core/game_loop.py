@@ -225,7 +225,26 @@ class GameLoop:
                         False,
                     )
                 ):
-                    debug_overlay.toggle()
+                    shift_down = (
+                        self.input.key_down(
+                            "lshift"
+                        )
+                        or self.input.key_down(
+                            "rshift"
+                        )
+                    )
+
+                    if shift_down:
+                        toggle_audio = getattr(
+                            debug_overlay,
+                            "toggle_audio",
+                            None,
+                        )
+
+                        if toggle_audio is not None:
+                            toggle_audio()
+                    else:
+                        debug_overlay.toggle()
 
                 if (
                     debug_overlay is not None
