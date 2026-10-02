@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Any
 
 from nexora.nodes.node import Node
+from nexora.data.codecs import prefab as prefab_codec
+from nexora.data.errors import DataIntegrityError, DataError
 
-from .codec import PREFAB_MAGIC, decode_secure_pickle, encode_secure_pickle
-from .common import apply_common_node_state, atomic_write, node_to_state
-from .migrations import MigrationRegistry
+from .common import apply_common_node_state, node_to_state
+from .errors import InvalidSceneFileError, SceneIntegrityError, UnsupportedSceneVersionError
 from .registry import NodeFactoryRegistry
 
 
@@ -27,42 +28,63 @@ class PrefabSerializer:
         self.signing_key = signing_key
         self.registry = registry or NodeFactoryRegistry()
         self.max_file_size = int(max_file_size)
-        self.migrations = MigrationRegistry(PREFAB_SCHEMA_VERSION)
 
     def to_state(self, node: Node) -> dict[str, Any]:
         return {
-            "schema_version": PREFAB_SCHEMA_VERSION,
-            "format": "nexora_prefab",
             "root": node_to_state(node, self.registry),
         }
 
     def encode(self, node: Node) -> bytes:
-        return encode_secure_pickle(
+        return prefab_codec.encode_state(
             self.to_state(node),
+            version=PREFAB_SCHEMA_VERSION,
             signing_key=self.signing_key,
-            magic=PREFAB_MAGIC,
         )
 
     def save(self, node: Node, path: str | Path) -> Path:
         path = Path(path)
         if path.suffix == "":
             path = path.with_suffix(self.FILE_EXTENSION)
-        atomic_write(path, self.encode(node))
-        return path
+        try:
+            return prefab_codec.save_state(
+                self.to_state(node),
+                path,
+                version=PREFAB_SCHEMA_VERSION,
+                signing_key=self.signing_key,
+                max_file_size=self.max_file_size,
+            )
+        except DataIntegrityError as exc:
+            raise SceneIntegrityError(str(exc)) from exc
+        except DataError as exc:
+            raise InvalidSceneFileError(str(exc)) from exc
 
     def decode_state(self, raw: bytes) -> dict[str, Any]:
-        state = decode_secure_pickle(
-            raw,
-            signing_key=self.signing_key,
-            expected_magic=PREFAB_MAGIC,
-            max_payload_size=self.max_file_size,
-        )
-        if not isinstance(state, dict) or state.get("format") != "nexora_prefab":
-            raise ValueError("Payload is not a Nexora prefab state.")
-        return self.migrations.migrate(state)
+        try:
+            state = prefab_codec.decode_state(
+                raw,
+                version=PREFAB_SCHEMA_VERSION,
+                signing_key=self.signing_key,
+                max_file_size=self.max_file_size,
+            )
+        except DataIntegrityError as exc:
+            raise SceneIntegrityError(str(exc)) from exc
+        except DataError as exc:
+            raise InvalidSceneFileError(str(exc)) from exc
+        return state
 
     def load_state(self, path: str | Path) -> dict[str, Any]:
-        return self.decode_state(Path(path).read_bytes())
+        try:
+            state = prefab_codec.load_state(
+                path,
+                version=PREFAB_SCHEMA_VERSION,
+                signing_key=self.signing_key,
+                max_file_size=self.max_file_size,
+            )
+        except DataIntegrityError as exc:
+            raise SceneIntegrityError(str(exc)) from exc
+        except DataError as exc:
+            raise InvalidSceneFileError(str(exc)) from exc
+        return state
 
     def instantiate(
         self,

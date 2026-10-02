@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import json
 
 from nexora.items import ItemAsset, ItemDefinition
 
@@ -37,7 +36,7 @@ def test_item_asset_roundtrip_uses_nitem_suffix(tmp_path: Path) -> None:
     )
 
     path = ItemAsset(item).save(tmp_path / "iron_sword")
-    assert path.read_bytes().startswith(b"NXITM001")
+    assert path.read_bytes().startswith(b"NXDATA01")
     loaded = ItemAsset.load(path).item
 
     assert path.name == "iron_sword.nitem"
@@ -69,15 +68,15 @@ def test_item_asset_rejects_wrong_format() -> None:
         raise AssertionError("wrong item format was accepted")
 
 
-def test_item_asset_loads_legacy_json_nitem(tmp_path: Path) -> None:
+def test_item_asset_rejects_legacy_json_nitem(tmp_path: Path) -> None:
     path = tmp_path / "legacy.nitem"
     path.write_text(
-        json.dumps({
-            "format": "nexora_item",
-            "version": 1,
-            "item": {"id": "legacy_item", "name": "Legacy Item"},
-        }),
+        '{"format":"nexora_item","version":1,"item":{"id":"legacy_item"}}',
         encoding="utf-8",
     )
-    loaded = ItemAsset.load(path).item
-    assert loaded.item_id == "legacy_item"
+    try:
+        ItemAsset.load(path)
+    except Exception:
+        pass
+    else:
+        raise AssertionError("Legacy JSON .nitem file was accepted")

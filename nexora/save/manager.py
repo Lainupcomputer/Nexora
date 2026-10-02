@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
 
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from nexora.data import atomic_write
 
 from nexora.save.codec import (
     decode_save,
@@ -1607,54 +1608,6 @@ class SaveManager:
         destination: Path,
         data: bytes,
     ) -> None:
-        """
-        Write into a temporary file in the same directory and
-        atomically replace the destination afterwards.
-        """
+        """Write through the shared Nexora data atomic-write helper."""
+        atomic_write(destination, data)
 
-        temp_path: (
-            Path | None
-        ) = None
-
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=destination.parent,
-                prefix=(
-                    destination.name
-                    + "."
-                ),
-                suffix=".tmp",
-                delete=False,
-            ) as temp_file:
-                temp_path = Path(
-                    temp_file.name
-                )
-
-                temp_file.write(
-                    data
-                )
-
-                temp_file.flush()
-
-                os.fsync(
-                    temp_file.fileno()
-                )
-
-            os.replace(
-                temp_path,
-                destination,
-            )
-
-        except Exception:
-            if (
-                temp_path is not None
-                and temp_path.exists()
-            ):
-                try:
-                    temp_path.unlink()
-
-                except OSError:
-                    pass
-
-            raise
