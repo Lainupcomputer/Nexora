@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import copy
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 from typing import Iterable
+
+from nexora.data.codecs import audio_preset as audio_preset_codec
 
 from .bus import AudioBus
 from .effects import (
@@ -202,13 +203,7 @@ class AudioPresetRegistry:
 
     def save(self, name: str, path: str | Path) -> Path:
         preset = self.get(name)
-        target = Path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            json.dumps(preset.to_dict(), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        return target
+        return audio_preset_codec.save(preset, path)
 
     def load(
         self,
@@ -217,9 +212,7 @@ class AudioPresetRegistry:
         overwrite: bool = False,
         name: str | None = None,
     ) -> AudioPreset:
-        source = Path(path)
-        data = json.loads(source.read_text(encoding="utf-8"))
-        preset = AudioPreset.from_dict(data)
+        preset = audio_preset_codec.load(path)
         if name is not None:
             preset = AudioPreset(
                 name=name,

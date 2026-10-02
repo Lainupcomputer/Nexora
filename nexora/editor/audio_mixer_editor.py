@@ -11,7 +11,6 @@ editor Game.  Changes are therefore immediately reflected in the mixer graph,
 DSP chains, sends and meters used by the engine.
 """
 
-import json
 import math
 from pathlib import Path
 from typing import Callable
@@ -30,6 +29,7 @@ from nexora.audio import (
     ReverbEffect,
     StereoWidthEffect,
 )
+from nexora.data.codecs import audio_mixer as audio_mixer_codec
 from nexora.editor.app import resolve_project_path
 from nexora.editor.model import EditorProjectContext
 from nexora.editor.ui import (
@@ -124,7 +124,7 @@ class AudioMixerEditorScene(Scene):
     STATUS_HEIGHT = 28.0
     LEFT_WIDTH = 260.0
     RIGHT_WIDTH = 390.0
-    SNAPSHOT_NAME = "audio_mixer.json"
+    SNAPSHOT_NAME = "audio_mixer.nmix"
 
     def __init__(self, game, project_path: Path, project_context: EditorProjectContext | None = None) -> None:
         super().__init__("StandaloneAudioMixerEditor")
@@ -536,9 +536,9 @@ class AudioMixerEditorScene(Scene):
 
     def _save_snapshot(self) -> None:
         try:
-            self.snapshot_path.write_text(
-                json.dumps(self.game.audio.create_mixer_snapshot(), indent=2, ensure_ascii=False),
-                encoding="utf-8",
+            audio_mixer_codec.save(
+                self.game.audio.create_mixer_snapshot(),
+                self.snapshot_path,
             )
             self.status = f"Saved {self.snapshot_path.name}."
         except Exception as exc:
@@ -546,7 +546,7 @@ class AudioMixerEditorScene(Scene):
 
     def _load_snapshot(self) -> None:
         try:
-            data = json.loads(self.snapshot_path.read_text(encoding="utf-8"))
+            data = audio_mixer_codec.load(self.snapshot_path)
             self.game.audio.restore_mixer_snapshot(data)
             self._selected_bus_id = None
             self._selected_effect = -1

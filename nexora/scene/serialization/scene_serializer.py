@@ -4,10 +4,11 @@ from pathlib import Path
 from typing import Any
 
 from nexora.scene.scene import Scene
+from nexora.data.codecs import scene as scene_codec
+from nexora.data.errors import DataIntegrityError, DataError
 
-from .codec import SCENE_MAGIC, decode_secure_pickle, encode_secure_pickle
-from .common import apply_common_node_state, atomic_write, node_to_state
-from .migrations import MigrationRegistry
+from .common import apply_common_node_state, node_to_state
+from .errors import InvalidSceneFileError, SceneIntegrityError, UnsupportedSceneVersionError
 from .prefab import PrefabSerializer
 from .registry import NodeFactoryRegistry
 
@@ -36,7 +37,6 @@ class SceneSerializer:
         self.signing_key = signing_key
         self.registry = registry or NodeFactoryRegistry()
         self.max_file_size = int(max_file_size)
-        self.migrations = MigrationRegistry(SCENE_SCHEMA_VERSION)
         self.prefabs = PrefabSerializer(
             signing_key=signing_key,
             registry=self.registry,
@@ -59,8 +59,6 @@ class SceneSerializer:
             camera_id = id_map.get(scene.camera)
 
         return {
-            "schema_version": SCENE_SCHEMA_VERSION,
-            "format": "nexora_scene",
             "name": str(scene.name),
             "asset_groups": list(getattr(scene, "asset_groups", ())),
             "metadata": dict(getattr(scene, "serialization_metadata", {})),
@@ -82,32 +80,56 @@ class SceneSerializer:
         return node_to_state(node, self.registry, id_map=id_map)
 
     def encode(self, scene: Scene) -> bytes:
-        return encode_secure_pickle(
+        return scene_codec.encode_state(
             self.to_state(scene),
+            version=SCENE_SCHEMA_VERSION,
             signing_key=self.signing_key,
-            magic=SCENE_MAGIC,
         )
 
     def save(self, scene: Scene, path: str | Path) -> Path:
         path = Path(path)
         if path.suffix == "":
             path = path.with_suffix(self.FILE_EXTENSION)
-        atomic_write(path, self.encode(scene))
-        return path
+        try:
+            return scene_codec.save_state(
+                self.to_state(scene),
+                path,
+                version=SCENE_SCHEMA_VERSION,
+                signing_key=self.signing_key,
+                max_file_size=self.max_file_size,
+            )
+        except DataIntegrityError as exc:
+            raise SceneIntegrityError(str(exc)) from exc
+        except DataError as exc:
+            raise InvalidSceneFileError(str(exc)) from exc
 
     def decode_state(self, raw: bytes) -> dict[str, Any]:
-        state = decode_secure_pickle(
-            raw,
-            signing_key=self.signing_key,
-            expected_magic=SCENE_MAGIC,
-            max_payload_size=self.max_file_size,
-        )
-        if not isinstance(state, dict) or state.get("format") != "nexora_scene":
-            raise ValueError("Payload is not a Nexora scene state.")
-        return self.migrations.migrate(state)
+        try:
+            state = scene_codec.decode_state(
+                raw,
+                version=SCENE_SCHEMA_VERSION,
+                signing_key=self.signing_key,
+                max_file_size=self.max_file_size,
+            )
+        except DataIntegrityError as exc:
+            raise SceneIntegrityError(str(exc)) from exc
+        except DataError as exc:
+            raise InvalidSceneFileError(str(exc)) from exc
+        return state
 
     def load_state(self, path: str | Path) -> dict[str, Any]:
-        return self.decode_state(Path(path).read_bytes())
+        try:
+            state = scene_codec.load_state(
+                path,
+                version=SCENE_SCHEMA_VERSION,
+                signing_key=self.signing_key,
+                max_file_size=self.max_file_size,
+            )
+        except DataIntegrityError as exc:
+            raise SceneIntegrityError(str(exc)) from exc
+        except DataError as exc:
+            raise InvalidSceneFileError(str(exc)) from exc
+        return state
 
     def from_state(
         self,
@@ -122,10 +144,10 @@ class SceneSerializer:
         without writing a temporary scene file to disk.
         """
 
-        if not isinstance(state, dict) or state.get("format") != "nexora_scene":
-            raise ValueError("Payload is not a Nexora scene state.")
+        if not isinstance(state, dict):
+            raise ValueError("Payload is not Nexora scene data.")
 
-        state = self.migrations.migrate(dict(state))
+        state = dict(state)
         base_path = Path(base_dir or ".").expanduser().resolve()
         scene = Scene(str(state.get("name", "Scene")))
 
@@ -175,7 +197,7 @@ class SceneSerializer:
         state = self.load_state(path)
         return {
             "name": str(state.get("name", "Scene")),
-            "schema_version": int(state.get("schema_version", 1)),
+            "schema_version": SCENE_SCHEMA_VERSION,
             "asset_groups": list(state.get("asset_groups", [])),
             "metadata": dict(state.get("metadata", {})),
         }

@@ -1256,20 +1256,20 @@ Preset names are case-insensitive in the registry.
 audio.remove_audio_preset("Boss Voice")
 ```
 
-### Save a preset as JSON
+### Save a preset
 
 ```python
 audio.save_audio_preset(
     "Boss Voice",
-    "audio_presets/boss_voice.json",
+    "audio_presets/boss_voice.npreset",
 )
 ```
 
-### Load a preset from JSON
+### Load a preset
 
 ```python
 preset = audio.load_audio_preset(
-    "audio_presets/boss_voice.json",
+    "audio_presets/boss_voice.npreset",
 )
 ```
 
@@ -1277,7 +1277,7 @@ Overwrite an existing preset:
 
 ```python
 audio.load_audio_preset(
-    "audio_presets/boss_voice.json",
+    "audio_presets/boss_voice.npreset",
     overwrite=True,
 )
 ```
@@ -1286,12 +1286,12 @@ Override the name while loading:
 
 ```python
 audio.load_audio_preset(
-    "audio_presets/boss_voice.json",
+    "audio_presets/boss_voice.npreset",
     name="Boss Voice Variant",
 )
 ```
 
-Preset JSON format currently uses version `1`.
+Audio presets use the shared Nexora data container with `DataType.AudioPreset` and schema version `1`.
 
 ---
 

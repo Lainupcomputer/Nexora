@@ -6,7 +6,6 @@ from nexora.tilemap.tile_layer import LAYER_ROLES, TileLayer, normalize_layer_ro
 from nexora.tilemap.tilemap import TileMap
 from nexora.tilemap.tileset import TileRegion, TileSet
 from nexora.tilemap.asset import (
-    TILEMAP_ASSET_FORMAT,
     TILEMAP_ASSET_VERSION,
     TILEMAP_ASSET_SUFFIX,
     TileMapAsset,
@@ -29,7 +28,6 @@ __all__ = [
     "TileRegion",
     "TileSet",
     "TileMapAsset",
-    "TILEMAP_ASSET_FORMAT",
     "TILEMAP_ASSET_VERSION",
     "TILEMAP_ASSET_SUFFIX",
     "CachedTile",

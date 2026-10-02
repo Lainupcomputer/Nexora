@@ -138,7 +138,7 @@ def test_debug_overlay_draws_separate_left_and_right_meter_tracks():
         "Queue: N/A",
         "Master: V 1.00  P +0.00  FX 0  Send 0 [CLIP]",
     ]
-    overlay._draw_audio_mixer_meters(renderer, lines)
+    overlay._draw_audio_mixer_bottom_left(renderer, lines)
 
     labels = [args[0] for args, _ in renderer.texts]
     assert "L" in labels

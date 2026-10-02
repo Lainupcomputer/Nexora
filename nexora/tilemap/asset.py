@@ -7,7 +7,6 @@ It stores the tileset layout and the painted map layers, while a scene only
 needs to reference the asset from its :class:`TileMapNode`.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +14,8 @@ from .tilemap import TileMap
 from .tileset import TileSet
 
 
-TILEMAP_ASSET_FORMAT = "nexora_tilemap"
 TILEMAP_ASSET_VERSION = 1
+TILEMAP_ASSET_MAX_PAYLOAD = 64 * 1024 * 1024
 TILEMAP_ASSET_SUFFIX = ".ntmap"
 
 
@@ -48,8 +47,6 @@ class TileMapAsset:
 
     def to_state(self) -> dict[str, Any]:
         return {
-            "format": TILEMAP_ASSET_FORMAT,
-            "version": TILEMAP_ASSET_VERSION,
             "name": self.name,
             "tilemap": dict(self.tilemap_state),
             "tileset": dict(self.tileset_state),
@@ -57,11 +54,8 @@ class TileMapAsset:
 
     @classmethod
     def from_state(cls, state: dict[str, Any]) -> "TileMapAsset":
-        if not isinstance(state, dict) or state.get("format") != TILEMAP_ASSET_FORMAT:
-            raise ValueError("Payload is not a Nexora TileMap asset.")
-        version = int(state.get("version", 0))
-        if version != TILEMAP_ASSET_VERSION:
-            raise ValueError(f"Unsupported Nexora TileMap asset version: {version}")
+        if not isinstance(state, dict):
+            raise ValueError("Payload is not Nexora TileMap data.")
         return cls(
             name=str(state.get("name", "Untitled")),
             tilemap_state=dict(state["tilemap"]),
@@ -69,26 +63,30 @@ class TileMapAsset:
         )
 
     def save(self, path: str | Path) -> Path:
+        from nexora.data.codecs import tilemap as tilemap_codec
+
         path = Path(path).expanduser()
         if not str(path).lower().endswith(TILEMAP_ASSET_SUFFIX):
             path = Path(str(path) + TILEMAP_ASSET_SUFFIX)
-        raw = json.dumps(self.to_state(), indent=2, sort_keys=True).encode("utf-8")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(path.name + ".tmp")
-        temporary.write_bytes(raw)
-        temporary.replace(path)
-        return path.resolve()
+        return tilemap_codec.save(
+            self,
+            path,
+            max_file_size=TILEMAP_ASSET_MAX_PAYLOAD,
+        )
 
     @classmethod
     def load(cls, path: str | Path) -> "TileMapAsset":
-        path = Path(path).expanduser().resolve()
-        state = json.loads(path.read_text(encoding="utf-8"))
-        return cls.from_state(state)
+        from nexora.data.codecs import tilemap as tilemap_codec
+
+        return tilemap_codec.load(
+            path,
+            max_file_size=TILEMAP_ASSET_MAX_PAYLOAD,
+        )
 
 
 __all__ = [
-    "TILEMAP_ASSET_FORMAT",
     "TILEMAP_ASSET_VERSION",
     "TILEMAP_ASSET_SUFFIX",
+    "TILEMAP_ASSET_MAX_PAYLOAD",
     "TileMapAsset",
 ]

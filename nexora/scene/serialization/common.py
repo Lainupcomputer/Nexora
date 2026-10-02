@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from nexora.nodes.node import Node
+from nexora.data import atomic_write as _data_atomic_write
 
 from .registry import NodeFactoryRegistry
 
@@ -58,8 +59,5 @@ def apply_common_node_state(node: Node, state: dict[str, Any]) -> None:
 
 
 def atomic_write(path: Path, raw: bytes) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_bytes(raw)
-    temporary.replace(path)
+    """Compatibility wrapper around the shared Nexora data writer."""
+    _data_atomic_write(path, raw)

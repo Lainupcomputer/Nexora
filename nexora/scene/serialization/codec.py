@@ -1,31 +1,23 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
-import struct
 from typing import Any
 
-from nexora.save.codec import (
-    normalize_signing_key,
-    restricted_loads,
-    validate_pickle_opcodes,
-    validate_save_value,
-)
+from nexora.data import DataFile, DataType, decode_file, encode_file
+from nexora.data.errors import DataIntegrityError, DataError
 
-from .errors import (
-    InvalidSceneFileError,
-    SceneIntegrityError,
-    UnsupportedSceneVersionError,
-)
+from .errors import InvalidSceneFileError, SceneIntegrityError
 
-
-CONTAINER_VERSION = 1
-DIGEST_SIZE = 32
+# Kept as API selectors only. Files now use the shared NXDATA01 container.
 SCENE_MAGIC = b"NXSCN001"
 PREFAB_MAGIC = b"NXPFB001"
 
-_HEADER_STRUCT = struct.Struct(">8sHQ32s")
-_HEADER_PREFIX_STRUCT = struct.Struct(">8sHQ")
+
+def _data_type_for_magic(magic: bytes) -> DataType:
+    if magic == SCENE_MAGIC:
+        return DataType.Scene
+    if magic == PREFAB_MAGIC:
+        return DataType.Prefab
+    raise ValueError("Unknown Nexora scene serialization selector.")
 
 
 def encode_secure_pickle(
@@ -34,38 +26,12 @@ def encode_secure_pickle(
     signing_key: bytes | str,
     magic: bytes,
 ) -> bytes:
-    """Encode safe primitive data into an authenticated Nexora container."""
-    import pickle
-
-    if len(magic) != 8:
-        raise ValueError("magic must contain exactly 8 bytes")
-
-    key = normalize_signing_key(signing_key)
-    validate_save_value(value)
-
-    payload = pickle.dumps(
-        value,
-        protocol=pickle.HIGHEST_PROTOCOL,
+    data_type = _data_type_for_magic(magic)
+    version = int(value.get("schema_version", 1)) if isinstance(value, dict) else 1
+    return encode_file(
+        DataFile(data_type=data_type, version=version, data=value),
+        signing_key=signing_key,
     )
-    validate_pickle_opcodes(payload)
-
-    prefix = _HEADER_PREFIX_STRUCT.pack(
-        magic,
-        CONTAINER_VERSION,
-        len(payload),
-    )
-    digest = hmac.new(
-        key,
-        prefix + payload,
-        hashlib.sha256,
-    ).digest()
-
-    return _HEADER_STRUCT.pack(
-        magic,
-        CONTAINER_VERSION,
-        len(payload),
-        digest,
-    ) + payload
 
 
 def decode_secure_pickle(
@@ -75,54 +41,22 @@ def decode_secure_pickle(
     expected_magic: bytes,
     max_payload_size: int,
 ) -> Any:
-    """Authenticate a Nexora container before restricted unpickling."""
-    key = normalize_signing_key(signing_key)
-
-    if max_payload_size <= 0:
-        raise ValueError("max_payload_size must be greater than zero")
-
-    header_size = _HEADER_STRUCT.size
-    if len(raw) < header_size:
-        raise InvalidSceneFileError("Scene/prefab file is too small.")
-
     try:
-        magic, version, payload_length, stored_digest = _HEADER_STRUCT.unpack(
-            raw[:header_size]
-        )
-    except struct.error as exc:
-        raise InvalidSceneFileError("Invalid scene/prefab header.") from exc
+        return decode_file(
+            raw,
+            expected_type=_data_type_for_magic(expected_magic),
+            signing_key=signing_key,
+            max_payload_size=max_payload_size,
+        ).data
+    except DataIntegrityError as exc:
+        raise SceneIntegrityError(str(exc)) from exc
+    except DataError as exc:
+        raise InvalidSceneFileError(str(exc)) from exc
 
-    if magic != expected_magic:
-        raise InvalidSceneFileError("Unexpected Nexora scene/prefab file type.")
 
-    if version != CONTAINER_VERSION:
-        raise UnsupportedSceneVersionError(
-            f"Unsupported container version: {version}"
-        )
-
-    if payload_length > int(max_payload_size):
-        raise InvalidSceneFileError("Payload exceeds configured maximum size.")
-
-    expected_size = header_size + payload_length
-    if len(raw) != expected_size:
-        raise InvalidSceneFileError("Payload length does not match header.")
-
-    payload = raw[header_size:]
-    prefix = _HEADER_PREFIX_STRUCT.pack(
-        magic,
-        version,
-        payload_length,
-    )
-    expected_digest = hmac.new(
-        key,
-        prefix + payload,
-        hashlib.sha256,
-    ).digest()
-
-    if not hmac.compare_digest(stored_digest, expected_digest):
-        raise SceneIntegrityError("Scene/prefab authentication failed.")
-
-    try:
-        return restricted_loads(payload)
-    except Exception as exc:
-        raise InvalidSceneFileError("Invalid scene/prefab payload.") from exc
+__all__ = [
+    "PREFAB_MAGIC",
+    "SCENE_MAGIC",
+    "decode_secure_pickle",
+    "encode_secure_pickle",
+]
