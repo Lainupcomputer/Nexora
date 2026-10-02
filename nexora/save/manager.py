@@ -7,17 +7,23 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from nexora.data import atomic_write
-
-from nexora.save.codec import (
-    decode_save,
-    encode_save,
-    normalize_signing_key,
+from nexora.data import (
+    DataIntegrityError,
+    DataTypeMismatchError,
+    InvalidDataFileError,
+    UnsafeDataError,
+    UnsupportedDataVersionError,
+    atomic_write,
 )
+from nexora.data.codecs import savegame as savegame_codec
+from nexora.data.file import normalize_signing_key
 
 from nexora.save.errors import (
     InvalidSaveError,
+    SaveIntegrityError,
     SaveNotFoundError,
+    UnsafeSaveDataError,
+    UnsupportedSaveVersionError,
 )
 
 from nexora.save.events import (
@@ -44,6 +50,55 @@ SaveEventListener = Callable[
 ]
 
 
+def _translate_data_error(exc: Exception) -> Exception:
+    """Translate shared data errors to the public save API."""
+    if isinstance(exc, UnsafeDataError):
+        return UnsafeSaveDataError(str(exc))
+    if isinstance(exc, DataIntegrityError):
+        return SaveIntegrityError(str(exc))
+    if isinstance(exc, UnsupportedDataVersionError):
+        return UnsupportedSaveVersionError(str(exc))
+    if isinstance(exc, (InvalidDataFileError, DataTypeMismatchError)):
+        return InvalidSaveError(str(exc))
+    return exc
+
+
+def _encode_save(
+    envelope: dict[str, Any],
+    *,
+    signing_key: bytes | str,
+) -> bytes:
+    try:
+        return savegame_codec.encode(
+            envelope,
+            signing_key=signing_key,
+        )
+    except Exception as exc:
+        translated = _translate_data_error(exc)
+        if translated is exc:
+            raise
+        raise translated from exc
+
+
+def _decode_save(
+    raw: bytes,
+    *,
+    signing_key: bytes | str,
+    max_payload_size: int,
+) -> dict[str, Any]:
+    try:
+        return savegame_codec.decode(
+            raw,
+            signing_key=signing_key,
+            max_file_size=max_payload_size,
+        )
+    except Exception as exc:
+        translated = _translate_data_error(exc)
+        if translated is exc:
+            raise
+        raise translated from exc
+
+
 class SaveManager:
     """
     Secure binary save manager for Nexora.
@@ -51,12 +106,11 @@ class SaveManager:
     Features
     --------
 
-        - Pickle HIGHEST_PROTOCOL
-        - restricted unpickling
-        - opcode validation
+        - shared Nexora data container
+        - restricted payload decoding
         - safe type validation
         - HMAC-SHA256 authentication
-        - Nexora magic header
+        - NXDATA01 container header
         - payload size limits
         - sanitized slot names
         - atomic writes
@@ -574,7 +628,7 @@ class SaveManager:
             # Encode
             # --------------------------------------------------
 
-            raw = encode_save(
+            raw = _encode_save(
                 envelope,
                 signing_key=(
                     self._signing_key
@@ -743,7 +797,7 @@ class SaveManager:
             # Decode
             # --------------------------------------------------
 
-            envelope = decode_save(
+            envelope = _decode_save(
                 raw,
                 signing_key=(
                     self._signing_key
@@ -1146,7 +1200,7 @@ class SaveManager:
         # Decode and verify
         # ------------------------------------------------------
 
-        envelope = decode_save(
+        envelope = _decode_save(
             raw,
             signing_key=(
                 self._signing_key
@@ -1233,7 +1287,7 @@ class SaveManager:
         # Encode again
         # ------------------------------------------------------
 
-        encoded = encode_save(
+        encoded = _encode_save(
             new_envelope,
             signing_key=(
                 self._signing_key

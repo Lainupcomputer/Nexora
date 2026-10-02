@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import pickle
+
 from pathlib import Path
 
 import pytest
@@ -9,11 +12,13 @@ from nexora.data import (
     DataIntegrityError,
     DataType,
     DataTypeMismatchError,
+    UnsafeDataError,
     decode_file,
     encode_file,
     load_file,
     save_file,
 )
+from nexora.data.file import restricted_loads
 
 KEY = b"nexora-data-test-signing-key-0123456789abcdef"
 
@@ -53,6 +58,21 @@ def test_data_file_detects_tampering() -> None:
     with pytest.raises(DataIntegrityError):
         decode_file(bytes(raw), expected_type=DataType.SaveGame, signing_key=KEY)
 
+
+
+class MaliciousPickle:
+    def __reduce__(self):
+        return os.system, ("echo THIS_MUST_NEVER_EXECUTE",)
+
+
+def test_restricted_unpickler_blocks_reduce() -> None:
+    payload = pickle.dumps(
+        MaliciousPickle(),
+        protocol=pickle.HIGHEST_PROTOCOL,
+    )
+
+    with pytest.raises(UnsafeDataError):
+        restricted_loads(payload)
 
 def test_audio_preset_codec_roundtrip(tmp_path):
     from nexora.audio import AudioPreset, GainEffect

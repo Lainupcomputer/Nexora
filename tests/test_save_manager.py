@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-import pickle
 
 import pytest
 
@@ -11,11 +9,6 @@ from nexora.save import (
     SaveNotFoundError,
     UnsafeSaveDataError,
 )
-
-from nexora.save.codec import (
-    restricted_loads,
-)
-
 
 TEST_KEY = (
     b"nexora-test-save-signing-key-"
@@ -346,37 +339,6 @@ def test_wrong_signing_key_fails(
     ):
         other_manager.load(
             "slot_1"
-        )
-
-
-# ==============================================================
-# RESTRICTED PICKLE
-# ==============================================================
-
-
-class MaliciousPickle:
-    def __reduce__(
-        self,
-    ):
-        return (
-            os.system,
-            (
-                "echo THIS_MUST_NEVER_EXECUTE",
-            ),
-        )
-
-
-def test_restricted_unpickler_blocks_reduce() -> None:
-    payload = pickle.dumps(
-        MaliciousPickle(),
-        protocol=pickle.HIGHEST_PROTOCOL,
-    )
-
-    with pytest.raises(
-        UnsafeSaveDataError
-    ):
-        restricted_loads(
-            payload
         )
 
 

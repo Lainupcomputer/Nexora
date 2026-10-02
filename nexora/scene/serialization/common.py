@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from nexora.nodes.node import Node
-from nexora.data import atomic_write as _data_atomic_write
 
 from .registry import NodeFactoryRegistry
 
@@ -57,7 +55,3 @@ def apply_common_node_state(node: Node, state: dict[str, Any]) -> None:
     node.transform.scale_x = float(transform.get("scale_x", 1.0))
     node.transform.scale_y = float(transform.get("scale_y", 1.0))
 
-
-def atomic_write(path: Path, raw: bytes) -> None:
-    """Compatibility wrapper around the shared Nexora data writer."""
-    _data_atomic_write(path, raw)

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from nexora.data import DataFile, DataType, decode_file, encode_file, load_file, save_file
+from nexora.data.errors import InvalidDataFileError, UnsupportedDataVersionError
 
 VERSION = 1
 
@@ -32,9 +33,11 @@ def decode(
         max_payload_size=max_file_size,
     )
     if document.version != VERSION:
-        raise ValueError(f"Unsupported Nexora Savegame data version: {document.version}")
+        raise UnsupportedDataVersionError(
+            f"Unsupported Nexora Savegame data version: {document.version}"
+        )
     if not isinstance(document.data, dict):
-        raise ValueError("Invalid Nexora Savegame data.")
+        raise InvalidDataFileError("Invalid Nexora Savegame data.")
     return dict(document.data)
 
 
@@ -66,7 +69,9 @@ def load(
         max_file_size=max_file_size,
     )
     if document.version != VERSION:
-        raise ValueError(f"Unsupported Nexora Savegame data version: {document.version}")
+        raise UnsupportedDataVersionError(
+            f"Unsupported Nexora Savegame data version: {document.version}"
+        )
     if not isinstance(document.data, dict):
-        raise ValueError("Invalid Nexora Savegame data.")
+        raise InvalidDataFileError("Invalid Nexora Savegame data.")
     return dict(document.data)
