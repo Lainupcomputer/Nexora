@@ -627,17 +627,6 @@ class EditorViewportCanvas(UINode):
         self.grid_size = 32.0
         self.background = (0.055, 0.060, 0.070, 1.0)
 
-    @staticmethod
-    def _rgba255(color) -> tuple[float, float, float, float]:
-        values = tuple(color)
-        if not values:
-            return (1.0, 1.0, 1.0, 1.0)
-        if max(values) > 1.0:
-            values = tuple(float(v) / 255.0 for v in values)
-        if len(values) == 3:
-            return (*values, 1.0)
-        return tuple(values[:4])
-
     def _clip_rect(self, renderer) -> tuple[float, float, float, float]:
         # Renderer clip rectangles use Nexora's centered screen coordinate
         # system, exactly like UI/node draw coordinates.

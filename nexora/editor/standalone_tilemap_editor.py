@@ -11,28 +11,36 @@ from nexora.editor.ui import (
     Button,
     CheckBox,
     Dropdown,
+    FormLayout,
     ListBox,
     Menu,
     Rect,
     TextField,
-    UITheme,
-    FileBrowserModel,
+    StandaloneEditorScene,
     centered_rect,
-    close_other_menus,
     draw_outline,
     draw_rect,
     draw_text,
+    render_file_browser_dialog,
+    render_info_dialog,
+    layout_equal_row,
+    layout_fixed_row,
+    render_document_title,
+    render_editor_shell,
+    render_form_label,
+    render_section_title,
+    render_status_bar,
     rgba,
-    sync_browser_list,
 )
 from nexora.editor.app import resolve_project_path
-from nexora.scene import Scene
 from nexora.tilemap import TILEMAP_ASSET_SUFFIX, TileMap, TileMapAsset, TileProjection, TileSet
 from nexora.tilemap.tile_layer import LAYER_ROLES, normalize_layer_role
 
 
-class StandaloneTileMapEditorScene(Scene):
+class StandaloneTileMapEditorScene(StandaloneEditorScene):
     """A renderer/input driven editor that does not use Nexora UI nodes."""
+
+    MODAL_CLOSE_STATUS = "Ready"
 
     TOOLBAR_HEIGHT = 58.0
     STATUS_HEIGHT = 30.0
@@ -51,7 +59,6 @@ class StandaloneTileMapEditorScene(Scene):
         self.game = game
         self.project_context = project_context or EditorProjectContext.from_path(project_path)
         self.project_path = self.project_context.root
-        self.theme = UITheme()
         self.viewport = Rect(0.0, 0.0, 1.0, 1.0)
         self.left_panel = Rect(0.0, 0.0, 1.0, 1.0)
         self.right_panel = Rect(0.0, 0.0, 1.0, 1.0)
@@ -79,12 +86,9 @@ class StandaloneTileMapEditorScene(Scene):
         self.stroke_edits: dict[tuple[int, int], int] = {}
         self.status = "Ready"
 
-        self.modal: str | None = None
         self.browser_mode = "tileset"
         self.browser_root = self.project_path
         self.browser_path = self._asset_root()
-        self.browser_entries: list[Path] = []
-        self.file_browser = FileBrowserModel()
         self.browser_list = ListBox(Rect(0, 0, 1, 1), self._browser_selected)
         self.browser_cancel_button = Button(Rect(0, 0, 1, 1), "Cancel", self._close_modal)
         self.browser_save_button = Button(Rect(0, 0, 1, 1), "Save", self._save_from_browser)
@@ -104,8 +108,6 @@ class StandaloneTileMapEditorScene(Scene):
         self.setup_cancel_button = Button(Rect(0, 0, 1, 1), "Cancel", self._close_modal)
         self.setup_error = ""
         self.setup_summary = ""
-        self.info_title = ""
-        self.info_lines: tuple[str, ...] = ()
         self.info_close_button = Button(Rect(0, 0, 1, 1), "Close", self._close_modal)
 
         self.layer_list = ListBox(Rect(0, 0, 1, 1), self._layer_selected)
@@ -145,9 +147,7 @@ class StandaloneTileMapEditorScene(Scene):
             "Help",
             [("Keyboard Shortcuts", self._show_help_dialog), ("TileMap Workflow", self._show_workflow_dialog), ("About Nexora", self._show_about_dialog), ("Version 0.10", self._show_about_dialog)],
         )
-        self.menus = [self.file_menu, self.tilemap_menu, self.help_menu]
-        for menu in self.menus:
-            menu.on_open = self._menu_opened
+        self._set_menus([self.file_menu, self.tilemap_menu, self.help_menu])
         self.tool_buttons = [
             Button(Rect(0, 0, 1, 1), "Select", lambda: self._set_tool("select")),
             Button(Rect(0, 0, 1, 1), "Paint", lambda: self._set_tool("paint")),
@@ -160,15 +160,6 @@ class StandaloneTileMapEditorScene(Scene):
     # ------------------------------------------------------------------
     # Project and asset paths
     # ------------------------------------------------------------------
-
-    def _asset_root(self) -> Path:
-        return self.project_context.assets_root
-
-    def _asset_relative(self, path: Path) -> str:
-        return self.project_context.relative_asset(path, root=self._asset_root())
-
-    def _asset_path(self, relative: str | Path) -> Path:
-        return self.project_context.resolve_asset(relative)
 
     # ------------------------------------------------------------------
     # Documents
@@ -249,32 +240,21 @@ class StandaloneTileMapEditorScene(Scene):
         self._open_browser("tileset")
 
     def _open_browser(self, mode: str) -> None:
-        self.modal = "browser"
-        self.browser_mode = mode
-        self.browser_root = self.project_path
         extensions = (
             (".png", ".jpg", ".jpeg", ".bmp", ".webp")
             if mode == "tileset"
             else (TILEMAP_ASSET_SUFFIX,)
         )
-        self.file_browser.open(
-            self.project_path,
+        self._open_file_browser(
+            mode,
+            root=self.project_path,
             start=self._asset_root(),
             extensions=extensions,
+            filename="",
         )
-        self.browser_path = self.file_browser.path
-        self.browser_name.set_text("")
-        self._refresh_browser()
-
-    def _refresh_browser(self) -> None:
-        self.file_browser.refresh()
-        self.browser_path = self.file_browser.path
-        self.browser_entries = list(self.file_browser.entries)
-        sync_browser_list(self.file_browser, self.browser_list)
 
     def _browser_selected(self, index: int) -> None:
-        path = self.file_browser.select(index)
-        self._refresh_browser()
+        path = self._select_browser_entry(index)
         if path is None:
             return
         if self.browser_mode == "tileset":
@@ -288,10 +268,6 @@ class StandaloneTileMapEditorScene(Scene):
         else:
             self._load_asset(path)
             self._close_modal()
-
-    def _browser_up(self) -> None:
-        if self.file_browser.go_up():
-            self._refresh_browser()
 
     def _save_from_browser(self) -> None:
         name = self.browser_name.text.strip() or f"{self.document_name}{TILEMAP_ASSET_SUFFIX}"
@@ -486,16 +462,8 @@ class StandaloneTileMapEditorScene(Scene):
         self._refresh_layer_controls()
         self.status = f"Layer moved down: {self.active_layer_name}"
 
-    def _menu_opened(self, active_menu: Menu) -> None:
-        close_other_menus(self.menus, active_menu)
-
     def _quit_editor(self) -> None:
         self.game.stop()
-
-    def _open_info_dialog(self, title: str, lines: tuple[str, ...]) -> None:
-        self.info_title = title
-        self.info_lines = lines
-        self.modal = "info"
 
     def _show_help_dialog(self) -> None:
         self._open_info_dialog(
@@ -709,16 +677,32 @@ class StandaloneTileMapEditorScene(Scene):
         return width, height
 
     def _layout_main_controls(self) -> None:
-        menu_x = 16.0
-        menu_layout = ((self.file_menu, 88.0), (self.tilemap_menu, 108.0), (self.help_menu, 86.0))
-        for menu, menu_width in menu_layout:
-            menu.rect = Rect(menu_x, 9.0, menu_width, 40.0)
-            menu_x += menu_width + 7.0
+        layout_fixed_row(
+            (self.file_menu, self.tilemap_menu, self.help_menu),
+            (88.0, 108.0, 86.0),
+            x=16.0,
+            y=9.0,
+            height=40.0,
+            gap=7.0,
+        )
         self.layer_list.rect = Rect(self.left_panel.x + 10.0, self.left_panel.y + 48.0, self.left_panel.width - 20.0, self.left_panel.height - 126.0)
-        self.add_layer_button.rect = Rect(self.left_panel.x + 10.0, self.left_panel.y + self.left_panel.height - 48.0, self.left_panel.width / 2.0 - 15.0, 32.0)
-        self.remove_layer_button.rect = Rect(self.left_panel.x + self.left_panel.width / 2.0 + 5.0, self.left_panel.y + self.left_panel.height - 48.0, self.left_panel.width / 2.0 - 15.0, 32.0)
-        self.move_layer_up_button.rect = Rect(self.left_panel.x + 10.0, self.left_panel.y + self.left_panel.height - 86.0, self.left_panel.width / 2.0 - 15.0, 32.0)
-        self.move_layer_down_button.rect = Rect(self.left_panel.x + self.left_panel.width / 2.0 + 5.0, self.left_panel.y + self.left_panel.height - 86.0, self.left_panel.width / 2.0 - 15.0, 32.0)
+        layer_button_width = self.left_panel.width - 20.0
+        layout_equal_row(
+            (self.move_layer_up_button, self.move_layer_down_button),
+            x=self.left_panel.x + 10.0,
+            y=self.left_panel.y + self.left_panel.height - 86.0,
+            width=layer_button_width,
+            height=32.0,
+            gap=10.0,
+        )
+        layout_equal_row(
+            (self.add_layer_button, self.remove_layer_button),
+            x=self.left_panel.x + 10.0,
+            y=self.left_panel.y + self.left_panel.height - 48.0,
+            width=layer_button_width,
+            height=32.0,
+            gap=10.0,
+        )
         # Keep the editing tools below the viewport header, never in the top
         # menu bar, including after a window resize.
         tool_x = self.viewport.x + 12.0
@@ -730,7 +714,16 @@ class StandaloneTileMapEditorScene(Scene):
         panel_x = self.right_panel.x
         inner_x = panel_x + 12.0
         inner_w = self.right_panel.width - 24.0
-        half = (inner_w - 8.0) / 2.0
+        inspector_form = FormLayout(
+            x=inner_x,
+            y=self.right_panel.y,
+            width=inner_w,
+            columns=2,
+            column_gap=8.0,
+            control_height=34.0,
+            label_gap=0.0,
+        )
+        half = inspector_form.column_width
         self.layer_list.rect = self.layer_list.rect
         self.map_width.rect = Rect(inner_x, self.right_panel.y + 132.0, half, 34.0)
         self.map_height.rect = Rect(inner_x + half + 8.0, self.right_panel.y + 132.0, half, 34.0)
@@ -766,14 +759,21 @@ class StandaloneTileMapEditorScene(Scene):
 
         window = Rect(width / 2.0 - 340.0, height / 2.0 - 215.0, 680.0, 430.0)
         labels = ("tile_width", "tile_height", "gap_x", "gap_y", "margin_x", "margin_y")
-        left = window.x + 18.0
-        top = window.y + 112.0
+        setup_form = FormLayout(
+            x=window.x + 18.0,
+            y=window.y + 112.0,
+            width=626.0,
+            columns=2,
+            column_gap=26.0,
+            row_step=54.0,
+            control_height=30.0,
+            label_gap=18.0,
+        )
         for index, name in enumerate(labels):
-            column = index % 2
-            row = index // 2
-            x = left + column * 326.0
-            y = top + row * 54.0
-            self.setup_fields[name].rect = Rect(x, y + 18.0, 300.0, 30.0)
+            self.setup_fields[name].rect = setup_form.control_rect(
+                index // 2,
+                index % 2,
+            )
         self.setup_cancel_button.rect = Rect(window.x + window.width - 244.0, window.y + window.height - 52.0, 108.0, 32.0)
         self.setup_apply_button.rect = Rect(window.x + window.width - 124.0, window.y + window.height - 52.0, 108.0, 32.0)
         info_window = centered_rect((width, height), 660.0, 380.0)
@@ -825,20 +825,6 @@ class StandaloneTileMapEditorScene(Scene):
                 layer = self._active_layer()
                 if layer is not None and layer.get_tile(*cell) >= 0:
                     self.selected_tile = layer.get_tile(*cell)
-
-    def _focus_fields(self, fields: list[TextField], input_manager, mouse_x: float, mouse_y: float) -> None:
-        if not input_manager.mouse_pressed("left"):
-            return
-        clicked = next((field for field in fields if field.rect.contains(mouse_x, mouse_y)), None)
-        for field in fields:
-            if field is not clicked:
-                field.blur(input_manager)
-
-    def _update_controls(self, controls: list, input_manager, mouse_x: float, mouse_y: float) -> None:
-        fields = [control for control in controls if isinstance(control, TextField)]
-        self._focus_fields(fields, input_manager, mouse_x, mouse_y)
-        for control in controls:
-            control.update(input_manager, mouse_x, mouse_y)
 
     def _palette_tile_at(self, mouse_x: float, mouse_y: float) -> int | None:
         if self.tileset is None or self.texture is None or not self.bottom_panel.contains(mouse_x, mouse_y):
@@ -1029,21 +1015,53 @@ class StandaloneTileMapEditorScene(Scene):
 
     def _render_main_ui(self, renderer, viewport_size) -> None:
         width, height = viewport_size
-        draw_rect(renderer, Rect(0, 0, width, self.TOOLBAR_HEIGHT), self.theme.panel, viewport_size)
-        draw_rect(renderer, self.left_panel, self.theme.panel, viewport_size)
-        draw_rect(renderer, self.right_panel, self.theme.panel, viewport_size)
-        draw_rect(renderer, self.bottom_panel, self.theme.panel_dark, viewport_size)
-        draw_rect(renderer, Rect(0, height - self.STATUS_HEIGHT, width, self.STATUS_HEIGHT), self.theme.panel, viewport_size)
-        for rect in (Rect(0, 0, width, self.TOOLBAR_HEIGHT), self.left_panel, self.viewport, self.right_panel, self.bottom_panel):
-            draw_outline(renderer, rect, self.theme.border, viewport_size)
-
-        draw_text(renderer, f"{self.document_name}{' *' if self.dirty else ''}", width - 16.0, 18.0, viewport_size, scale=0.62, color=self.theme.muted, align="right")
-        draw_text(renderer, "Map Layers", self.left_panel.x + 12.0, self.left_panel.y + 14.0, viewport_size, scale=0.76)
-        draw_text(renderer, "2D TileMap View", self.viewport.x + 12.0, self.viewport.y + 12.0, viewport_size, scale=0.76)
+        render_editor_shell(
+            renderer,
+            viewport_size,
+            self.theme,
+            toolbar_height=self.TOOLBAR_HEIGHT,
+            status_height=self.STATUS_HEIGHT,
+            panels=(
+                (self.left_panel, self.theme.panel),
+                (self.right_panel, self.theme.panel),
+                (self.bottom_panel, self.theme.panel_dark),
+            ),
+            outline_rects=(self.left_panel, self.viewport, self.right_panel, self.bottom_panel),
+        )
+        render_document_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.document_name,
+            dirty=self.dirty,
+            scale=0.62,
+        )
+        render_section_title(renderer, viewport_size, self.theme, self.left_panel, "Map Layers")
+        render_section_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.viewport,
+            "2D TileMap View",
+            y_offset=12.0,
+        )
         draw_text(renderer, "P Paint   X Erase   B Fill   MMB Pan   Wheel Zoom   Home Reset", self.viewport.x + self.viewport.width - 12.0, self.viewport.y + 16.0, viewport_size, scale=0.48, color=self.theme.muted, align="right")
-        draw_text(renderer, "Tile Palette", self.bottom_panel.x + 12.0, self.bottom_panel.y + 12.0, viewport_size, scale=0.76)
-        draw_text(renderer, self.status, 12.0, height - self.STATUS_HEIGHT + 7.0, viewport_size, scale=0.56, color=self.theme.muted)
-        draw_text(renderer, "Nexora Standalone TileMap Editor", width - 12.0, height - self.STATUS_HEIGHT + 7.0, viewport_size, scale=0.56, color=self.theme.muted, align="right")
+        render_section_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.bottom_panel,
+            "Tile Palette",
+            y_offset=12.0,
+        )
+        render_status_bar(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.status,
+            "Nexora Standalone TileMap Editor",
+            status_height=self.STATUS_HEIGHT,
+        )
 
         self.layer_list.render(renderer, viewport_size, self.theme)
         self.add_layer_button.render(renderer, viewport_size, self.theme)
@@ -1058,48 +1076,47 @@ class StandaloneTileMapEditorScene(Scene):
             control.render(renderer, viewport_size, self.theme)
         layer = self._active_layer()
         if layer is not None:
-            draw_text(renderer, "TileMap", self.right_panel.x + 12.0, self.right_panel.y + 14.0, viewport_size, scale=0.76)
+            render_section_title(renderer, viewport_size, self.theme, self.right_panel, "TileMap")
             draw_text(renderer, f"Map: {self.document_name}\nGrid: {self.tilemap.width} x {self.tilemap.height} | {self.tilemap.tile_width} x {self.tilemap.tile_height}\nProjection: {self.tilemap.projection.value}\nLayers: {self.tilemap.layer_count}", self.right_panel.x + 12.0, self.right_panel.y + 42.0, viewport_size, scale=0.50, color=self.theme.muted)
-            draw_text(renderer, "Map Size", self.right_panel.x + 12.0, self.right_panel.y + 104.0, viewport_size, scale=0.62)
-            draw_text(renderer, "Width", self.right_panel.x + 12.0, self.right_panel.y + 122.0, viewport_size, scale=0.44, color=self.theme.muted)
-            draw_text(renderer, "Height", self.right_panel.x + self.right_panel.width / 2.0 + 4.0, self.right_panel.y + 122.0, viewport_size, scale=0.44, color=self.theme.muted)
-            draw_text(renderer, "Selected Layer", self.right_panel.x + 12.0, self.right_panel.y + 226.0, viewport_size, scale=0.62)
-            draw_text(renderer, "Name", self.right_panel.x + 12.0, self.right_panel.y + 246.0, viewport_size, scale=0.44, color=self.theme.muted)
-            draw_text(renderer, "Role", self.right_panel.x + 12.0, self.right_panel.y + 298.0, viewport_size, scale=0.44, color=self.theme.muted)
-            draw_text(renderer, "Render Layer", self.right_panel.x + 12.0, self.right_panel.y + 392.0, viewport_size, scale=0.44, color=self.theme.muted)
-            draw_text(renderer, "Opacity", self.right_panel.x + self.right_panel.width / 2.0 + 4.0, self.right_panel.y + 392.0, viewport_size, scale=0.44, color=self.theme.muted)
+            render_section_title(renderer, viewport_size, self.theme, self.right_panel, "Map Size", y_offset=104.0, scale=0.62)
+            render_form_label(renderer, viewport_size, self.theme, "Width", self.right_panel.x + 12.0, self.right_panel.y + 122.0)
+            render_form_label(renderer, viewport_size, self.theme, "Height", self.right_panel.x + self.right_panel.width / 2.0 + 4.0, self.right_panel.y + 122.0)
+            render_section_title(renderer, viewport_size, self.theme, self.right_panel, "Selected Layer", y_offset=226.0, scale=0.62)
+            render_form_label(renderer, viewport_size, self.theme, "Name", self.right_panel.x + 12.0, self.right_panel.y + 246.0)
+            render_form_label(renderer, viewport_size, self.theme, "Role", self.right_panel.x + 12.0, self.right_panel.y + 298.0)
+            render_form_label(renderer, viewport_size, self.theme, "Render Layer", self.right_panel.x + 12.0, self.right_panel.y + 392.0)
+            render_form_label(renderer, viewport_size, self.theme, "Opacity", self.right_panel.x + self.right_panel.width / 2.0 + 4.0, self.right_panel.y + 392.0)
         self._render_palette(renderer, viewport_size)
 
     def _render_browser(self, renderer, viewport_size) -> None:
-        width, height = viewport_size
-        draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport_size)
-        window = Rect(150.0, 76.0, width - 300.0, height - 152.0)
-        draw_rect(renderer, window, self.theme.panel, viewport_size, radius=6.0)
-        draw_outline(renderer, window, self.theme.border, viewport_size)
         title = "Choose Tileset Image" if self.browser_mode == "tileset" else "Open TileMap Asset"
         if self.browser_mode == "map_save":
             title = "Save TileMap Asset"
-        draw_text(renderer, title, window.x + 18.0, window.y + 16.0, viewport_size, scale=0.80)
-        draw_text(renderer, str(self.browser_path), window.x + 18.0, window.y + 50.0, viewport_size, scale=0.48, color=self.theme.muted)
-        self.browser_list.render(renderer, viewport_size, self.theme)
-        self.browser_cancel_button.render(renderer, viewport_size, self.theme)
-        if self.browser_mode == "map_save":
-            draw_text(renderer, "File name", window.x + 18.0, window.y + window.height - 72.0, viewport_size, scale=0.48, color=self.theme.muted)
-            self.browser_name.render(renderer, viewport_size, self.theme)
-            self.browser_save_button.render(renderer, viewport_size, self.theme)
+        render_file_browser_dialog(
+            renderer,
+            viewport_size,
+            self.theme,
+            title=title,
+            path=self.browser_path,
+            list_box=self.browser_list,
+            cancel_button=self.browser_cancel_button,
+            name_field=self.browser_name,
+            action_button=self.browser_save_button,
+            show_filename=self.browser_mode == "map_save",
+        )
 
     def _render_info_dialog(self, renderer, viewport_size) -> None:
-        width, height = viewport_size
-        draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport_size)
-        window = Rect(width / 2.0 - 330.0, height / 2.0 - 190.0, 660.0, 380.0)
-        draw_rect(renderer, window, self.theme.panel, viewport_size, radius=6.0)
-        draw_outline(renderer, window, self.theme.border, viewport_size)
-        draw_text(renderer, self.info_title, window.x + 22.0, window.y + 20.0, viewport_size, scale=0.86)
-        y = window.y + 78.0
-        for line in self.info_lines:
-            draw_text(renderer, line, window.x + 24.0, y, viewport_size, scale=0.64, color=self.theme.text)
-            y += 38.0
-        self.info_close_button.render(renderer, viewport_size, self.theme)
+        render_info_dialog(
+            renderer,
+            viewport_size,
+            self.theme,
+            title=self.info_title,
+            lines=self.info_lines,
+            close_button=self.info_close_button,
+            width=660.0,
+            height=380.0,
+            line_step=38.0,
+        )
 
     def _render_setup(self, renderer, viewport_size) -> None:
         width, height = viewport_size
@@ -1148,10 +1165,6 @@ class StandaloneTileMapEditorScene(Scene):
                 self._render_info_dialog(renderer, viewport_size)
             elif self.modal == "setup":
                 self._render_setup(renderer, viewport_size)
-
-    def _close_modal(self) -> None:
-        self.modal = None
-        self.status = "Ready"
 
 
 class StandaloneTileMapEditorApp(Game):

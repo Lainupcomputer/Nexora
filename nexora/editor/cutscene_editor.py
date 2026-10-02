@@ -22,21 +22,26 @@ from nexora.editor.ui import (
     Button,
     CheckBox,
     Dropdown,
+    FormLayout,
+    layout_equal_row,
+    layout_fixed_row,
     ListBox,
     Menu,
     Rect,
     TextField,
-    UITheme,
-    FileBrowserModel,
-    centered_rect,
-    close_other_menus,
+    StandaloneEditorScene,
     draw_outline,
     draw_rect,
     draw_text,
+    render_file_browser_dialog,
+    render_info_dialog,
+    render_document_title,
+    render_editor_shell,
+    render_form_label,
+    render_section_title,
+    render_status_bar,
     rgba,
-    sync_browser_list,
 )
-from nexora.scene import Scene
 
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
@@ -54,8 +59,10 @@ def _float(value: str, default: float = 0.0) -> float:
         return float(default)
 
 
-class CutsceneEditorScene(Scene):
+class CutsceneEditorScene(StandaloneEditorScene):
     """Renderer-backed cutscene editor with a timeline and live preview."""
+
+    MODAL_CLOSE_STATUS = "Ready"
 
     TOOLBAR_HEIGHT = 58.0
     STATUS_HEIGHT = 30.0
@@ -76,7 +83,6 @@ class CutsceneEditorScene(Scene):
         self.project_path = self.project_context.root
         self.requested_cutscene_path = Path(cutscene_path).expanduser() if cutscene_path is not None else None
         self.assets_root = self._asset_root()
-        self.theme = UITheme()
 
         self.asset = CutsceneAsset()
         self.player = CutscenePlayer(self.asset, on_event=self._event_fired)
@@ -84,12 +90,9 @@ class CutsceneEditorScene(Scene):
         self.document_name = "Untitled"
         self.dirty = False
         self.status = "Ready"
-        self.modal: str | None = None
         self.browser_mode = "open"
         self.browser_root = self.project_path
         self.browser_path = self.project_path
-        self.browser_entries: list[Path] = []
-        self.file_browser = FileBrowserModel()
         self.preview_texture = None
         self.preview_reference = ""
         self.preview_error = ""
@@ -194,9 +197,7 @@ class CutsceneEditorScene(Scene):
             "Help",
             [("Keyboard Shortcuts", self._show_help), ("About Cutscene Editor", self._show_about)],
         )
-        self.menus = [self.file_menu, self.cutscene_menu, self.view_menu, self.help_menu]
-        for menu in self.menus:
-            menu.on_open = self._menu_opened
+        self._set_menus([self.file_menu, self.cutscene_menu, self.view_menu, self.help_menu])
 
         self.new_cutscene()
         if cutscene_path is not None:
@@ -208,9 +209,6 @@ class CutsceneEditorScene(Scene):
 
     def _asset_root(self) -> Path:
         return self.project_context.asset_root_for(self.requested_cutscene_path)
-
-    def _asset_relative(self, path: Path) -> str:
-        return self.project_context.relative_asset(path, root=self.assets_root)
 
     def _resolve_asset_path(self, value: str | Path) -> Path:
         return self.project_context.resolve_asset(
@@ -903,11 +901,8 @@ class CutsceneEditorScene(Scene):
     # ------------------------------------------------------------------
 
     def _open_browser(self, mode: str) -> None:
-        self.modal = "browser"
-        self.browser_mode = mode
         self.browser_name.visible = mode == "save"
         self.browser_action_button.visible = mode == "save"
-        self.browser_root = self.project_path
         if mode in {"image", "audio"}:
             start = self.assets_root
         elif mode == "save" and (self.project_path / "cutscenes").is_dir():
@@ -918,20 +913,16 @@ class CutsceneEditorScene(Scene):
             "image": IMAGE_EXTENSIONS,
             "audio": AUDIO_EXTENSIONS,
         }.get(mode, (CUTSCENE_ASSET_SUFFIX,))
-        self.file_browser.open(self.project_path, start=start, extensions=extensions)
-        self.browser_path = self.file_browser.path
-        self.browser_name.set_text(f"{self.document_name}{CUTSCENE_ASSET_SUFFIX}" if mode == "save" else "")
-        self._refresh_browser()
-
-    def _refresh_browser(self) -> None:
-        self.file_browser.refresh()
-        self.browser_path = self.file_browser.path
-        self.browser_entries = list(self.file_browser.entries)
-        sync_browser_list(self.file_browser, self.browser_list)
+        self._open_file_browser(
+            mode,
+            root=self.project_path,
+            start=start,
+            extensions=extensions,
+            filename=f"{self.document_name}{CUTSCENE_ASSET_SUFFIX}" if mode == "save" else "",
+        )
 
     def _browser_selected(self, index: int) -> None:
-        path = self.file_browser.select(index)
-        self._refresh_browser()
+        path = self._select_browser_entry(index)
         if path is None:
             return
         if self.browser_mode == "open":
@@ -961,30 +952,25 @@ class CutsceneEditorScene(Scene):
         if track is not None:
             self._open_browser("audio" if track.track_type == "audio" else "image")
 
-    def _close_modal(self) -> None:
-        self.modal = None
-        self.status = "Ready"
-
-    def _menu_opened(self, opened: Menu) -> None:
-        close_other_menus(self.menus, opened)
-
     def _show_help(self) -> None:
-        self.modal = "info"
-        self.info_title = "Cutscene Editor Help"
-        self.info_lines = (
-            "Space: Play / pause     Left click timeline: move playhead",
-            "Add Keyframe: create a value at the current playhead time",
-            "Image tracks use project-relative paths inside the assets folder.",
-            "Events store callback IDs and parameters, never Python functions.",
+        self._open_info_dialog(
+            "Cutscene Editor Help",
+            (
+                "Space: Play / pause     Left click timeline: move playhead",
+                "Add Keyframe: create a value at the current playhead time",
+                "Image tracks use project-relative paths inside the assets folder.",
+                "Events store callback IDs and parameters, never Python functions.",
+            ),
         )
 
     def _show_about(self) -> None:
-        self.modal = "info"
-        self.info_title = "About Nexora Cutscene Editor"
-        self.info_lines = (
-            "Data-driven cinematic authoring for Nexora Engine.",
-            "Cutscenes are stored as signed .ncutscene assets.",
-            "Runtime playback uses the same timeline data as the editor.",
+        self._open_info_dialog(
+            "About Nexora Cutscene Editor",
+            (
+                "Data-driven cinematic authoring for Nexora Engine.",
+                "Cutscenes are stored as signed .ncutscene assets.",
+                "Runtime playback uses the same timeline data as the editor.",
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -1005,18 +991,37 @@ class CutsceneEditorScene(Scene):
         self.viewport = Rect(self.LEFT_WIDTH, self.TOOLBAR_HEIGHT, width - self.LEFT_WIDTH - self.RIGHT_WIDTH, content_height)
         self.timeline = Rect(0.0, timeline_top, width, self.TIMELINE_HEIGHT)
 
-        self.file_menu.rect = Rect(12.0, 9.0, 82.0, 40.0)
-        self.cutscene_menu.rect = Rect(100.0, 9.0, 120.0, 40.0)
-        self.view_menu.rect = Rect(226.0, 9.0, 88.0, 40.0)
-        self.help_menu.rect = Rect(320.0, 9.0, 82.0, 40.0)
+        layout_fixed_row(
+            (self.file_menu, self.cutscene_menu, self.view_menu, self.help_menu),
+            (82.0, 120.0, 88.0, 82.0),
+            x=12.0,
+            y=9.0,
+            height=40.0,
+            gap=6.0,
+        )
 
         self.track_list.rect = Rect(self.left_panel.x + 10.0, self.left_panel.y + 48.0, self.left_panel.width - 20.0, self.left_panel.height - 114.0)
-        self.add_track_button.rect = Rect(self.left_panel.x + 10.0, self.left_panel.y + self.left_panel.height - 58.0, (self.left_panel.width - 25.0) / 2.0, 38.0)
-        self.remove_track_button.rect = Rect(self.left_panel.x + self.left_panel.width / 2.0 + 2.5, self.left_panel.y + self.left_panel.height - 58.0, (self.left_panel.width - 25.0) / 2.0, 38.0)
+        layout_equal_row(
+            (self.add_track_button, self.remove_track_button),
+            x=self.left_panel.x + 10.0,
+            y=self.left_panel.y + self.left_panel.height - 58.0,
+            width=self.left_panel.width - 20.0,
+            height=38.0,
+            gap=5.0,
+        )
 
         right_x = self.right_panel.x + 14.0
         right_width = self.right_panel.width - 28.0
-        half = (right_width - 10.0) / 2.0
+        right_form = FormLayout(
+            x=right_x,
+            y=self.right_panel.y,
+            width=right_width,
+            columns=2,
+            column_gap=10.0,
+            control_height=34.0,
+            label_gap=0.0,
+        )
+        half = right_form.column_width
         self.document_field.rect = Rect(right_x, self.right_panel.y + 54.0, right_width, 34.0)
         self.duration_field.rect = Rect(right_x, self.right_panel.y + 122.0, half, 34.0)
         self.fps_field.rect = Rect(right_x + half + 10.0, self.right_panel.y + 122.0, half, 34.0)
@@ -1035,28 +1040,23 @@ class CutsceneEditorScene(Scene):
 
         button_y = self.timeline.y + 5.0
         button_x = self.timeline.x + self.timeline_label_width + 10.0
-        self.play_button.rect = Rect(button_x, button_y, 78.0, 32.0)
-        self.pause_button.rect = Rect(button_x + 84.0, button_y, 78.0, 32.0)
-        self.stop_button.rect = Rect(button_x + 168.0, button_y, 78.0, 32.0)
-        self.add_keyframe_button.rect = Rect(button_x + 252.0, button_y, 132.0, 32.0)
-        self.delete_keyframe_button.rect = Rect(button_x + 392.0, button_y, 142.0, 32.0)
-        self.insert_image_button.rect = Rect(button_x + 542.0, button_y, 124.0, 32.0)
-        self.camera_keyframe_button.rect = Rect(button_x + 676.0, button_y, 142.0, 32.0)
+        layout_fixed_row(
+            (
+                self.play_button,
+                self.pause_button,
+                self.stop_button,
+                self.add_keyframe_button,
+                self.delete_keyframe_button,
+                self.insert_image_button,
+                self.camera_keyframe_button,
+            ),
+            (78.0, 78.0, 78.0, 132.0, 142.0, 124.0, 142.0),
+            x=button_x,
+            y=button_y,
+            height=32.0,
+            gap=(6.0, 6.0, 6.0, 8.0, 8.0, 10.0),
+        )
         return width, height
-
-    def _focus_fields(self, fields: list[TextField], input_manager, mouse_x: float, mouse_y: float) -> None:
-        if not input_manager.mouse_pressed("left"):
-            return
-        clicked = next((field for field in fields if field.visible and field.rect.contains(mouse_x, mouse_y)), None)
-        for field in fields:
-            if field is not clicked:
-                field.blur(input_manager)
-
-    def _update_controls(self, controls: list, input_manager, mouse_x: float, mouse_y: float) -> None:
-        fields = [control for control in controls if isinstance(control, TextField)]
-        self._focus_fields(fields, input_manager, mouse_x, mouse_y)
-        for control in controls:
-            control.update(input_manager, mouse_x, mouse_y)
 
     def _timeline_time_from_x(self, x: float) -> float:
         width = max(1.0, self.timeline.width - self.timeline_label_width - 18.0)
@@ -1203,39 +1203,73 @@ class CutsceneEditorScene(Scene):
 
     def _render_main_ui(self, renderer, viewport_size: tuple[float, float]) -> None:
         width, height = viewport_size
-        draw_rect(renderer, Rect(0.0, 0.0, width, self.TOOLBAR_HEIGHT), self.theme.panel, viewport_size)
-        draw_rect(renderer, self.left_panel, self.theme.panel, viewport_size)
-        draw_rect(renderer, self.right_panel, self.theme.panel, viewport_size)
-        draw_rect(renderer, self.timeline, self.theme.panel_dark, viewport_size)
-        draw_rect(renderer, Rect(0.0, height - self.STATUS_HEIGHT, width, self.STATUS_HEIGHT), self.theme.panel, viewport_size)
-        for rect in (Rect(0, 0, width, self.TOOLBAR_HEIGHT), self.left_panel, self.viewport, self.right_panel, self.timeline):
-            draw_outline(renderer, rect, self.theme.border, viewport_size)
-
-        draw_text(renderer, f"{self.document_name}{' *' if self.dirty else ''}", width - 16.0, 18.0, viewport_size, scale=0.64, color=self.theme.muted, align="right")
-        draw_text(renderer, "Tracks", self.left_panel.x + 12.0, self.left_panel.y + 14.0, viewport_size, scale=0.78)
-        draw_text(renderer, "Live Preview", self.viewport.x + 12.0, self.viewport.y + 14.0, viewport_size, scale=0.78)
+        render_editor_shell(
+            renderer,
+            viewport_size,
+            self.theme,
+            toolbar_height=self.TOOLBAR_HEIGHT,
+            status_height=self.STATUS_HEIGHT,
+            panels=(
+                (self.left_panel, self.theme.panel),
+                (self.right_panel, self.theme.panel),
+                (self.timeline, self.theme.panel_dark),
+            ),
+            outline_rects=(self.left_panel, self.viewport, self.right_panel, self.timeline),
+        )
+        render_document_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.document_name,
+            dirty=self.dirty,
+            scale=0.64,
+        )
+        render_section_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.left_panel,
+            "Tracks",
+            scale=0.78,
+        )
+        render_section_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.viewport,
+            "Live Preview",
+            scale=0.78,
+        )
         draw_text(renderer, f"Time {self.current_time:.2f}s / {self.asset.duration:.2f}s", self.viewport.x + self.viewport.width - 12.0, self.viewport.y + 16.0, viewport_size, scale=0.50, color=self.theme.muted, align="right")
-        draw_text(renderer, "Cutscene Properties", self.right_panel.x + 14.0, self.right_panel.y + 14.0, viewport_size, scale=0.78)
-        draw_text(renderer, "Name", self.right_panel.x + 14.0, self.right_panel.y + 40.0, viewport_size, scale=0.44, color=self.theme.muted)
-        draw_text(renderer, "Duration", self.right_panel.x + 14.0, self.right_panel.y + 108.0, viewport_size, scale=0.44, color=self.theme.muted)
-        draw_text(renderer, "FPS", self.right_panel.x + self.right_panel.width / 2.0 + 5.0, self.right_panel.y + 108.0, viewport_size, scale=0.44, color=self.theme.muted)
-        draw_text(renderer, "Selected Track", self.right_panel.x + 14.0, self.right_panel.y + 164.0, viewport_size, scale=0.64)
-        draw_text(renderer, "Track Name", self.right_panel.x + 14.0, self.right_panel.y + 190.0, viewport_size, scale=0.38, color=self.theme.muted)
-        draw_text(renderer, "Track Type", self.right_panel.x + 14.0, self.right_panel.y + 246.0, viewport_size, scale=0.38, color=self.theme.muted)
-        draw_text(renderer, "Selected Keyframe", self.right_panel.x + 14.0, self.right_panel.y + 344.0, viewport_size, scale=0.64)
-        draw_text(renderer, "Time", self.right_panel.x + 14.0, self.right_panel.y + 372.0, viewport_size, scale=0.38, color=self.theme.muted)
-        draw_text(renderer, "Interpolation", self.right_panel.x + self.right_panel.width / 2.0 + 5.0, self.right_panel.y + 372.0, viewport_size, scale=0.38, color=self.theme.muted)
-        draw_text(renderer, "Value / Asset", self.right_panel.x + 14.0, self.right_panel.y + 428.0, viewport_size, scale=0.38, color=self.theme.muted)
+        render_section_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.right_panel,
+            "Cutscene Properties",
+            x_offset=14.0,
+            scale=0.78,
+        )
+        render_form_label(renderer, viewport_size, self.theme, "Name", self.right_panel.x + 14.0, self.right_panel.y + 40.0)
+        render_form_label(renderer, viewport_size, self.theme, "Duration", self.right_panel.x + 14.0, self.right_panel.y + 108.0)
+        render_form_label(renderer, viewport_size, self.theme, "FPS", self.right_panel.x + self.right_panel.width / 2.0 + 5.0, self.right_panel.y + 108.0)
+        render_section_title(renderer, viewport_size, self.theme, self.right_panel, "Selected Track", x_offset=14.0, y_offset=164.0, scale=0.64)
+        render_form_label(renderer, viewport_size, self.theme, "Track Name", self.right_panel.x + 14.0, self.right_panel.y + 190.0, scale=0.38)
+        render_form_label(renderer, viewport_size, self.theme, "Track Type", self.right_panel.x + 14.0, self.right_panel.y + 246.0, scale=0.38)
+        render_section_title(renderer, viewport_size, self.theme, self.right_panel, "Selected Keyframe", x_offset=14.0, y_offset=344.0, scale=0.64)
+        render_form_label(renderer, viewport_size, self.theme, "Time", self.right_panel.x + 14.0, self.right_panel.y + 372.0, scale=0.38)
+        render_form_label(renderer, viewport_size, self.theme, "Interpolation", self.right_panel.x + self.right_panel.width / 2.0 + 5.0, self.right_panel.y + 372.0, scale=0.38)
+        render_form_label(renderer, viewport_size, self.theme, "Value / Asset", self.right_panel.x + 14.0, self.right_panel.y + 428.0, scale=0.38)
         track = self._active_track()
         track_type = track.track_type if track else ""
         if track_type == "camera":
-            draw_text(renderer, "X", self.right_panel.x + 14.0, self.right_panel.y + 484.0, viewport_size, scale=0.44, color=self.theme.muted)
-            draw_text(renderer, "Y", self.right_panel.x + self.right_panel.width / 2.0 + 5.0, self.right_panel.y + 484.0, viewport_size, scale=0.44, color=self.theme.muted)
-            draw_text(renderer, "Zoom", self.right_panel.x + 14.0, self.right_panel.y + 528.0, viewport_size, scale=0.44, color=self.theme.muted)
+            render_form_label(renderer, viewport_size, self.theme, "X", self.right_panel.x + 14.0, self.right_panel.y + 484.0)
+            render_form_label(renderer, viewport_size, self.theme, "Y", self.right_panel.x + self.right_panel.width / 2.0 + 5.0, self.right_panel.y + 484.0)
+            render_form_label(renderer, viewport_size, self.theme, "Zoom", self.right_panel.x + 14.0, self.right_panel.y + 528.0)
         elif track_type == "fade":
-            draw_text(renderer, "Alpha", self.right_panel.x + self.right_panel.width / 2.0 + 5.0, self.right_panel.y + 528.0, viewport_size, scale=0.44, color=self.theme.muted)
+            render_form_label(renderer, viewport_size, self.theme, "Alpha", self.right_panel.x + self.right_panel.width / 2.0 + 5.0, self.right_panel.y + 528.0)
         elif track_type == "audio":
-            draw_text(renderer, "Volume", self.right_panel.x + 14.0, self.right_panel.y + 484.0, viewport_size, scale=0.44, color=self.theme.muted)
+            render_form_label(renderer, viewport_size, self.theme, "Volume", self.right_panel.x + 14.0, self.right_panel.y + 484.0)
 
         self.track_list.render(renderer, viewport_size, self.theme)
         self.add_track_button.render(renderer, viewport_size, self.theme)
@@ -1265,8 +1299,14 @@ class CutsceneEditorScene(Scene):
         for menu in self.menus:
             menu.render(renderer, viewport_size, self.theme)
 
-        draw_text(renderer, self.status, 12.0, height - self.STATUS_HEIGHT + 7.0, viewport_size, scale=0.56, color=self.theme.muted)
-        draw_text(renderer, "Nexora Cutscene Editor", width - 12.0, height - self.STATUS_HEIGHT + 7.0, viewport_size, scale=0.56, color=self.theme.muted, align="right")
+        render_status_bar(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.status,
+            "Nexora Cutscene Editor",
+            status_height=self.STATUS_HEIGHT,
+        )
 
     def _render_timeline(self, renderer, viewport_size: tuple[float, float]) -> None:
         self.play_button.render(renderer, viewport_size, self.theme)
@@ -1301,38 +1341,38 @@ class CutsceneEditorScene(Scene):
         renderer.line(*self._renderer_point(playhead_x, self.timeline.y + self.timeline_header_height), *self._renderer_point(playhead_x, self.timeline.y + self.timeline.height - 8.0), width=2.0, color=rgba(self.theme.accent))
 
     def _render_browser(self, renderer, viewport_size: tuple[float, float]) -> None:
-        width, height = viewport_size
-        draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport_size)
-        window = Rect(150.0, 70.0, width - 300.0, height - 140.0)
-        draw_rect(renderer, window, self.theme.panel, viewport_size, radius=6.0)
-        draw_outline(renderer, window, self.theme.border, viewport_size)
-        titles = {"open": "Open Cutscene", "save": "Save Cutscene As", "image": "Choose Image Asset", "audio": "Choose Audio Asset"}
-        draw_text(renderer, titles.get(self.browser_mode, "Choose Asset"), window.x + 18.0, window.y + 16.0, viewport_size, scale=0.80)
-        draw_text(renderer, str(self.browser_path), window.x + 18.0, window.y + 50.0, viewport_size, scale=0.48, color=self.theme.muted)
-        self.browser_list.rect = Rect(window.x + 18.0, window.y + 78.0, window.width - 36.0, window.height - 150.0)
-        self.browser_list.render(renderer, viewport_size, self.theme)
-        self.browser_cancel_button.rect = Rect(window.x + window.width - 126.0, window.y + window.height - 48.0, 108.0, 32.0)
-        self.browser_cancel_button.render(renderer, viewport_size, self.theme)
-        if self.browser_mode == "save":
-            draw_text(renderer, "File name", window.x + 18.0, window.y + window.height - 70.0, viewport_size, scale=0.46, color=self.theme.muted)
-            self.browser_name.rect = Rect(window.x + 86.0, window.y + window.height - 78.0, window.width - 350.0, 34.0)
-            self.browser_name.render(renderer, viewport_size, self.theme)
-            self.browser_action_button.rect = Rect(window.x + window.width - 244.0, window.y + window.height - 48.0, 108.0, 32.0)
-            self.browser_action_button.render(renderer, viewport_size, self.theme)
+        titles = {
+            "open": "Open Cutscene",
+            "save": "Save Cutscene As",
+            "image": "Choose Image Asset",
+            "audio": "Choose Audio Asset",
+        }
+        render_file_browser_dialog(
+            renderer,
+            viewport_size,
+            self.theme,
+            title=titles.get(self.browser_mode, "Choose Asset"),
+            path=self.browser_path,
+            list_box=self.browser_list,
+            cancel_button=self.browser_cancel_button,
+            name_field=self.browser_name,
+            action_button=self.browser_action_button,
+            show_filename=self.browser_mode == "save",
+            margin_y=70.0,
+        )
 
     def _render_info(self, renderer, viewport_size: tuple[float, float]) -> None:
-        width, height = viewport_size
-        draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport_size)
-        window = centered_rect(viewport_size, 720.0, 340.0)
-        draw_rect(renderer, window, self.theme.panel, viewport_size, radius=6.0)
-        draw_outline(renderer, window, self.theme.border, viewport_size)
-        draw_text(renderer, self.info_title, window.x + 22.0, window.y + 20.0, viewport_size, scale=0.86)
-        y = window.y + 82.0
-        for line in self.info_lines:
-            draw_text(renderer, line, window.x + 24.0, y, viewport_size, scale=0.60, color=self.theme.text)
-            y += 40.0
-        self.info_close_button.rect = Rect(window.x + window.width - 126.0, window.y + window.height - 50.0, 108.0, 32.0)
-        self.info_close_button.render(renderer, viewport_size, self.theme)
+        render_info_dialog(
+            renderer,
+            viewport_size,
+            self.theme,
+            title=self.info_title,
+            lines=self.info_lines,
+            close_button=self.info_close_button,
+            width=720.0,
+            height=340.0,
+            line_step=40.0,
+        )
 
     def render(self, interpolation: float) -> None:
         del interpolation

@@ -12,21 +12,27 @@ from nexora.editor.ui import (
     CategorizedListBox,
     CheckBox,
     Dropdown,
+    FormLayout,
     ListBox,
     Menu,
     Rect,
     TextField,
-    UITheme,
-    FileBrowserModel,
+    StandaloneEditorScene,
     centered_rect,
-    close_other_menus,
     draw_outline,
     draw_rect,
     draw_text,
-    sync_browser_list,
+    render_file_browser_dialog,
+    render_info_dialog,
+    layout_equal_row,
+    layout_fixed_row,
+    render_document_title,
+    render_editor_shell,
+    render_form_label,
+    render_section_title,
+    render_status_bar,
 )
 from nexora.items import ITEM_ASSET_SUFFIX, ItemAsset, ItemDefinition
-from nexora.scene import Scene
 
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
@@ -44,13 +50,15 @@ def _integer(value: str, default: int = 0) -> int:
         return int(default)
 
 
-class ItemEditorScene(Scene):
+class ItemEditorScene(StandaloneEditorScene):
     """Renderer-backed item authoring scene with a custom standalone UI."""
 
     TOOLBAR_HEIGHT = 58.0
     STATUS_HEIGHT = 30.0
     LEFT_WIDTH = 300.0
     PREVIEW_WIDTH = 320.0
+    CONTROL_STOP_ON_HANDLED = True
+    CONTROL_MANAGE_TEXT_FOCUS = False
 
     def __init__(
         self,
@@ -65,17 +73,13 @@ class ItemEditorScene(Scene):
         self.project_path = self.project_context.root
         self.assets_root = self.project_context.assets_root
         self.items_root = self.project_context.items_root
-        self.theme = UITheme()
         self.item = ItemDefinition()
         self.document_path: Path | None = None
         self.dirty = False
         self.status = "Ready"
-        self.modal: str | None = None
         self.browser_mode = "open"
         self.browser_root = self.project_path
         self.browser_path = self._item_start_path()
-        self.browser_entries: list[Path] = []
-        self.file_browser = FileBrowserModel()
         self.icon_texture = None
         self._layout_size = (-1.0, -1.0)
         self._loading = False
@@ -210,12 +214,8 @@ class ItemEditorScene(Scene):
             ("Validate Item", self.validate_item),
         ])
         self.help_menu = Menu(Rect(0, 0, 1, 1), "Help", [("About Item Assets", self._show_about)])
-        self.menus = [self.file_menu, self.item_menu, self.help_menu]
-        for menu in self.menus:
-            menu.on_open = self._menu_opened
+        self._set_menus([self.file_menu, self.item_menu, self.help_menu])
 
-        self.info_title = ""
-        self.info_lines: tuple[str, ...] = ()
         self.new_item()
         self.refresh_item_list()
         if item_path is not None:
@@ -225,17 +225,8 @@ class ItemEditorScene(Scene):
     # Project and item paths
     # ------------------------------------------------------------------
 
-    def _asset_root(self) -> Path:
-        return self.project_context.assets_root
-
     def _item_start_path(self) -> Path:
         return self.project_context.items_root if self.items_root.is_dir() else self.project_path
-
-    def _asset_relative(self, path: Path) -> str:
-        return self.project_context.relative_asset(path, root=self.assets_root)
-
-    def _asset_path(self, value: str | Path) -> Path:
-        return self.project_context.resolve_asset(value)
 
     def _resolve_requested_path(self, value: str | Path) -> Path:
         path = Path(value).expanduser()
@@ -646,29 +637,22 @@ class ItemEditorScene(Scene):
             self._load_item_path(entries[index])
 
     def _open_browser(self, mode: str) -> None:
-        self.modal = "browser"
-        self.browser_mode = mode
-        self.browser_root = self.project_path
         start = self._item_start_path() if mode in {"open", "save"} else self.assets_root
         extensions = (
             (ITEM_ASSET_SUFFIX,)
             if mode in {"open", "save"}
             else IMAGE_EXTENSIONS
         )
-        self.file_browser.open(self.project_path, start=start, extensions=extensions)
-        self.browser_path = self.file_browser.path
-        self.browser_name.set_text(f"{self.item.item_id}{ITEM_ASSET_SUFFIX}" if mode == "save" else "")
-        self._refresh_browser()
-
-    def _refresh_browser(self) -> None:
-        self.file_browser.refresh()
-        self.browser_path = self.file_browser.path
-        self.browser_entries = list(self.file_browser.entries)
-        sync_browser_list(self.file_browser, self.browser_list)
+        self._open_file_browser(
+            mode,
+            root=self.project_path,
+            start=start,
+            extensions=extensions,
+            filename=f"{self.item.item_id}{ITEM_ASSET_SUFFIX}" if mode == "save" else "",
+        )
 
     def _browser_selected(self, index: int) -> None:
-        path = self.file_browser.select(index)
-        self._refresh_browser()
+        path = self._select_browser_entry(index)
         if path is None:
             return
         if self.browser_mode == "icon":
@@ -715,17 +699,15 @@ class ItemEditorScene(Scene):
     # UI and rendering
     # ------------------------------------------------------------------
 
-    def _menu_opened(self, opened: Menu) -> None:
-        close_other_menus(self.menus, opened)
-
     def _show_about(self) -> None:
-        self.info_title = "Nexora Item Assets"
-        self.info_lines = (
-            "Items are saved as versioned .nitem resources.",
-            "The same data can be loaded by inventory, equipment, crafting and loot systems.",
-            "Use File > Save As to create an item in the project items folder.",
+        self._open_info_dialog(
+            "Nexora Item Assets",
+            (
+                "Items are saved as versioned .nitem resources.",
+                "The same data can be loaded by inventory, equipment, crafting and loot systems.",
+                "Use File > Save As to create an item in the project items folder.",
+            ),
         )
-        self.modal = "info"
 
     def _layout(self) -> tuple[float, float]:
         width = float(self.game.renderer.width)
@@ -745,29 +727,46 @@ class ItemEditorScene(Scene):
         return width, height
 
     def _layout_controls(self, width: float, height: float) -> None:
-        self.file_menu.rect = Rect(16.0, 9.0, 82.0, 40.0)
-        self.item_menu.rect = Rect(105.0, 9.0, 88.0, 40.0)
-        self.help_menu.rect = Rect(216.0, 9.0, 86.0, 40.0)
+        layout_fixed_row(
+            (self.file_menu, self.item_menu, self.help_menu),
+            (82.0, 88.0, 86.0),
+            x=16.0,
+            y=9.0,
+            height=40.0,
+            gap=(7.0, 23.0),
+        )
         self.item_search.rect = Rect(self.left_panel.x + 12.0, self.left_panel.y + 46.0, self.left_panel.width - 24.0, 34.0)
         self.item_list.rect = Rect(self.left_panel.x + 12.0, self.left_panel.y + 88.0, self.left_panel.width - 24.0, max(120.0, self.left_panel.height - 152.0))
         button_y = self.left_panel.y + self.left_panel.height - 52.0
-        button_width = (self.left_panel.width - 36.0) / 3.0
-        self.new_button.rect = Rect(self.left_panel.x + 12.0, button_y, button_width, 32.0)
-        self.open_button.rect = Rect(self.new_button.rect.x + button_width + 6.0, button_y, button_width, 32.0)
-        self.save_button.rect = Rect(self.open_button.rect.x + button_width + 6.0, button_y, button_width, 32.0)
+        layout_equal_row(
+            (self.new_button, self.open_button, self.save_button),
+            x=self.left_panel.x + 12.0,
+            y=button_y,
+            width=self.left_panel.width - 24.0,
+            height=32.0,
+            gap=6.0,
+        )
 
         self.icon_preview = Rect(self.preview_panel.x + 36.0, self.preview_panel.y + 74.0, min(self.preview_panel.width - 72.0, 248.0), min(self.preview_panel.width - 72.0, 248.0))
         self.icon_button.rect = Rect(self.preview_panel.x + 36.0, self.icon_preview.y + self.icon_preview.height + 18.0, self.icon_preview.width, 34.0)
 
         x = self.form_panel.x + 16.0
         inner = max(240.0, self.form_panel.width - 32.0)
-        gap = 10.0
-        half = max(110.0, (inner - gap) / 2.0)
-        field_height = 34.0
-        right = x + half + gap
-
         content_top = self.form_panel.y + 118.0
-        row = 52.0
+        form = FormLayout(
+            x=x,
+            y=content_top,
+            width=inner,
+            columns=2,
+            column_gap=10.0,
+            row_step=52.0,
+            control_height=34.0,
+            label_gap=18.0,
+        )
+        half = max(110.0, form.column_width)
+        right = x + half + form.column_gap
+        field_height = form.control_height
+        row = form.row_step
         self._tab_layouts = {
             "General": [
                 ("Item ID", "id", x, content_top, half),
@@ -894,11 +893,6 @@ class ItemEditorScene(Scene):
         info_window = centered_rect((width, height), 660.0, 340.0)
         self.info_close_button.rect = Rect(info_window.x + info_window.width - 126.0, info_window.y + info_window.height - 52.0, 108.0, 32.0)
 
-    def _update_controls(self, controls: list, mouse_x: float, mouse_y: float) -> None:
-        for control in controls:
-            if control.update(self.game.input, mouse_x, mouse_y):
-                break
-
     def update(self, delta_time: float) -> None:
         del delta_time
         width, height = self._layout()
@@ -938,25 +932,22 @@ class ItemEditorScene(Scene):
         self._update_controls(controls, mouse_x, mouse_y)
         del width, height
 
-    def _draw_label(self, renderer, text: str, x: float, y: float, viewport_size: tuple[float, float]) -> None:
-        draw_text(renderer, text, x, y, viewport_size, scale=0.44, color=self.theme.muted)
-
     def _render_form(self, renderer, viewport_size: tuple[float, float]) -> None:
         for label, name, field_x, label_y, _field_width in self._tab_layouts.get(self.active_tab, ()):
-            self._draw_label(renderer, label, field_x, label_y, viewport_size)
+            render_form_label(renderer, viewport_size, self.theme, label, field_x, label_y)
             self.fields[name].render(renderer, viewport_size, self.theme)
         if self.active_tab == "General":
-            self._draw_label(renderer, "Category", self.category.rect.x, self.category.rect.y - 18.0, viewport_size)
+            render_form_label(renderer, viewport_size, self.theme, "Category", self.category.rect.x, self.category.rect.y - 18.0)
             self.category.render(renderer, viewport_size, self.theme)
-            self._draw_label(renderer, "Rarity", self.rarity.rect.x, self.rarity.rect.y - 18.0, viewport_size)
+            render_form_label(renderer, viewport_size, self.theme, "Rarity", self.rarity.rect.x, self.rarity.rect.y - 18.0)
             self.rarity.render(renderer, viewport_size, self.theme)
         elif self.active_tab == "Gameplay":
             self.usable.render(renderer, viewport_size, self.theme)
             self.equippable.render(renderer, viewport_size, self.theme)
         elif self.active_tab == "Use":
-            self._draw_label(renderer, "Use Action", self.use_action.rect.x, self.use_action.rect.y - 18.0, viewport_size)
+            render_form_label(renderer, viewport_size, self.theme, "Use Action", self.use_action.rect.x, self.use_action.rect.y - 18.0)
             self.use_action.render(renderer, viewport_size, self.theme)
-            self._draw_label(renderer, "Target", self.use_target.rect.x, self.use_target.rect.y - 18.0, viewport_size)
+            render_form_label(renderer, viewport_size, self.theme, "Target", self.use_target.rect.x, self.use_target.rect.y - 18.0)
             self.use_target.render(renderer, viewport_size, self.theme)
         elif self.active_tab == "Shop":
             self.can_buy.render(renderer, viewport_size, self.theme)
@@ -964,20 +955,52 @@ class ItemEditorScene(Scene):
 
     def _render_main(self, renderer, viewport_size: tuple[float, float]) -> None:
         width, height = viewport_size
-        draw_rect(renderer, Rect(0, 0, width, self.TOOLBAR_HEIGHT), self.theme.panel, viewport_size)
-        draw_rect(renderer, self.left_panel, self.theme.panel, viewport_size)
-        draw_rect(renderer, self.preview_panel, self.theme.panel_dark, viewport_size)
-        draw_rect(renderer, self.form_panel, self.theme.panel, viewport_size)
-        draw_rect(renderer, Rect(0, height - self.STATUS_HEIGHT, width, self.STATUS_HEIGHT), self.theme.panel, viewport_size)
-        for rect in (Rect(0, 0, width, self.TOOLBAR_HEIGHT), self.left_panel, self.preview_panel, self.form_panel):
-            draw_outline(renderer, rect, self.theme.border, viewport_size)
-
-        draw_text(renderer, f"{self.item.name}{' *' if self.dirty else ''}", width - 16.0, 18.0, viewport_size, scale=0.62, color=self.theme.muted, align="right")
-        draw_text(renderer, "Items", self.left_panel.x + 12.0, self.left_panel.y + 14.0, viewport_size, scale=0.76)
-        draw_text(renderer, "Preview", self.preview_panel.x + 16.0, self.preview_panel.y + 14.0, viewport_size, scale=0.76)
-        draw_text(renderer, "Item Properties", self.form_panel.x + 16.0, self.form_panel.y + 14.0, viewport_size, scale=0.76)
-        draw_text(renderer, self.status, 12.0, height - self.STATUS_HEIGHT + 7.0, viewport_size, scale=0.56, color=self.theme.muted)
-        draw_text(renderer, "Nexora Item Editor", width - 12.0, height - self.STATUS_HEIGHT + 7.0, viewport_size, scale=0.56, color=self.theme.muted, align="right")
+        render_editor_shell(
+            renderer,
+            viewport_size,
+            self.theme,
+            toolbar_height=self.TOOLBAR_HEIGHT,
+            status_height=self.STATUS_HEIGHT,
+            panels=(
+                (self.left_panel, self.theme.panel),
+                (self.preview_panel, self.theme.panel_dark),
+                (self.form_panel, self.theme.panel),
+            ),
+            outline_rects=(self.left_panel, self.preview_panel, self.form_panel),
+        )
+        render_document_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.item.name,
+            dirty=self.dirty,
+            scale=0.62,
+        )
+        render_section_title(renderer, viewport_size, self.theme, self.left_panel, "Items")
+        render_section_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.preview_panel,
+            "Preview",
+            x_offset=16.0,
+        )
+        render_section_title(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.form_panel,
+            "Item Properties",
+            x_offset=16.0,
+        )
+        render_status_bar(
+            renderer,
+            viewport_size,
+            self.theme,
+            self.status,
+            "Nexora Item Editor",
+            status_height=self.STATUS_HEIGHT,
+        )
 
         self.item_search.render(renderer, viewport_size, self.theme)
         self.item_list.render(renderer, viewport_size, self.theme)
@@ -1002,33 +1025,36 @@ class ItemEditorScene(Scene):
         self._render_form(renderer, viewport_size)
 
     def _render_browser(self, renderer, viewport_size: tuple[float, float]) -> None:
-        width, height = viewport_size
-        draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport_size)
-        window = Rect(150.0, 76.0, width - 300.0, height - 152.0)
-        draw_rect(renderer, window, self.theme.panel, viewport_size, radius=6.0)
-        draw_outline(renderer, window, self.theme.border, viewport_size)
-        title = {"open": "Open Item", "save": "Save Item As", "icon": "Choose Item Icon"}[self.browser_mode]
-        draw_text(renderer, title, window.x + 18.0, window.y + 16.0, viewport_size, scale=0.80)
-        draw_text(renderer, str(self.browser_path), window.x + 18.0, window.y + 50.0, viewport_size, scale=0.48, color=self.theme.muted)
-        self.browser_list.render(renderer, viewport_size, self.theme)
-        self.browser_cancel_button.render(renderer, viewport_size, self.theme)
-        if self.browser_mode == "save":
-            draw_text(renderer, "File name", window.x + 18.0, window.y + window.height - 72.0, viewport_size, scale=0.48, color=self.theme.muted)
-            self.browser_name.render(renderer, viewport_size, self.theme)
-            self.browser_save_button.render(renderer, viewport_size, self.theme)
+        title = {
+            "open": "Open Item",
+            "save": "Save Item As",
+            "icon": "Choose Item Icon",
+        }[self.browser_mode]
+        render_file_browser_dialog(
+            renderer,
+            viewport_size,
+            self.theme,
+            title=title,
+            path=self.browser_path,
+            list_box=self.browser_list,
+            cancel_button=self.browser_cancel_button,
+            name_field=self.browser_name,
+            action_button=self.browser_save_button,
+            show_filename=self.browser_mode == "save",
+        )
 
     def _render_info(self, renderer, viewport_size: tuple[float, float]) -> None:
-        width, height = viewport_size
-        draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport_size)
-        window = centered_rect(viewport_size, 660.0, 340.0)
-        draw_rect(renderer, window, self.theme.panel, viewport_size, radius=6.0)
-        draw_outline(renderer, window, self.theme.border, viewport_size)
-        draw_text(renderer, self.info_title, window.x + 22.0, window.y + 20.0, viewport_size, scale=0.86)
-        y = window.y + 78.0
-        for line in self.info_lines:
-            draw_text(renderer, line, window.x + 24.0, y, viewport_size, scale=0.60, color=self.theme.text)
-            y += 38.0
-        self.info_close_button.render(renderer, viewport_size, self.theme)
+        render_info_dialog(
+            renderer,
+            viewport_size,
+            self.theme,
+            title=self.info_title,
+            lines=self.info_lines,
+            close_button=self.info_close_button,
+            width=660.0,
+            height=340.0,
+            line_step=38.0,
+        )
 
     def render(self, interpolation: float) -> None:
         del interpolation
@@ -1042,9 +1068,6 @@ class ItemEditorScene(Scene):
                 self._render_browser(renderer, viewport_size)
             elif self.modal == "info":
                 self._render_info(renderer, viewport_size)
-
-    def _close_modal(self) -> None:
-        self.modal = None
 
 
 class ItemEditorApp(Game):

@@ -8,7 +8,7 @@ Run from the project root:
 
 Required files:
 
-    cutscenes/death_prologue.ncutscene
+    MyGame/cutscenes/death_prologue.ncutscene
     assets/cutscenes/death/*.png
     assets/audio/death_scene/*.wav
 """
@@ -27,7 +27,7 @@ class DeathCutsceneScene(Scene):
             "DeathCutscenePlayer",
             self.world,
         )
-        self.player.asset_path = "cutscenes/death_prologue.ncutscene"
+        self.player.asset_path = "MyGame/cutscenes/death_prologue.ncutscene"
         self.player.loop = False
         self.player.play_on_enter = False
 
@@ -51,7 +51,7 @@ class DeathCutsceneScene(Scene):
     def on_enter(self, previous_state) -> None:
         del previous_state
         self.player.play(restart=True)
-        print("Playing cutscenes/death_prologue.ncutscene")
+        print("Playing MyGame/cutscenes/death_prologue.ncutscene")
 
     def update(self, delta_time: float) -> None:
         super().update(delta_time)
