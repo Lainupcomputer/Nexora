@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from nexora import Game
 from nexora.nodes import ParticleEmitter2D
-from nexora.particles import ParticlePresets
+from nexora.rendering.particles import ParticlePresets
 from nexora.scene import Scene
 
 

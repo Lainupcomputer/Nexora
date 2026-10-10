@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from nexora.ecs.world import World
-from nexora.lighting import (
+from nexora.rendering.lighting import (
     LightSnapshot,
     LightingSystem,
     OccluderSnapshot,

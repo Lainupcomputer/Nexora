@@ -3,8 +3,8 @@ from __future__ import annotations
 from random import Random
 
 from nexora.nodes.node import Node
-from nexora.particles import Particle, ParticleConfig
-from nexora.particles.modules import BurstModule
+from nexora.rendering.particles import Particle, ParticleConfig
+from nexora.rendering.particles.modules import BurstModule
 
 
 class ParticleEmitter2D(Node):

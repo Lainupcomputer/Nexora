@@ -4,7 +4,7 @@ from abc import ABC
 from random import Random
 from typing import Any
 
-from nexora.particles.particle import Particle
+from nexora.rendering.particles.particle import Particle
 
 
 class ParticleModule(ABC):

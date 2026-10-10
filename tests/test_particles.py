@@ -4,7 +4,7 @@ import math
 
 from nexora.ecs.world import World
 from nexora.nodes import Node, ParticleEmitter2D
-from nexora.particles import (
+from nexora.rendering.particles import (
     BurstModule,
     ColorOverLifetimeModule,
     GravityModule,

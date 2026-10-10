@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from nexora.lighting import OccluderSnapshot
+from nexora.rendering.lighting import OccluderSnapshot
 from nexora.nodes.node import Node
 
 

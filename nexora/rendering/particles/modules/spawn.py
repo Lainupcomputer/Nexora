@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 from random import Random
 
-from nexora.particles.particle import Particle
+from nexora.rendering.particles.particle import Particle
 from .base import ParticleModule, register_module
 
 
