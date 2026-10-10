@@ -4,7 +4,7 @@ import math
 from typing import Callable
 
 from nexora.nodes.node import Node
-from nexora.nodes.entity.character_body_2d import CharacterBody2D
+from nexora.nodes.physics.character_body_2d import CharacterBody2D
 from nexora.nodes.world.tilemap_node import TileMapNode
 from nexora.tilemap.navigation import NavigationPath, TileNavigation
 

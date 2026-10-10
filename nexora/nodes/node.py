@@ -499,7 +499,7 @@ class Node:
         destroyed.
         """
 
-        from nexora.signals import Signal
+        from nexora.core.signals import Signal
 
         return Signal(
             name,
