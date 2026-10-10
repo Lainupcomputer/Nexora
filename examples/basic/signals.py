@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from nexora.ecs.world import World
 from nexora.nodes import Node
-from nexora.signals import EventBus
+from nexora.core.signals import EventBus
 
 
 class Player(Node):

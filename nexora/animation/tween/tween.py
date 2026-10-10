@@ -3,7 +3,8 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable
 
-from nexora.signals import Signal
+from nexora.core.lifetime import owner_is_alive
+from nexora.core.signals import Signal
 
 from .accessor import PropertyAccessor
 from .easing import EaseFunction, resolve_easing
@@ -143,21 +144,7 @@ class Tween:
             untracker(self)
 
     def _owner_alive(self) -> bool:
-        owner = self.owner
-        if owner is None and self._owner_ref is not None:
-            return False
-        if owner is None:
-            return True
-
-        world = getattr(owner, "world", None)
-        entity = getattr(owner, "entity", None)
-        is_alive = getattr(world, "is_alive", None)
-        if entity is not None and callable(is_alive):
-            try:
-                return bool(is_alive(entity))
-            except Exception:
-                return True
-        return True
+        return owner_is_alive(self.owner, self._owner_ref)
 
     def _begin(self) -> None:
         self._start_value = (

@@ -4,7 +4,7 @@ import math
 
 from nexora.ecs.world import World
 from nexora.nodes.node import Node
-from nexora.tween import EASINGS, TweenManager
+from nexora.animation.tween import EASINGS, TweenManager
 
 
 class Target:

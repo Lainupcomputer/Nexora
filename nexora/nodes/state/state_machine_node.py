@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from nexora.nodes.node import Node
-from nexora.state_machine import (
+from nexora.animation.fsm import (
     State,
     StateMachine,
     StateTransition,

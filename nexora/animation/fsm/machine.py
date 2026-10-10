@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-from nexora.signals import Signal
+from nexora.core.signals import Signal
 
 from .state import State
 from .transition import StateTransition, TransitionCondition

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from nexora.ecs.world import World
 from nexora.nodes.state import StateMachineNode
-from nexora.state_machine import State, StateMachine
+from nexora.animation.fsm import State, StateMachine
 
 
 class RecordingState(State):

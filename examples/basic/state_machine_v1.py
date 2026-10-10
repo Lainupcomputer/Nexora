@@ -3,7 +3,7 @@ from __future__ import annotations
 from nexora.core.game import Game
 from nexora.nodes import StateMachineNode
 from nexora.scene import Scene
-from nexora.state_machine import State
+from nexora.animation.fsm import State
 
 
 class DemoState(State):

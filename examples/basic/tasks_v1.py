@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from nexora.core.game import Game
 from nexora.scene import Scene
-from nexora.signals import Signal
-from nexora.tasks import (
+from nexora.core.signals import Signal
+from nexora.core.coroutines import (
     call,
     wait,
     wait_signal,
