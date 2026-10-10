@@ -5,7 +5,7 @@ import sdl3
 
 from nexora.nodes import DialogueBox, DialogueChoice, DialoguePage
 from nexora.scene import Scene
-from nexora.ui import UIInput
+from nexora.input import UIInput
 
 
 def create_scene() -> Scene:

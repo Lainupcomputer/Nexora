@@ -8,6 +8,7 @@ from nexora.input.bindings import (
     BindingType,
 )
 from nexora.input.input import InputManager
+from nexora.input.ui import UIInput
 
 __all__ = [
     "ActionState",
@@ -16,4 +17,5 @@ __all__ = [
     "BindingStore",
     "BindingType",
     "InputManager",
+    "UIInput",
 ]

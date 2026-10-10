@@ -6,7 +6,7 @@ from nexora.nodes.ui.dialogs.dialog import Dialog
 from nexora.nodes.ui.containers.list_view import ListView
 from nexora.nodes.ui.controls.text_input import TextInput
 from nexora.nodes.ui.output.label import Label
-from nexora.signals import Signal
+from nexora.core.signals import Signal
 
 
 class FileDialog(Dialog):
@@ -46,6 +46,7 @@ class FileDialog(Dialog):
         self.extensions: tuple[str, ...] = ()
         self.selected_path: Path | None = None
         self.allow_directories: bool = False
+        self.directories_only: bool = False
         # Some editor pickers, such as the tileset picker, are intended to
         # behave like an asset browser: selecting an asset is the confirm
         # action.  Keep the normal double-click behavior for generic file
@@ -85,6 +86,7 @@ class FileDialog(Dialog):
         extensions: tuple[str, ...] | list[str] = (),
         title: str | None = None,
         activate_on_single_click: bool = False,
+        directories_only: bool = False,
     ) -> FileDialog:
         mode = str(mode).lower()
         if mode not in self.VALID_MODES:
@@ -108,6 +110,9 @@ class FileDialog(Dialog):
                 normalized.append(ext)
         self.extensions = tuple(normalized)
         self.activate_on_single_click = bool(activate_on_single_click)
+        self.directories_only = bool(directories_only)
+        if self.directories_only:
+            self.allow_directories = True
 
         self.title = title or ("Open File" if mode == "open" else "Save File")
         self.confirm_text = "Open" if mode == "open" else "Save"
@@ -146,10 +151,12 @@ class FileDialog(Dialog):
             ),
             key=lambda item: item.name.lower(),
         )
-        files = sorted(
-            (entry for entry in entries if entry.is_file() and self._matches_extension(entry)),
-            key=lambda item: item.name.lower(),
-        )
+        files = []
+        if not self.directories_only:
+            files = sorted(
+                (entry for entry in entries if entry.is_file() and self._matches_extension(entry)),
+                key=lambda item: item.name.lower(),
+            )
 
         self._entries = []
         labels: list[str] = []
@@ -201,11 +208,14 @@ class FileDialog(Dialog):
             self.confirm()
 
     def _candidate_path(self) -> Path | None:
-        text = self.filename_input.text.strip()
-        if text:
-            candidate = (self.current_path / text).resolve()
+        if self.directories_only:
+            candidate = self.selected_path or self.current_path
         else:
-            candidate = self.selected_path
+            text = self.filename_input.text.strip()
+            if text:
+                candidate = (self.current_path / text).resolve()
+            else:
+                candidate = self.selected_path
         if candidate is None or not self._inside_root(candidate):
             return None
         return candidate
@@ -219,6 +229,8 @@ class FileDialog(Dialog):
             return
 
         if self.mode == "open":
+            if self.directories_only and not candidate.is_dir():
+                return
             if candidate.is_dir() and not self.allow_directories:
                 self.current_path = candidate
                 self._refresh_entries()
@@ -252,13 +264,21 @@ class FileDialog(Dialog):
 
         self.file_list.anchor = (0.5, 0.5)
         self.file_list.pivot = (0.5, 0.5)
-        self.file_list.size = (width, max(0.0, height - path_h - input_h - gap * 2.0))
-        self.file_list.position = (0.0, (path_h - input_h) / 2.0)
 
-        self.filename_input.anchor = (0.5, 1.0)
-        self.filename_input.pivot = (0.5, 0.5)
-        self.filename_input.size = (width, input_h)
-        self.filename_input.position = (0.0, -input_h / 2.0)
+        self.filename_input.visible = not self.directories_only
+        self.filename_input.enabled = not self.directories_only
+
+        if self.directories_only:
+            self.file_list.size = (width, max(0.0, height - path_h - gap))
+            self.file_list.position = (0.0, path_h / 2.0)
+        else:
+            self.file_list.size = (width, max(0.0, height - path_h - input_h - gap * 2.0))
+            self.file_list.position = (0.0, (path_h - input_h) / 2.0)
+
+            self.filename_input.anchor = (0.5, 1.0)
+            self.filename_input.pivot = (0.5, 0.5)
+            self.filename_input.size = (width, input_h)
+            self.filename_input.position = (0.0, -input_h / 2.0)
 
     def open(self, *, focus=None) -> FileDialog:
         self._refresh_entries()

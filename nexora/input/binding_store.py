@@ -13,7 +13,7 @@ from nexora.input.bindings import (
     resolve_mouse_button,
 )
 
-from nexora.settings.layered_store import (
+from nexora.core.settings.layered_store import (
     LayeredSettingsStore,
 )
 

@@ -5,7 +5,7 @@ from typing import Iterable
 
 import sdl3
 
-from nexora.debug.logger import Logger
+from nexora.core.debug.logger import Logger
 
 from nexora.input.action import (
     ActionState,
@@ -23,7 +23,7 @@ from nexora.input.bindings import (
     resolve_mouse_button,
 )
 
-from nexora.threading.context import (
+from nexora.core.jobs.context import (
     ThreadContext,
 )
 

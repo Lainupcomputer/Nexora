@@ -1,7 +1,7 @@
 
 from __future__ import annotations
 
-from nexora.ui import UIInput
+from nexora.input import UIInput
 
 
 def test_ui_input_defaults() -> None:

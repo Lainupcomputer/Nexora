@@ -3,7 +3,7 @@ from nexora.scene import Scene, UINode
 from nexora.nodes.ui.containers.panel import Panel
 from nexora.nodes.ui.controls.button import Button
 from nexora.nodes.ui.ui_root import UIRoot
-from nexora.ui import UIInput
+from nexora.input import UIInput
 
 
 def test_ui_node_creation() -> None:

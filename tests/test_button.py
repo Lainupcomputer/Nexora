@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from nexora.nodes import Button
 from nexora.scene import Scene
-from nexora.ui import UIInput
+from nexora.input import UIInput
 
 
 class MockRenderer:

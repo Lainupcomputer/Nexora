@@ -15,7 +15,7 @@ from nexora.rendering.gpu.context import GPUContext
 from nexora.rendering.renderer import Renderer
 from nexora.rendering.text import TextSystem
 from nexora.scene import Scene
-from nexora.ui import UIInput
+from nexora.input import UIInput
 
 
 ROOT = Path(__file__).resolve().parent.parent

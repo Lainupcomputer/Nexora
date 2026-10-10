@@ -6,7 +6,7 @@ import sdl3
 
 from nexora.nodes import Button, ConfirmDialog, Dialog, FileDialog
 from nexora.scene import Scene
-from nexora.ui import UIInput
+from nexora.input import UIInput
 
 
 def create_scene() -> Scene:

@@ -8,7 +8,7 @@ from nexora.nodes.ui.ui_node import UINode
 from nexora.nodes.ui.containers.panel import Panel
 from nexora.nodes.ui.controls.button import Button
 from nexora.nodes.ui.output.label import Label
-from nexora.signals import Signal
+from nexora.core.signals import Signal
 
 
 _DIALOG_LAYER_OFFSET = 200_000

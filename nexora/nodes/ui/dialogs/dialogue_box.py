@@ -13,7 +13,7 @@ from nexora.nodes.ui.containers.panel import Panel
 from nexora.nodes.ui.controls.button import Button
 from nexora.nodes.ui.output.label import Label
 from nexora.nodes.ui.ui_node import UINode
-from nexora.signals import Signal
+from nexora.core.signals import Signal
 
 
 MAX_DIALOGUE_CHOICES = 4

@@ -4,7 +4,7 @@ import time
 
 from nexora.input import InputManager
 from nexora.rendering.gpu.context import GPUContext
-from nexora.threading.context import ThreadContext
+from nexora.core.jobs.context import ThreadContext
 
 
 def main() -> None:
