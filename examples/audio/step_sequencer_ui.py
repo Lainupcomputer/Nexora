@@ -30,7 +30,7 @@ from nexora.rendering.text import (
 )
 
 from nexora.scene import Scene
-from nexora.ui import UIInput
+from nexora.input import UIInput
 
 
 # ==============================================================
