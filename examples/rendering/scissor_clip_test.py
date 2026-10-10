@@ -6,7 +6,7 @@ import sdl3
 
 from nexora.rendering.gpu.context import GPUContext
 from nexora.rendering.renderer import Renderer
-from nexora.threading.context import ThreadContext
+from nexora.core.jobs.context import ThreadContext
 
 
 def main() -> None:

@@ -9,7 +9,7 @@ from nexora.assets.manager import AssetManager
 from nexora.rendering.gpu.context import GPUContext
 from nexora.rendering.gpu.texture import GPUTexture
 from nexora.rendering.renderer import Renderer
-from nexora.threading.context import ThreadContext
+from nexora.core.jobs.context import ThreadContext
 
 
 ROOT = Path(__file__).resolve().parent.parent

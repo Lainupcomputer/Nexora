@@ -4,6 +4,8 @@ import ctypes
 
 import sdl3
 
+from nexora.rendering.gpu.errors import decode_sdl_error
+
 
 class GPUBuffer:
     """
@@ -87,24 +89,8 @@ class GPUBuffer:
     # ==========================================================
 
     @staticmethod
-    def _decode_error(
-        error,
-    ) -> str:
-        if isinstance(
-            error,
-            bytes,
-        ):
-            return error.decode(
-                "utf-8",
-                errors="replace",
-            )
-
-        if error is None:
-            return "<unknown SDL error>"
-
-        return str(
-            error
-        )
+    def _decode_error(error) -> str:
+        return decode_sdl_error(error)
 
     def _check(
         self,

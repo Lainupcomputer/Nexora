@@ -7,11 +7,11 @@ from pathlib import Path
 
 import sdl3
 
-from nexora.rendering.gpu.buffer import GPUBuffer
 from nexora.rendering.gpu.shader import GPUShader
+from nexora.rendering.gpu.batch_common import GPUBatchCommonMixin
 
 
-class GPUShapeBatch:
+class GPUShapeBatch(GPUBatchCommonMixin):
     """
     GPU shape renderer.
 
@@ -166,28 +166,7 @@ class GPUShapeBatch:
     # Utility
     # ----------------------------------------------------------
 
-    @staticmethod
-    def _decode_error(error):
-        if isinstance(error, bytes):
-            return error.decode(
-                "utf-8",
-                errors="replace",
-            )
 
-        if error is None:
-            return "<unknown SDL error>"
-
-        return str(error)
-
-    def _check(self, condition, message):
-        if not condition:
-            error = self._decode_error(
-                sdl3.SDL_GetError()
-            )
-
-            raise RuntimeError(
-                f"{message}: {error}"
-            )
 
     # ----------------------------------------------------------
     # Resource creation
@@ -202,22 +181,7 @@ class GPUShapeBatch:
         self._create_geometry_pipeline()
 
     def _create_shaders(self):
-        self.vertex_shader = GPUShader(
-            self.device,
-            self.vertex_shader_path,
-            sdl3.SDL_GPU_SHADERSTAGE_VERTEX,
-            sdl3.SDL_GPU_SHADERFORMAT_SPIRV,
-            entrypoint="main",
-            num_uniform_buffers=1,
-        )
-
-        self.fragment_shader = GPUShader(
-            self.device,
-            self.fragment_shader_path,
-            sdl3.SDL_GPU_SHADERSTAGE_FRAGMENT,
-            sdl3.SDL_GPU_SHADERFORMAT_SPIRV,
-            entrypoint="main",
-        )
+        super()._create_shaders()
 
         self.geometry_vertex_shader = GPUShader(
             self.device,
@@ -236,49 +200,13 @@ class GPUShapeBatch:
             entrypoint="main",
         )
 
-    def _create_quad(self):
-        vertices = struct.pack(
-            "<12f",
-
-            # Triangle 1
-            -0.5, -0.5,
-             0.5, -0.5,
-             0.5,  0.5,
-
-            # Triangle 2
-            -0.5, -0.5,
-             0.5,  0.5,
-            -0.5,  0.5,
-        )
-
-        self.quad_buffer = GPUBuffer(
-            self.device,
-            len(vertices),
-            sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
-            initial_data=vertices,
-        )
-
-    def _create_instance_buffer(self):
-        self.instance_buffer = GPUBuffer(
-            self.device,
-            len(self._instance_data),
-            sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
-            dynamic=True,
-            frames_in_flight=3,
-        )
-
     def _create_geometry_buffer(self):
         size = (
             self.max_geometry_vertices
             * self.GEOMETRY_STRIDE
         )
-
-        self.geometry_buffer = GPUBuffer(
-            self.device,
-            size,
-            sdl3.SDL_GPU_BUFFERUSAGE_VERTEX,
-            dynamic=True,
-            frames_in_flight=3,
+        self.geometry_buffer = self._create_dynamic_vertex_buffer(
+            size
         )
 
     def _create_pipeline(self):
@@ -1040,76 +968,7 @@ class GPUShapeBatch:
     # Camera
     # ----------------------------------------------------------
 
-    def _update_camera_uniform(self, *, screen_space: bool = False):
-        if screen_space or self.camera is None:
-            camera_x = 0.0
-            camera_y = 0.0
-            camera_zoom = 1.0
-            shake_x = 0.0
-            shake_y = 0.0
 
-        else:
-            camera_x = float(self.camera.x)
-            camera_y = float(self.camera.y)
-            camera_zoom = float(self.camera.zoom)
-            shake_x = float(self.camera.shake_x)
-            shake_y = float(self.camera.shake_y)
-
-        viewport_width = float(
-            self.context.swapchain_width
-        )
-
-        viewport_height = float(
-            self.context.swapchain_height
-        )
-
-        struct.pack_into(
-            "<8f",
-            self._camera_data,
-            0,
-
-            camera_x,
-            camera_y,
-
-            viewport_width,
-            viewport_height,
-
-            camera_zoom,
-
-            shake_x,
-            shake_y,
-
-            0.0,
-        )
-
-    def push_camera_uniform(
-        self,
-        command_buffer,
-        *,
-        screen_space: bool = False,
-    ) -> None:
-        """Push the camera used by the next shape draw calls."""
-
-        self._update_camera_uniform(screen_space=screen_space)
-
-        camera_buffer = (
-            (
-                ctypes.c_ubyte
-                * self.CAMERA_UNIFORM_SIZE
-            ).from_buffer(
-                self._camera_data
-            )
-        )
-
-        sdl3.SDL_PushGPUVertexUniformData(
-            command_buffer,
-            0,
-            ctypes.cast(
-                camera_buffer,
-                ctypes.c_void_p,
-            ),
-            self.CAMERA_UNIFORM_SIZE,
-        )
 
     # ----------------------------------------------------------
     # GPU upload
@@ -1512,13 +1371,4 @@ class GPUShapeBatch:
         self._instance_data = bytearray()
         self._geometry_data.clear()
 
-    def __enter__(self):
-        return self
 
-    def __exit__(
-        self,
-        exc_type,
-        exc_value,
-        traceback,
-    ):
-        self.destroy()
