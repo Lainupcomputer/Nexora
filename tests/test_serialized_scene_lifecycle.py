@@ -125,3 +125,27 @@ def test_begin_serialized_loading_uses_existing_loading_scene(tmp_path):
     assert task.done
     assert "HQ" in manager.scene_names
     assert serializer.loaded[0][1]["custom"] == 123
+
+
+def test_clear_releases_serialized_scene_asset_groups(tmp_path):
+    manager, _serializer, assets = make_manager(tmp_path)
+    scene = manager.load_serialized_registered("HQ")
+
+    manager.clear()
+
+    assert scene.destroyed is True
+    assert assets.refs == {"core": 0, "hq": 0}
+    assert manager.scene_names == ()
+    assert manager._managed_scene_groups == {}
+    assert manager.serialized_registration("HQ") is not None
+
+
+def test_clear_with_registrations_removes_serialized_and_factory_entries(tmp_path):
+    manager, _serializer, _assets = make_manager(tmp_path)
+    manager.register("Menu", lambda: Scene("Menu"))
+
+    manager.clear(clear_registrations=True)
+
+    assert manager.is_registered("Menu") is False
+    assert manager.serialized_registration("HQ") is None
+    assert manager.registered_names == ()

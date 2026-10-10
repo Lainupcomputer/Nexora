@@ -16,11 +16,9 @@ from nexora.scene.scene import Scene, SceneState
 from nexora.scene.transition import FadeSceneTransition, SceneTransition
 from nexora.scene.serialization import (
     InvalidSceneFileError,
-    MigrationRegistry,
     NodeFactoryRegistry,
     PrefabSerializer,
     SceneIntegrityError,
-    SceneMigrationError,
     SceneSerializationError,
     SceneSerializer,
     UnregisteredNodeTypeError,
@@ -42,11 +40,9 @@ __all__ = [
     "SceneSerializer",
     "PrefabSerializer",
     "NodeFactoryRegistry",
-    "MigrationRegistry",
     "SceneSerializationError",
     "InvalidSceneFileError",
     "SceneIntegrityError",
-    "SceneMigrationError",
     "UnsupportedSceneVersionError",
     "UnregisteredNodeTypeError",
     "Node",

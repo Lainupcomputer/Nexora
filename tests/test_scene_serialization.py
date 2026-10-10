@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from nexora.nodes import Node
-from nexora.nodes.entity import (
+from nexora.nodes.physics import (
     CharacterBody2D,
     CollisionShape2D,
     StaticBody2D,

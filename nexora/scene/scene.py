@@ -6,7 +6,7 @@ from nexora.ecs.world import World
 from nexora.nodes.node import Node
 from nexora.nodes.ui.controls.text_input import TextInput
 from nexora.nodes.ui.ui_root import UIRoot
-from nexora.ui import UIInput
+from nexora.input import UIInput
 from nexora.physics import (
     get_physics_world,
 )

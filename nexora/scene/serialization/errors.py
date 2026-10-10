@@ -20,6 +20,3 @@ class UnsupportedSceneVersionError(SceneSerializationError):
 class UnregisteredNodeTypeError(SceneSerializationError):
     """Raised when a node type is not registered in the NodeFactory."""
 
-
-class SceneMigrationError(SceneSerializationError):
-    """Raised when a required scene/prefab migration is unavailable or fails."""
