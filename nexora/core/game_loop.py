@@ -220,6 +220,11 @@ class GameLoop:
                 if (
                     debug_overlay is not None
                     and getattr(
+                        self.engine,
+                        "debug_overlay_shortcuts_enabled",
+                        True,
+                    )
+                    and getattr(
                         action_pressed,
                         "debug_overlay",
                         False,

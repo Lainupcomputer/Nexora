@@ -8,14 +8,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
-from nexora.debug.logger import Logger
-from nexora.threading.future import Future
-from nexora.threading.task import (
+from nexora.core.debug.logger import Logger
+from nexora.core.jobs.future import Future
+from nexora.core.jobs.task import (
     Task,
     TaskPriority,
     TaskStatus,
 )
-from nexora.threading.worker import Worker
+from nexora.core.jobs.worker import Worker
 
 
 @dataclass(slots=True)

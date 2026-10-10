@@ -205,7 +205,7 @@ class PhysicsDebugRenderer:
         if root is None:
             return
 
-        from nexora.nodes.entity import (
+        from nexora.nodes.physics import (
             Area2D,
             Body2D,
             CharacterBody2D,
@@ -802,7 +802,7 @@ class PhysicsDebugRenderer:
         self,
         body,
     ):
-        from nexora.nodes.entity import (
+        from nexora.nodes.physics import (
             Area2D,
             CharacterBody2D,
             StaticBody2D,

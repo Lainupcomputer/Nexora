@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexora.threading import TaskPriority, TaskScheduler
+from nexora.core.jobs import TaskPriority, TaskScheduler
 
 
 class ParallelChunkExecutor:

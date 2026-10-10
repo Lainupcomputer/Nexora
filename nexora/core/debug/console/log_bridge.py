@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexora.debug.logger import LogEvent, LogLevel
+from nexora.core.debug.logger import LogEvent, LogLevel
 
 
 class ConsoleLogBridge:

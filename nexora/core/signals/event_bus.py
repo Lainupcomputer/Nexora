@@ -5,7 +5,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from nexora.signals.signal import (
+from nexora.core.signals.signal import (
     Signal,
     SignalConnection,
 )

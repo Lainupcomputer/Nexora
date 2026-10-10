@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from nexora.debug.console import DebugConsole
-from nexora.debug.logger import Logger
+from nexora.core.debug.console import DebugConsole
+from nexora.core.debug.logger import Logger
 
 
 class FakeInput:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from nexora.debug.console.command import (
+from nexora.core.debug.console.command import (
     CommandCompleter,
     CommandHandler,
     ConsoleCommand,

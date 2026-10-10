@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from nexora.debug.overlay import DebugOverlay
+from nexora.core.debug.overlay import DebugOverlay
 
 
 def _bus(name, *, parent=None, peak=(-12.0, -10.0), volume=1.0, pan=0.0,

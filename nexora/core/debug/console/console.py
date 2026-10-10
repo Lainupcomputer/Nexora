@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable
 
-from nexora.debug.console.autocomplete import AutocompleteEngine
-from nexora.debug.console.command import CommandContext
-from nexora.debug.console.history import CommandHistory
-from nexora.debug.console.log_bridge import ConsoleLogBridge
-from nexora.debug.console.parser import parse_command
-from nexora.debug.console.registry import CommandRegistry
-from nexora.debug.console.renderer import DebugConsoleRenderer
+from nexora.core.debug.console.autocomplete import AutocompleteEngine
+from nexora.core.debug.console.command import CommandContext
+from nexora.core.debug.console.history import CommandHistory
+from nexora.core.debug.console.log_bridge import ConsoleLogBridge
+from nexora.core.debug.console.parser import parse_command
+from nexora.core.debug.console.registry import CommandRegistry
+from nexora.core.debug.console.renderer import DebugConsoleRenderer
 
 
 class ConsoleLevel(Enum):

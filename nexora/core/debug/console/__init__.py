@@ -1,14 +1,14 @@
-from nexora.debug.console.command import (
+from nexora.core.debug.console.command import (
     CommandContext,
     ConsoleCommand,
 )
-from nexora.debug.console.console import (
+from nexora.core.debug.console.console import (
     ConsoleLevel,
     ConsoleLine,
     DebugConsole,
 )
-from nexora.debug.console.log_bridge import ConsoleLogBridge
-from nexora.debug.console.registry import CommandRegistry
+from nexora.core.debug.console.log_bridge import ConsoleLogBridge
+from nexora.core.debug.console.registry import CommandRegistry
 
 __all__ = [
     "CommandContext",

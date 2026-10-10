@@ -4,8 +4,8 @@ import math
 
 import pytest
 
-from nexora.signals import Signal
-from nexora.tasks import (
+from nexora.core.signals import Signal
+from nexora.core.coroutines import (
     TaskManager,
     call,
     next_frame,

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from nexora.debug.console import DebugConsole
-from nexora.debug.console.autocomplete import AutocompleteEngine
-from nexora.debug.console.history import CommandHistory
-from nexora.debug.console.parser import parse_command
-from nexora.debug.console.registry import CommandRegistry
+from nexora.core.debug.console import DebugConsole
+from nexora.core.debug.console.autocomplete import AutocompleteEngine
+from nexora.core.debug.console.history import CommandHistory
+from nexora.core.debug.console.parser import parse_command
+from nexora.core.debug.console.registry import CommandRegistry
 
 
 def test_parser_supports_quoted_arguments():

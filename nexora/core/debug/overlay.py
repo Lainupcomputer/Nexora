@@ -4,8 +4,8 @@ import platform
 import sys
 import sysconfig
 
-from nexora.debug.metrics import DebugMetrics
-from nexora.debug.physics import (
+from nexora.core.debug.metrics import DebugMetrics
+from nexora.core.debug.physics import (
     PhysicsDebugRenderer,
 )
 

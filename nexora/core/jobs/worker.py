@@ -4,9 +4,9 @@ import queue
 import threading
 import time
 
-from nexora.debug.logger import Logger
-from nexora.threading.context import ThreadContext
-from nexora.threading.task import Task, TaskStatus
+from nexora.core.debug.logger import Logger
+from nexora.core.jobs.context import ThreadContext
+from nexora.core.jobs.task import Task, TaskStatus
 
 
 class Worker:

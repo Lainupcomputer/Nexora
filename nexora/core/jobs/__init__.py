@@ -1,20 +1,20 @@
-from nexora.threading.context import (
+from nexora.core.jobs.context import (
     ThreadContext,
     ThreadType,
     NexoraThreadError,
 )
 
-from nexora.threading.future import (
+from nexora.core.jobs.future import (
     Future,
     FutureStatus,
 )
 
-from nexora.threading.scheduler import (
+from nexora.core.jobs.scheduler import (
     TaskScheduler,
     SchedulerStats,
 )
 
-from nexora.threading.task import (
+from nexora.core.jobs.task import (
     Task,
     TaskPriority,
     TaskStatus,

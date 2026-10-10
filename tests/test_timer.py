@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from nexora.ecs.world import World
 from nexora.nodes.node import Node
-from nexora.timer import TimerManager
+from nexora.core.time import TimerManager
 
 
 def test_call_later_fires_once():

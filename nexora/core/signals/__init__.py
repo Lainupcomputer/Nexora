@@ -1,5 +1,5 @@
-from nexora.signals.event_bus import EventBus
-from nexora.signals.signal import (
+from nexora.core.signals.event_bus import EventBus
+from nexora.core.signals.signal import (
     Signal,
     SignalConnection,
 )

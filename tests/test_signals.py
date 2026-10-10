@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from nexora.ecs.world import World
 from nexora.nodes.node import Node
-from nexora.signals import (
+from nexora.core.signals import (
     EventBus,
     Signal,
 )

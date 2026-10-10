@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Iterable
 
-from nexora.threading import TaskPriority, TaskScheduler
+from nexora.core.jobs import TaskPriority, TaskScheduler
 from nexora.ecs.system import System
 
 

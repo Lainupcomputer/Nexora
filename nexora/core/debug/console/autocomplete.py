@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nexora.debug.console.parser import completion_context
-from nexora.debug.console.registry import CommandRegistry
+from nexora.core.debug.console.parser import completion_context
+from nexora.core.debug.console.registry import CommandRegistry
 
 
 @dataclass(slots=True)

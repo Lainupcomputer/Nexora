@@ -1,6 +1,6 @@
-from nexora.debug.logger import LogEvent, LogLevel, Logger
+from nexora.core.debug.logger import LogEvent, LogLevel, Logger
 
-from nexora.debug.console import (
+from nexora.core.debug.console import (
     CommandContext,
     CommandRegistry,
     ConsoleCommand,
@@ -10,17 +10,17 @@ from nexora.debug.console import (
     ConsoleLogBridge,
 )
 
-from nexora.debug.metrics import (
+from nexora.core.debug.metrics import (
     DebugMetrics,
     DebugSnapshot,
     GPUMetrics,
 )
 
-from nexora.debug.overlay import (
+from nexora.core.debug.overlay import (
     DebugOverlay,
 )
 
-from nexora.debug.physics import (
+from nexora.core.debug.physics import (
     PhysicsDebugRenderer,
 )
 

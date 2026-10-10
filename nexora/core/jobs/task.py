@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import IntEnum, Enum
 from typing import Any, Callable
 
-from nexora.threading.future import Future
+from nexora.core.jobs.future import Future
 
 
 class TaskPriority(IntEnum):
