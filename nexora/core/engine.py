@@ -12,15 +12,15 @@ from nexora.core.game_loop import (
     GameLoop,
 )
 
-from nexora.debug.logger import (
+from nexora.core.debug.logger import (
     Logger,
 )
 
-from nexora.debug.console import (
+from nexora.core.debug.console import (
     DebugConsole,
 )
 
-from nexora.debug.overlay import (
+from nexora.core.debug.overlay import (
     DebugOverlay,
 )
 
@@ -41,29 +41,29 @@ from nexora.rendering.gpu import (
     WindowMode,
 )
 
-from nexora.save import (
+from nexora.data.save import (
     SaveManager,
 )
 
-from nexora.settings import (
+from nexora.core.settings import (
     AudioSettings,
     EngineSettings,
     GraphicsSettings,
 )
 
-from nexora.threading.context import (
+from nexora.core.jobs.context import (
     ThreadContext,
 )
 
-from nexora.tween import (
+from nexora.animation.tween import (
     TweenManager,
 )
 
-from nexora.timer import (
+from nexora.core.time import (
     TimerManager,
 )
 
-from nexora.tasks import (
+from nexora.core.coroutines import (
     TaskManager,
 )
 from nexora.core.paths import (
@@ -786,6 +786,10 @@ class Engine:
             .debug
             .overlay
         )
+
+        # Global F3 / Shift+F3 shortcuts may be disabled by
+        # editor-only applications such as the Project Hub.
+        self.debug_overlay_shortcuts_enabled = True
 
     # ==========================================================
     # PROPERTIES

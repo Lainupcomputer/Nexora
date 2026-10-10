@@ -21,8 +21,8 @@ from nexora.rendering.gpu import (
 )
 from nexora.rendering.text import TextSystem
 from nexora.scene import Scene
-from nexora.settings import GraphicsSettings
-from nexora.threading.context import ThreadContext
+from nexora.core.settings import GraphicsSettings
+from nexora.core.jobs.context import ThreadContext
 
 
 ROOT = Path(__file__).resolve().parent.parent

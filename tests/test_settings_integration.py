@@ -14,15 +14,15 @@ from nexora.input.bindings import (
     resolve_keyboard_key,
 )
 
-from nexora.settings.audio import (
+from nexora.core.settings.audio import (
     AudioSettings,
 )
 
-from nexora.settings.engine import (
+from nexora.core.settings.engine import (
     EngineSettings,
 )
 
-from nexora.settings.graphics import (
+from nexora.core.settings.graphics import (
     GraphicsSettings,
 )
 
@@ -170,7 +170,7 @@ def test_engine_settings_load_defaults_and_user_override(
         EngineSettings
     )
 
-    from nexora.settings.engine_store import (
+    from nexora.core.settings.engine_store import (
         EngineSettingsStore,
     )
 
@@ -186,7 +186,7 @@ def test_engine_settings_load_defaults_and_user_override(
     settings._data = {}
     settings._user_data = {}
 
-    from nexora.settings.engine import (
+    from nexora.core.settings.engine import (
         EngineSection,
     )
 
@@ -266,11 +266,11 @@ def test_engine_settings_reset_restores_defaults(
         tmp_path / "defaults"
     )
 
-    from nexora.settings.engine_store import (
+    from nexora.core.settings.engine_store import (
         EngineSettingsStore,
     )
 
-    from nexora.settings.engine import (
+    from nexora.core.settings.engine import (
         EngineSection,
     )
 
@@ -450,11 +450,11 @@ def test_audio_settings_load_and_write_only_override(
         tmp_path / "defaults"
     )
 
-    from nexora.settings.audio_store import (
+    from nexora.core.settings.audio_store import (
         AudioSettingsStore,
     )
 
-    from nexora.settings.audio import (
+    from nexora.core.settings.audio import (
         AudioSection,
     )
 
@@ -537,11 +537,11 @@ def test_audio_bus_override_and_reset(
         tmp_path / "defaults"
     )
 
-    from nexora.settings.audio_store import (
+    from nexora.core.settings.audio_store import (
         AudioSettingsStore,
     )
 
-    from nexora.settings.audio import (
+    from nexora.core.settings.audio import (
         AudioSection,
     )
 
@@ -741,11 +741,11 @@ def test_settings_systems_do_not_overwrite_each_other(
         autosave=True,
     )
 
-    from nexora.settings.audio_store import (
+    from nexora.core.settings.audio_store import (
         AudioSettingsStore,
     )
 
-    from nexora.settings.audio import (
+    from nexora.core.settings.audio import (
         AudioSection,
     )
 

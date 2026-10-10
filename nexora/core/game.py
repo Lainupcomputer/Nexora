@@ -13,7 +13,7 @@ from nexora.rendering.gpu import (
     WindowMode,
 )
 
-from nexora.save import (
+from nexora.data.save import (
     SaveManager,
     SaveNotificationHandler,
 )

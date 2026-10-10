@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from nexora.settings.graphics import (
+from nexora.core.settings.graphics import (
     GraphicsSettings,
 )
-from nexora.settings.graphics_store import (
+from nexora.core.settings.graphics_store import (
     GraphicsSettingsStore,
 )
 
