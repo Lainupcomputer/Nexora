@@ -30,15 +30,6 @@ Nodes
 
    nexora.nodes
 
-UI
---
-
-.. autosummary::
-   :toctree: api/ui
-   :recursive:
-
-   nexora.ui
-
 Rendering
 ---------
 

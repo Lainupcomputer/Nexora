@@ -1,4 +1,4 @@
-﻿nexora.input
+nexora.input
 ============
 
 .. automodule:: nexora.input
@@ -13,3 +13,4 @@
    action
    bindings
    input
+   ui
