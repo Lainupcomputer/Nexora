@@ -13,7 +13,7 @@ def encode(asset) -> dict[str, Any]:
 
 
 def decode(state: Any):
-    from nexora.cutscene.asset import CutsceneAsset
+    from nexora.gameplay.cutscene.asset import CutsceneAsset
 
     if not isinstance(state, dict):
         raise ValueError("Invalid Nexora Cutscene data.")

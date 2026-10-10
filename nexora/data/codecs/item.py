@@ -13,7 +13,7 @@ def encode(item_asset) -> dict[str, Any]:
 
 
 def decode(state: Any):
-    from nexora.items.asset import ItemAsset, ItemDefinition
+    from nexora.gameplay.items.asset import ItemAsset, ItemDefinition
 
     if not isinstance(state, dict) or not isinstance(state.get("item"), dict):
         raise ValueError("Invalid Nexora Item data.")

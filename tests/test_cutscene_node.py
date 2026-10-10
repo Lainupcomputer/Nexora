@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexora.cutscene import (
+from nexora.gameplay.cutscene import (
     DEFAULT_CUTSCENE_SIGNING_KEY,
     CutsceneAsset,
     CutsceneKeyframe,

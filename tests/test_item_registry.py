@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexora.items import ItemAsset, ItemCallbackRegistry, ItemDefinition, ItemRegistry
+from nexora.gameplay.items import ItemAsset, ItemCallbackRegistry, ItemDefinition, ItemRegistry
 
 
 def test_item_registry_loads_default_and_custom_paths_with_override(tmp_path: Path) -> None:

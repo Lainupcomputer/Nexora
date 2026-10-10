@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexora.cutscene import (
+from nexora.gameplay.cutscene import (
     CutsceneAsset,
     CutsceneKeyframe,
     CutscenePlayer,

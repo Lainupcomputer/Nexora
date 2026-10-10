@@ -14,7 +14,7 @@ Required files:
 """
 
 from nexora import Game
-from nexora.cutscene import CutscenePlayerNode
+from nexora.gameplay.cutscene import CutscenePlayerNode
 from nexora.scene import Scene
 
 

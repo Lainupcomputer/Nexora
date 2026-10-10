@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexora.items import ItemAsset, ItemDefinition
+from nexora.gameplay.items import ItemAsset, ItemDefinition
 
 
 def test_item_asset_roundtrip_uses_nitem_suffix(tmp_path: Path) -> None:
