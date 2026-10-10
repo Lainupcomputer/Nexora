@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexora.threading import TaskScheduler, ThreadContext
+from nexora.core.jobs import TaskScheduler, ThreadContext
 
 
 @pytest.fixture(autouse=True)

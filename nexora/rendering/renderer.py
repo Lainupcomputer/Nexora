@@ -4,7 +4,7 @@ from pathlib import Path
 
 from nexora.rendering.camera import Camera
 from nexora.rendering.gpu.renderer import GPURenderer
-from nexora.lighting import LightingSystem
+from nexora.rendering.lighting import LightingSystem
 
 
 class Renderer:
