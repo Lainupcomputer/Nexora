@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexora.debug.physics import (
+from nexora.core.debug.physics import (
     PhysicsDebugRenderer,
 )
 

@@ -5,7 +5,13 @@ import math
 from typing import TYPE_CHECKING
 
 from nexora.nodes.node import Node
-from nexora.nodes.entity.collision_shape_2d import (
+from nexora.nodes.physics.collision_filter import (
+    add_collision_mask as add_mask,
+    collision_layer_bit,
+    has_collision_mask as mask_contains,
+    remove_collision_mask as remove_mask,
+)
+from nexora.nodes.physics.collision_shape_2d import (
     CollisionShape2D,
 )
 from nexora.physics import (
@@ -334,36 +340,14 @@ class Body2D(Node):
     # Mask helpers
     # ==============================================================
 
-    def add_collision_mask(
-        self,
-        layer: int,
-    ) -> None:
-        self.collision_mask |= (
-            self._layer_bit(
-                layer
-            )
-        )
+    def add_collision_mask(self, layer: int) -> None:
+        self.collision_mask = add_mask(self.collision_mask, layer)
 
-    def remove_collision_mask(
-        self,
-        layer: int,
-    ) -> None:
-        self.collision_mask &= ~(
-            self._layer_bit(
-                layer
-            )
-        )
+    def remove_collision_mask(self, layer: int) -> None:
+        self.collision_mask = remove_mask(self.collision_mask, layer)
 
-    def has_collision_mask(
-        self,
-        layer: int,
-    ) -> bool:
-        return bool(
-            self.collision_mask
-            & self._layer_bit(
-                layer
-            )
-        )
+    def has_collision_mask(self, layer: int) -> bool:
+        return mask_contains(self.collision_mask, layer)
 
     # ==============================================================
     # Filtering
@@ -648,21 +632,5 @@ class Body2D(Node):
     # ==============================================================
 
     @staticmethod
-    def _layer_bit(
-        layer: int,
-    ) -> int:
-        layer = int(
-            layer
-        )
-
-        if layer <= 0:
-            raise ValueError(
-                "Collision layer number must be greater than zero."
-            )
-
-        return (
-            1
-            << (
-                layer - 1
-            )
-        )
+    def _layer_bit(layer: int) -> int:
+        return collision_layer_bit(layer)

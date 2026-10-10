@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexora.ecs.world import World
-    from nexora.nodes.entity.body_2d import Body2D
+    from nexora.nodes.physics.body_2d import Body2D
     from nexora.nodes.node import Node
 
 

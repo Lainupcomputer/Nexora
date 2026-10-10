@@ -6,8 +6,8 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from nexora.animation import AnimationStateMachine
-from nexora.nodes.entity.character_body_2d import CharacterBody2D
-from nexora.state_machine import State, StateMachine
+from nexora.nodes.physics.character_body_2d import CharacterBody2D
+from nexora.animation.fsm import State, StateMachine
 
 
 @dataclass(slots=True)

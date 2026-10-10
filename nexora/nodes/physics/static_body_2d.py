@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nexora.nodes.entity.body_2d import (
+from nexora.nodes.physics.body_2d import (
     Body2D,
 )
 

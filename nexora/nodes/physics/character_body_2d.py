@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nexora.nodes.entity.body_2d import (
+from nexora.nodes.physics.body_2d import (
     Body2D,
 )
 
@@ -455,7 +455,7 @@ class CharacterBody2D(Body2D):
         Area2D nodes are detection only and never block movement.
         """
 
-        from nexora.nodes.entity.area_2d import (
+        from nexora.nodes.physics.area_2d import (
             Area2D,
         )
 

@@ -5,7 +5,7 @@ import time
 
 import sdl3
 
-from nexora.debug.physics import (
+from nexora.core.debug.physics import (
     PhysicsDebugRenderer,
 )
 from nexora.ecs.world import World
@@ -19,7 +19,7 @@ from nexora.nodes import (
 )
 from nexora.rendering.gpu.context import GPUContext
 from nexora.rendering.renderer import Renderer
-from nexora.threading.context import ThreadContext
+from nexora.core.jobs.context import ThreadContext
 
 
 # ==============================================================

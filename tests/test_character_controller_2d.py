@@ -4,7 +4,7 @@ import pytest
 
 from nexora.animation import AnimationClip, AnimationFrame
 from nexora.ecs.world import World
-from nexora.nodes.entity import AttackProfile, CharacterController2D
+from nexora.nodes.physics import AttackProfile, CharacterController2D
 from nexora.nodes.texture import AnimatedSprite
 from nexora.scene.serialization.registry import NodeFactoryRegistry
 

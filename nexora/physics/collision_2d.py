@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    from nexora.nodes.entity.body_2d import Body2D
-    from nexora.nodes.entity.collision_shape_2d import (
+    from nexora.nodes.physics.body_2d import Body2D
+    from nexora.nodes.physics.collision_shape_2d import (
         CollisionShape2D,
     )
 

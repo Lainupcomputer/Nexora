@@ -9,15 +9,17 @@ from .camera import (
     FixedCamera2D,
 )
 
-from .entity import (
+from .physics import (
+    Area2D,
+    AttackProfile,
     Body2D,
-    CollisionShape2D,
+    BodyMoveResult,
     CharacterBody2D,
     CharacterController2D,
-    AttackProfile,
-    Vector2,
+    CollisionShape2D,
+    RayCast2D,
     StaticBody2D,
-    Area2D,
+    Vector2,
 )
 
 
@@ -104,15 +106,17 @@ __all__ = [
     "CinematicCamera2D",
     "FixedCamera2D",
 
-    # Entity
+    # Physics
+    "Area2D",
+    "AttackProfile",
     "Body2D",
-    "CollisionShape2D",
+    "BodyMoveResult",
     "CharacterBody2D",
     "CharacterController2D",
-    "AttackProfile",
-    "Vector2",
+    "CollisionShape2D",
+    "RayCast2D",
     "StaticBody2D",
-    "Area2D",
+    "Vector2",
 
     # Effects
     "ParticleEmitter2D",
@@ -184,22 +188,3 @@ __all__ = [
     "GameTab",
 ]
 
-from .entity import (
-    Body2D,
-    CollisionShape2D,
-    BodyMoveResult,
-    CharacterBody2D,
-    Vector2,
-    StaticBody2D,
-    Area2D,
-)
-from .entity import (
-    Body2D,
-    CollisionShape2D,
-    BodyMoveResult,
-    CharacterBody2D,
-    Vector2,
-    StaticBody2D,
-    Area2D,
-    RayCast2D,
-)
