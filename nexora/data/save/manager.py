@@ -1,102 +1,42 @@
 from __future__ import annotations
 
-import os
-import re
-
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from nexora.data import (
-    DataIntegrityError,
-    DataTypeMismatchError,
-    InvalidDataFileError,
-    UnsafeDataError,
-    UnsupportedDataVersionError,
-    atomic_write,
-)
-from nexora.data.codecs import savegame as savegame_codec
 from nexora.data.file import normalize_signing_key
 
-from nexora.save.errors import (
+
+from nexora.data.save.errors import (
     InvalidSaveError,
-    SaveIntegrityError,
     SaveNotFoundError,
-    UnsafeSaveDataError,
-    UnsupportedSaveVersionError,
 )
 
-from nexora.save.events import (
+from nexora.data.save.dispatcher import (
+    SaveEventDispatcher,
+    SaveEventListener,
+)
+from nexora.data.save.events import (
     SaveEvent,
     SaveEventState,
     SaveKind,
     SaveOperation,
 )
 
-from nexora.save.save_data import (
+from nexora.data.save.storage import SaveSlotStore
+from nexora.data.save.autosave import AutoSaveController
+from nexora.data.save.quick import QuickSaveController
+from nexora.data.save.serialization import (
+    decode_save as _decode_save,
+    encode_save as _encode_save,
+)
+
+from nexora.data.save.save_data import (
     SaveGame,
     SaveMetadata,
 )
 
 
-_SLOT_PATTERN = re.compile(
-    r"^[A-Za-z0-9_-]{1,64}$"
-)
 
-
-SaveEventListener = Callable[
-    [SaveEvent],
-    None,
-]
-
-
-def _translate_data_error(exc: Exception) -> Exception:
-    """Translate shared data errors to the public save API."""
-    if isinstance(exc, UnsafeDataError):
-        return UnsafeSaveDataError(str(exc))
-    if isinstance(exc, DataIntegrityError):
-        return SaveIntegrityError(str(exc))
-    if isinstance(exc, UnsupportedDataVersionError):
-        return UnsupportedSaveVersionError(str(exc))
-    if isinstance(exc, (InvalidDataFileError, DataTypeMismatchError)):
-        return InvalidSaveError(str(exc))
-    return exc
-
-
-def _encode_save(
-    envelope: dict[str, Any],
-    *,
-    signing_key: bytes | str,
-) -> bytes:
-    try:
-        return savegame_codec.encode(
-            envelope,
-            signing_key=signing_key,
-        )
-    except Exception as exc:
-        translated = _translate_data_error(exc)
-        if translated is exc:
-            raise
-        raise translated from exc
-
-
-def _decode_save(
-    raw: bytes,
-    *,
-    signing_key: bytes | str,
-    max_payload_size: int,
-) -> dict[str, Any]:
-    try:
-        return savegame_codec.decode(
-            raw,
-            signing_key=signing_key,
-            max_file_size=max_payload_size,
-        )
-    except Exception as exc:
-        translated = _translate_data_error(exc)
-        if translated is exc:
-            raise
-        raise translated from exc
 
 
 class SaveManager:
@@ -142,101 +82,57 @@ class SaveManager:
         autosave_prefix: str = "autosave",
         create_directory: bool = True,
     ) -> None:
-        # ======================================================
-        # Validation
-        # ======================================================
-
         if max_file_size <= 0:
             raise ValueError(
                 "max_file_size must be greater than zero."
             )
-
         if save_version <= 0:
             raise ValueError(
                 "save_version must be greater than zero."
             )
-
         if autosave_slots <= 0:
             raise ValueError(
                 "autosave_slots must be greater than zero."
             )
 
-        # ======================================================
-        # Signing
-        # ======================================================
+        # Validate policy slot names before touching the filesystem.
+        quick_save_slot = self.validate_slot(quick_save_slot)
+        autosave_prefix = self.validate_slot(autosave_prefix)
 
-        self._signing_key = (
-            normalize_signing_key(
-                signing_key
-            )
-        )
+        self._signing_key = normalize_signing_key(signing_key)
+        self.save_version = int(save_version)
+        self.max_file_size = int(max_file_size)
+        self._create_save_directory = bool(create_directory)
 
-        # ======================================================
-        # Save configuration
-        # ======================================================
-
-        self.save_version = int(
-            save_version
-        )
-
-        self.max_file_size = int(
-            max_file_size
-        )
-
-        # ======================================================
-        # Quick save
-        # ======================================================
-
-        self._quick_save_enabled = bool(
-            quick_save_enabled
-        )
-
-        self._quick_save_slot = (
-            self.validate_slot(
-                quick_save_slot
-            )
-        )
-
-        # ======================================================
-        # Autosave
-        # ======================================================
-
-        self._autosave_enabled = bool(
-            autosave_enabled
-        )
-
-        self._autosave_slots = int(
-            autosave_slots
-        )
-
-        self._autosave_prefix = (
-            self.validate_slot(
-                autosave_prefix
-            )
-        )
-
-        self._create_save_directory = bool(
-            create_directory
-        )
-
-        # ======================================================
-        # Save path
-        # ======================================================
-
-        self._save_path = Path()
-
-        self.set_save_path(
+        self._slot_store = SaveSlotStore(
             save_path,
+            extension=self.FILE_EXTENSION,
             create_directory=self._create_save_directory,
         )
+        self._event_dispatcher = SaveEventDispatcher()
 
-        # ======================================================
-        # Events
-        # ======================================================
-
-        self._listeners: list[
-            SaveEventListener
-        ] = []
+        self._quick_saves = QuickSaveController(
+            enabled=quick_save_enabled,
+            slot=quick_save_slot,
+            validate_slot=self.validate_slot,
+            save=self._save,
+            load=self._load,
+            exists=self.exists,
+            delete=self._delete,
+        )
+        self._autosaves = AutoSaveController(
+            enabled=autosave_enabled,
+            slots=autosave_slots,
+            prefix=autosave_prefix,
+            slot_store=self._slot_store,
+            validate_slot=self.validate_slot,
+            save=self._save,
+            load=self._load,
+            exists=self.exists,
+            delete=self._delete,
+            signing_key=lambda: self._signing_key,
+            max_file_size=lambda: self.max_file_size,
+        )
 
     # ==========================================================
     # SAVE PATH
@@ -246,7 +142,7 @@ class SaveManager:
     def save_path(
         self,
     ) -> Path:
-        return self._save_path
+        return self._slot_store.path
 
     @save_path.setter
     def save_path(
@@ -263,39 +159,11 @@ class SaveManager:
         *,
         create_directory: bool | None = None,
     ) -> Path:
-        """
-        Change the directory used for save files.
-
-        Directory creation can be disabled for read-only tool
-        applications such as the standalone editors.
-        """
-
-        path = Path(
-            value
-        ).expanduser()
-
-        if create_directory is None:
-            create_directory = self._create_save_directory
-
-        if create_directory:
-            path.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-
-        # Read-only tool applications may intentionally point at a
-        # directory that does not exist. It must remain absent until a
-        # caller explicitly enables persistence.
-        if path.exists() and not path.is_dir():
-            raise NotADirectoryError(
-                str(path)
-            )
-
-        self._save_path = (
-            path.resolve()
+        """Change the directory used for save files."""
+        return self._slot_store.set_path(
+            value,
+            create_directory=create_directory,
         )
-
-        return self._save_path
 
     # ==========================================================
     # SIGNING KEY
@@ -329,90 +197,30 @@ class SaveManager:
         SaveEventListener,
         ...
     ]:
-        """
-        Return currently registered event listeners.
-        """
-
-        return tuple(
-            self._listeners
-        )
+        return self._event_dispatcher.listeners
 
     def add_listener(
         self,
         callback: SaveEventListener,
     ) -> None:
-        """
-        Subscribe to SaveManager events.
-
-        Adding the same callback more than once has no effect.
-        """
-
-        if not callable(
-            callback
-        ):
-            raise TypeError(
-                "Save event listener must be callable."
-            )
-
-        if callback in self._listeners:
-            return
-
-        self._listeners.append(
-            callback
-        )
+        self._event_dispatcher.add(callback)
 
     def remove_listener(
         self,
         callback: SaveEventListener,
     ) -> bool:
-        """
-        Remove an event listener.
-
-        Returns True when the listener was registered.
-        """
-
-        try:
-            self._listeners.remove(
-                callback
-            )
-
-        except ValueError:
-            return False
-
-        return True
+        return self._event_dispatcher.remove(callback)
 
     def clear_listeners(
         self,
     ) -> None:
-        """
-        Remove all SaveManager listeners.
-        """
-
-        self._listeners.clear()
+        self._event_dispatcher.clear()
 
     def _emit(
         self,
         event: SaveEvent,
     ) -> None:
-        """
-        Dispatch an event.
-
-        Listener errors are isolated from save operations.
-
-        A broken notification listener must never cause a
-        save or load operation itself to fail.
-        """
-
-        for callback in tuple(
-            self._listeners
-        ):
-            try:
-                callback(
-                    event
-                )
-
-            except Exception:
-                continue
+        self._event_dispatcher.emit(event)
 
     # ==========================================================
     # QUICK SAVE CONFIGURATION
@@ -422,33 +230,27 @@ class SaveManager:
     def quick_save_enabled(
         self,
     ) -> bool:
-        return self._quick_save_enabled
+        return self._quick_saves.enabled
 
     @quick_save_enabled.setter
     def quick_save_enabled(
         self,
         enabled: bool,
     ) -> None:
-        self._quick_save_enabled = bool(
-            enabled
-        )
+        self._quick_saves.enabled = bool(enabled)
 
     @property
     def quick_save_slot(
         self,
     ) -> str:
-        return self._quick_save_slot
+        return self._quick_saves.slot
 
     @quick_save_slot.setter
     def quick_save_slot(
         self,
         slot: str,
     ) -> None:
-        self._quick_save_slot = (
-            self.validate_slot(
-                slot
-            )
-        )
+        self._quick_saves.slot = slot
 
     # ==========================================================
     # AUTOSAVE CONFIGURATION
@@ -458,28 +260,26 @@ class SaveManager:
     def autosave_enabled(
         self,
     ) -> bool:
-        return self._autosave_enabled
+        return self._autosaves.enabled
 
     @autosave_enabled.setter
     def autosave_enabled(
         self,
         enabled: bool,
     ) -> None:
-        self._autosave_enabled = bool(
-            enabled
-        )
+        self._autosaves.enabled = bool(enabled)
 
     @property
     def autosave_slots(
         self,
     ) -> int:
-        return self._autosave_slots
+        return self._autosaves.slots
 
     @property
     def autosave_prefix(
         self,
     ) -> str:
-        return self._autosave_prefix
+        return self._autosaves.prefix
 
     # ==========================================================
     # SLOT VALIDATION
@@ -489,20 +289,7 @@ class SaveManager:
     def validate_slot(
         slot: str,
     ) -> str:
-        slot = str(
-            slot
-        )
-
-        if not _SLOT_PATTERN.fullmatch(
-            slot
-        ):
-            raise ValueError(
-                "Invalid save slot name. "
-                "Allowed: A-Z, a-z, 0-9, '_' and '-'. "
-                "Maximum length: 64."
-            )
-
-        return slot
+        return SaveSlotStore.validate_slot(slot)
 
     # ==========================================================
     # PATH
@@ -512,17 +299,7 @@ class SaveManager:
         self,
         slot: str,
     ) -> Path:
-        slot = self.validate_slot(
-            slot
-        )
-
-        return (
-            self._save_path
-            / (
-                slot
-                + self.FILE_EXTENSION
-            )
-        )
+        return self._slot_store.slot_path(slot)
 
     # ==========================================================
     # MANUAL SAVE
@@ -955,21 +732,10 @@ class SaveManager:
         name: str = "Quick Save",
         playtime: float = 0.0,
     ) -> SaveMetadata:
-        """
-        Create a quick save.
-        """
-
-        if not self._quick_save_enabled:
-            raise RuntimeError(
-                "Quick saving is disabled."
-            )
-
-        return self._save(
-            self._quick_save_slot,
+        return self._quick_saves.save(
             data,
             name=name,
             playtime=playtime,
-            kind=SaveKind.QUICK,
         )
 
     # ==========================================================
@@ -979,19 +745,7 @@ class SaveManager:
     def quick_load(
         self,
     ) -> SaveGame:
-        """
-        Load the current quick-save slot.
-        """
-
-        if not self._quick_save_enabled:
-            raise RuntimeError(
-                "Quick saving is disabled."
-            )
-
-        return self._load(
-            self._quick_save_slot,
-            kind=SaveKind.QUICK,
-        )
+        return self._quick_saves.load()
 
     # ==========================================================
     # QUICK SAVE EXISTS
@@ -1000,12 +754,7 @@ class SaveManager:
     def has_quick_save(
         self,
     ) -> bool:
-        if not self._quick_save_enabled:
-            return False
-
-        return self.exists(
-            self._quick_save_slot
-        )
+        return self._quick_saves.exists()
 
     # ==========================================================
     # DELETE QUICK SAVE
@@ -1014,10 +763,7 @@ class SaveManager:
     def delete_quick_save(
         self,
     ) -> bool:
-        return self._delete(
-            self._quick_save_slot,
-            kind=SaveKind.QUICK,
-        )
+        return self._quick_saves.delete()
 
     # ==========================================================
     # AUTOSAVE
@@ -1030,445 +776,57 @@ class SaveManager:
         name: str = "Auto Save",
         playtime: float = 0.0,
     ) -> SaveMetadata:
-        """
-        Create a rotating autosave.
-
-        autosave_1 is always the newest save.
-
-        Existing saves are shifted:
-
-            autosave_1 -> autosave_2
-            autosave_2 -> autosave_3
-            ...
-
-        The oldest slot is discarded.
-        """
-
-        if not self._autosave_enabled:
-            raise RuntimeError(
-                "Autosaving is disabled."
-            )
-
-        self._rotate_auto_saves()
-
-        slot = (
-            self._autosave_slot_name(
-                1
-            )
-        )
-
-        return self._save(
-            slot,
+        return self._autosaves.save(
             data,
             name=name,
             playtime=playtime,
-            kind=SaveKind.AUTO,
         )
-
-    # ==========================================================
-    # AUTOSAVE SLOT
-    # ==========================================================
 
     def _autosave_slot_name(
         self,
         index: int,
     ) -> str:
-        if index <= 0:
-            raise ValueError(
-                "Autosave index must be greater than zero."
-            )
-
-        return (
-            f"{self._autosave_prefix}_{index}"
-        )
-
-    # ==========================================================
-    # AUTOSAVE ROTATION
-    # ==========================================================
+        return self._autosaves.slot_name(index)
 
     def _rotate_auto_saves(
         self,
     ) -> None:
-        """
-        Shift existing autosaves from newest to oldest.
-
-        The save file cannot simply be renamed because metadata.slot
-        must always match the filename / target slot.
-        """
-
-        # ------------------------------------------------------
-        # Remove oldest
-        # ------------------------------------------------------
-
-        oldest_slot = (
-            self._autosave_slot_name(
-                self._autosave_slots
-            )
-        )
-
-        oldest_path = (
-            self.slot_path(
-                oldest_slot
-            )
-        )
-
-        if oldest_path.exists():
-            oldest_path.unlink()
-
-        # ------------------------------------------------------
-        # Shift backwards
-        # ------------------------------------------------------
-
-        for index in range(
-            self._autosave_slots - 1,
-            0,
-            -1,
-        ):
-            source_slot = (
-                self._autosave_slot_name(
-                    index
-                )
-            )
-
-            destination_slot = (
-                self._autosave_slot_name(
-                    index + 1
-                )
-            )
-
-            source_path = (
-                self.slot_path(
-                    source_slot
-                )
-            )
-
-            if not source_path.exists():
-                continue
-
-            self._relocate_save(
-                source_slot,
-                destination_slot,
-            )
-
+        self._autosaves.rotate()
 
     def _relocate_save(
         self,
         source_slot: str,
         destination_slot: str,
     ) -> None:
-        """
-        Move a save to another slot while updating its embedded
-        metadata.slot value.
-
-        This is required for autosave rotation because the slot identity
-        is part of the signed save payload.
-        """
-
-        source_slot = self.validate_slot(
-            source_slot
+        self._autosaves.relocate(
+            source_slot,
+            destination_slot,
         )
-
-        destination_slot = self.validate_slot(
-            destination_slot
-        )
-
-        source_path = (
-            self.slot_path(
-                source_slot
-            )
-        )
-
-        destination_path = (
-            self.slot_path(
-                destination_slot
-            )
-        )
-
-        # ------------------------------------------------------
-        # Read source
-        # ------------------------------------------------------
-
-        try:
-            raw = source_path.read_bytes()
-
-        except OSError as exc:
-            raise InvalidSaveError(
-                f"Could not read save slot '{source_slot}'."
-            ) from exc
-
-        # ------------------------------------------------------
-        # Decode and verify
-        # ------------------------------------------------------
-
-        envelope = _decode_save(
-            raw,
-            signing_key=(
-                self._signing_key
-            ),
-            max_payload_size=(
-                self.max_file_size
-            ),
-        )
-
-        if not isinstance(
-            envelope,
-            dict,
-        ):
-            raise InvalidSaveError(
-                "Save root must be a dictionary."
-            )
-
-        required = {
-            "save_version",
-            "metadata",
-            "data",
-        }
-
-        if not required.issubset(
-            envelope
-        ):
-            raise InvalidSaveError(
-                "Save envelope is incomplete."
-            )
-
-        metadata_raw = (
-            envelope[
-                "metadata"
-            ]
-        )
-
-        if not isinstance(
-            metadata_raw,
-            dict,
-        ):
-            raise InvalidSaveError(
-                "Save metadata is invalid."
-            )
-
-        # ------------------------------------------------------
-        # Verify original slot identity
-        # ------------------------------------------------------
-
-        metadata = (
-            SaveMetadata.from_dict(
-                metadata_raw
-            )
-        )
-
-        if (
-            metadata.slot
-            != source_slot
-        ):
-            raise InvalidSaveError(
-                "Save slot metadata does not match source filename."
-            )
-
-        # ------------------------------------------------------
-        # Update slot identity
-        # ------------------------------------------------------
-
-        new_metadata = dict(
-            metadata_raw
-        )
-
-        new_metadata[
-            "slot"
-        ] = destination_slot
-
-        new_envelope = dict(
-            envelope
-        )
-
-        new_envelope[
-            "metadata"
-        ] = new_metadata
-
-        # ------------------------------------------------------
-        # Encode again
-        # ------------------------------------------------------
-
-        encoded = _encode_save(
-            new_envelope,
-            signing_key=(
-                self._signing_key
-            ),
-        )
-
-        if (
-            len(
-                encoded
-            )
-            > self.max_file_size
-        ):
-            raise InvalidSaveError(
-                "Rotated save exceeds configured maximum size."
-            )
-
-        # ------------------------------------------------------
-        # Write destination atomically
-        # ------------------------------------------------------
-
-        self._atomic_write(
-            destination_path,
-            encoded,
-        )
-
-        # ------------------------------------------------------
-        # Remove source
-        # ------------------------------------------------------
-
-        try:
-            source_path.unlink()
-
-        except OSError as exc:
-            raise InvalidSaveError(
-                f"Could not remove rotated source slot "
-                f"'{source_slot}'."
-            ) from exc
-
-    # ==========================================================
-    # LIST AUTOSAVES
-    # ==========================================================
 
     def list_auto_saves(
         self,
-    ) -> tuple[
-        str,
-        ...
-    ]:
-        """
-        Return existing autosaves from newest to oldest.
-        """
-
-        slots: list[str] = []
-
-        for index in range(
-            1,
-            self._autosave_slots + 1,
-        ):
-            slot = (
-                self._autosave_slot_name(
-                    index
-                )
-            )
-
-            if self.exists(
-                slot
-            ):
-                slots.append(
-                    slot
-                )
-
-        return tuple(
-            slots
-        )
-
-    # ==========================================================
-    # LATEST AUTOSAVE
-    # ==========================================================
+    ) -> tuple[str, ...]:
+        return self._autosaves.list_slots()
 
     def latest_auto_save_slot(
         self,
     ) -> str | None:
-        """
-        Return the newest autosave slot.
-        """
-
-        slot = (
-            self._autosave_slot_name(
-                1
-            )
-        )
-
-        if not self.exists(
-            slot
-        ):
-            return None
-
-        return slot
-
-    # ==========================================================
-    # LOAD AUTOSAVE
-    # ==========================================================
+        return self._autosaves.latest_slot()
 
     def load_latest_auto_save(
         self,
     ) -> SaveGame:
-        """
-        Load the newest autosave.
-        """
-
-        if not self._autosave_enabled:
-            raise RuntimeError(
-                "Autosaving is disabled."
-            )
-
-        slot = (
-            self.latest_auto_save_slot()
-        )
-
-        if slot is None:
-            raise SaveNotFoundError(
-                "No autosave exists."
-            )
-
-        return self._load(
-            slot,
-            kind=SaveKind.AUTO,
-        )
-
-    # ==========================================================
-    # AUTOSAVE EXISTS
-    # ==========================================================
+        return self._autosaves.load_latest()
 
     def has_auto_save(
         self,
     ) -> bool:
-        if not self._autosave_enabled:
-            return False
-
-        return (
-            self.latest_auto_save_slot()
-            is not None
-        )
-
-    # ==========================================================
-    # DELETE AUTOSAVES
-    # ==========================================================
+        return self._autosaves.exists()
 
     def delete_auto_saves(
         self,
     ) -> int:
-        """
-        Delete every autosave.
-
-        Deletion is allowed even when autosaving is disabled.
-
-        Returns
-        -------
-        int
-            Number of deleted autosave files.
-        """
-
-        deleted = 0
-
-        for index in range(
-            1,
-            self._autosave_slots + 1,
-        ):
-            slot = (
-                self._autosave_slot_name(
-                    index
-                )
-            )
-
-            if self._delete(
-                slot,
-                kind=SaveKind.AUTO,
-            ):
-                deleted += 1
-
-        return deleted
+        return self._autosaves.delete_all()
 
     # ==========================================================
     # EXISTS
@@ -1478,11 +836,7 @@ class SaveManager:
         self,
         slot: str,
     ) -> bool:
-        return (
-            self.slot_path(
-                slot
-            ).is_file()
-        )
+        return self._slot_store.exists(slot)
 
     # ==========================================================
     # DELETE
@@ -1599,39 +953,8 @@ class SaveManager:
         str,
         ...
     ]:
-        """
-        Return available save slot names.
-
-        Files are not deserialized by this operation.
-        """
-
-        slots = []
-
-        for path in self._save_path.glob(
-            "*" + self.FILE_EXTENSION
-        ):
-            if not path.is_file():
-                continue
-
-            slot = path.stem
-
-            try:
-                self.validate_slot(
-                    slot
-                )
-
-            except ValueError:
-                continue
-
-            slots.append(
-                slot
-            )
-
-        slots.sort()
-
-        return tuple(
-            slots
-        )
+        """Return available save slot names without deserializing files."""
+        return self._slot_store.list_slots()
 
     # ==========================================================
     # METADATA
@@ -1662,6 +985,4 @@ class SaveManager:
         destination: Path,
         data: bytes,
     ) -> None:
-        """Write through the shared Nexora data atomic-write helper."""
-        atomic_write(destination, data)
-
+        self._slot_store.write_path(destination, data)

@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from nexora import Game
-from nexora.save import SaveManager
-from nexora.save.errors import (
+from nexora.data.save import SaveManager
+from nexora.data.save.errors import (
     SaveNotFoundError,
 )
 

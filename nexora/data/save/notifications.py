@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nexora.save.events import (
+from nexora.data.save.events import (
     SaveEvent,
     SaveEventState,
     SaveKind,
