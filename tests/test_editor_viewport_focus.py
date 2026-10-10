@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from nexora.editor.scene import EditorScene
+from nexora.editor.main.scene import EditorScene
 
 
 def test_focus_selected_node_centers_viewport() -> None:

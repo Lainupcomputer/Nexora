@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from nexora.editor.viewport import EditorViewportState
+from nexora.editor.main.viewport import EditorViewportState
 
 
 def test_world_screen_round_trip():

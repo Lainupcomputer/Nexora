@@ -3,6 +3,7 @@ from __future__ import annotations
 from nexora.nodes import Node
 from nexora.editor.model import (
     EditorDocument,
+    EditorProjectContext,
     ProjectModel,
     SelectionService,
 )
@@ -19,6 +20,51 @@ def test_project_model_discovers_scenes_and_assets(tmp_path):
     assert len(model.iter_scene_files()) == 1
     assert len(model.iter_assets()) == 1
     assert model.iter_assets()[0].relative_path.as_posix() == "assets/icon.png"
+
+
+
+
+def test_project_context_normalizes_common_asset_reference_prefixes(tmp_path):
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    texture = assets / "characters" / "hero.png"
+    texture.parent.mkdir()
+    texture.write_bytes(b"png")
+
+    context = EditorProjectContext.from_path(tmp_path)
+
+    assert context.resolve_asset("characters/hero.png") == texture.resolve()
+    assert context.resolve_asset("assets/characters/hero.png") == texture.resolve()
+    assert context.resolve_asset("MyGame/assets/characters/hero.png") == texture.resolve()
+
+
+def test_project_context_resolves_project_files_with_shared_asset_fallback(tmp_path):
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    tilemap = assets / "maps" / "farm.tilemap.net"
+    tilemap.parent.mkdir()
+    tilemap.write_bytes(b"map")
+
+    context = EditorProjectContext.from_path(tmp_path)
+
+    assert context.resolve_project_file(
+        "assets/maps/farm.tilemap.net",
+        include_assets=True,
+    ) == tilemap.resolve()
+
+
+def test_project_model_uses_context_asset_root_for_mygame_layout(tmp_path):
+    assets = tmp_path / "MyGame" / "assets"
+    assets.mkdir(parents=True)
+    icon = assets / "icon.png"
+    icon.write_bytes(b"png")
+
+    model = ProjectModel(tmp_path)
+    entries = model.iter_assets()
+
+    assert len(entries) == 1
+    assert entries[0].path == icon
+    assert entries[0].relative_path.as_posix() == "MyGame/assets/icon.png"
 
 
 def test_editor_document_exposes_world_and_ui_roots():

@@ -67,9 +67,33 @@ class EditorProjectContext:
         candidates.extend((self.root / "assets", self.root / "MyGame" / "assets"))
         return next((candidate for candidate in candidates if candidate.is_dir()), self.root)
 
+    def normalize_asset_reference(self, value: str | Path) -> Path:
+        """Normalize asset references to the path stored below an asset root.
+
+        Editors may encounter ``foo.png``, ``assets/foo.png`` or
+        ``MyGame/assets/foo.png``.  Prefix handling is centralized here so all
+        editor modes interpret the same serialized reference identically.
+        """
+
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path
+
+        parts = path.parts
+        lowered = tuple(part.lower() for part in parts)
+        if len(parts) >= 3 and lowered[:2] == ("mygame", "assets"):
+            return Path(*parts[2:])
+        if len(parts) >= 2 and lowered[0] == "assets":
+            return Path(*parts[1:])
+        return path
+
     def relative_asset(self, path: str | Path, *, root: str | Path | None = None) -> str:
         candidate = Path(path).expanduser().resolve()
-        asset_root = Path(root).resolve() if root is not None else self.assets_root.resolve()
+        asset_root = (
+            Path(root).expanduser().resolve()
+            if root is not None
+            else self.assets_root.resolve()
+        )
         try:
             return candidate.relative_to(asset_root).as_posix()
         except ValueError:
@@ -84,32 +108,76 @@ class EditorProjectContext:
         *,
         reference: str | Path | None = None,
     ) -> Path:
-        path = Path(value).expanduser()
+        path = self.normalize_asset_reference(value)
         if path.is_absolute():
-            return path
+            return path.resolve()
+
         asset_root = self.asset_root_for(reference)
-        candidates = (
+        candidates = self._unique_candidates((
             asset_root / path,
             self.root / path,
             self.root / "assets" / path,
             self.root / "MyGame" / "assets" / path,
-        )
-        return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+        ))
+        return self._first_existing_file(candidates)
 
     def resolve_project_file(
         self,
         value: str | Path,
         *,
         roots: Iterable[str | Path] = (),
+        include_assets: bool = False,
+        reference: str | Path | None = None,
+        include_cwd: bool = True,
     ) -> Path:
-        path = Path(value).expanduser()
-        if path.is_absolute():
-            return path
-        candidates = tuple(Path(root) / path for root in roots) + (
-            self.root / path,
-            Path.cwd() / path,
-        )
-        return next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+        """Resolve an editor file using one project-wide candidate order.
+
+        Extra ``roots`` are searched first.  Callers can include asset roots
+        without rebuilding their own candidate list.  Project root and, by
+        default, the current working directory are the final fallbacks.
+        """
+
+        raw_path = Path(value).expanduser()
+        if raw_path.is_absolute():
+            return raw_path.resolve()
+
+        candidates: list[Path] = [
+            Path(root).expanduser() / raw_path
+            for root in roots
+        ]
+        if include_assets:
+            asset_path = self.normalize_asset_reference(raw_path)
+            asset_root = self.asset_root_for(reference)
+            candidates.extend((
+                asset_root / asset_path,
+                self.root / "assets" / asset_path,
+                self.root / "MyGame" / "assets" / asset_path,
+            ))
+        candidates.append(self.root / raw_path)
+        if include_cwd:
+            candidates.append(Path.cwd() / raw_path)
+
+        return self._first_existing_file(self._unique_candidates(candidates))
+
+    @staticmethod
+    def _unique_candidates(candidates: Iterable[str | Path]) -> tuple[Path, ...]:
+        result: list[Path] = []
+        seen: set[Path] = set()
+        for candidate in candidates:
+            resolved = Path(candidate).expanduser().resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            result.append(resolved)
+        return tuple(result)
+
+    @staticmethod
+    def _first_existing_file(candidates: Iterable[Path]) -> Path:
+        paths = tuple(candidates)
+        if not paths:
+            raise ValueError("At least one path candidate is required.")
+        return next((candidate for candidate in paths if candidate.is_file()), paths[0])
+
 
 
 @dataclass(slots=True, frozen=True)
@@ -146,7 +214,7 @@ class ProjectModel:
         )
 
     def iter_assets(self) -> tuple[ProjectEntry, ...]:
-        assets_root = self.root / "assets"
+        assets_root = self.context.assets_root
 
         if not assets_root.is_dir():
             return ()

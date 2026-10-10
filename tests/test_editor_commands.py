@@ -7,7 +7,7 @@ from nexora.editor.commands import (
     InstantiatePrefabCommand,
     RenameNodeCommand,
 )
-from nexora.nodes.entity import CollisionShape2D, StaticBody2D
+from nexora.nodes.physics import CollisionShape2D, StaticBody2D
 from nexora.scene import Scene
 from nexora.scene.serialization import (
     NodeFactoryRegistry,

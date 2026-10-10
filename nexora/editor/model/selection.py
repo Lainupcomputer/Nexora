@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nexora.signals import Signal
+from nexora.core.signals import Signal
 
 
 class SelectionService:

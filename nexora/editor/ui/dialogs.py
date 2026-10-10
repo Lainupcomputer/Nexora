@@ -30,6 +30,47 @@ def browser_window(
     )
 
 
+def layout_file_browser_dialog(
+    viewport: tuple[float, float],
+    *,
+    list_box,
+    cancel_button,
+    name_field=None,
+    action_button=None,
+    show_filename: bool = False,
+    margin_x: float = 150.0,
+    margin_y: float = 76.0,
+) -> Rect:
+    """Apply the canonical file-dialog geometry to its controls."""
+
+    window = browser_window(viewport, margin_x=margin_x, margin_y=margin_y)
+    footer_y = window.y + window.height - 50.0
+    list_bottom = window.y + window.height - (150.0 if show_filename else 72.0)
+    list_box.rect = Rect(
+        window.x + 18.0,
+        window.y + 78.0,
+        max(220.0, window.width - 36.0),
+        max(100.0, list_bottom - (window.y + 78.0)),
+    )
+
+    button_width = 108.0
+    button_height = 32.0
+    cancel_x = window.x + window.width - 18.0 - button_width
+    if show_filename and action_button is not None:
+        action_button.rect = Rect(cancel_x, footer_y, button_width, button_height)
+        cancel_x -= button_width + 10.0
+    cancel_button.rect = Rect(cancel_x, footer_y, button_width, button_height)
+
+    if show_filename and name_field is not None:
+        name_field.rect = Rect(
+            window.x + 18.0,
+            footer_y,
+            max(180.0, cancel_x - (window.x + 18.0) - 14.0),
+            button_height,
+        )
+    return window
+
+
 def render_file_browser_dialog(
     renderer,
     viewport: tuple[float, float],
@@ -49,7 +90,16 @@ def render_file_browser_dialog(
 
     width, height = viewport
     draw_rect(renderer, Rect(0, 0, width, height), (0, 0, 0, 175), viewport)
-    window = browser_window(viewport, margin_x=margin_x, margin_y=margin_y)
+    window = layout_file_browser_dialog(
+        viewport,
+        list_box=list_box,
+        cancel_button=cancel_button,
+        name_field=name_field,
+        action_button=action_button,
+        show_filename=show_filename,
+        margin_x=margin_x,
+        margin_y=margin_y,
+    )
     draw_rect(renderer, window, theme.panel, viewport, radius=6.0)
     draw_outline(renderer, window, theme.border, viewport)
 
@@ -64,23 +114,6 @@ def render_file_browser_dialog(
         color=theme.muted,
     )
 
-    footer_y = window.y + window.height - 50.0
-    list_bottom = window.y + window.height - (150.0 if show_filename else 72.0)
-    list_box.rect = Rect(
-        window.x + 18.0,
-        window.y + 78.0,
-        max(220.0, window.width - 36.0),
-        max(100.0, list_bottom - (window.y + 78.0)),
-    )
-
-    button_width = 108.0
-    button_height = 32.0
-    cancel_x = window.x + window.width - 18.0 - button_width
-    if show_filename and action_button is not None:
-        action_button.rect = Rect(cancel_x, footer_y, button_width, button_height)
-        cancel_x -= button_width + 10.0
-    cancel_button.rect = Rect(cancel_x, footer_y, button_width, button_height)
-
     if show_filename and name_field is not None:
         draw_text(
             renderer,
@@ -90,12 +123,6 @@ def render_file_browser_dialog(
             viewport,
             scale=0.48,
             color=theme.muted,
-        )
-        name_field.rect = Rect(
-            window.x + 18.0,
-            footer_y,
-            max(180.0, cancel_x - (window.x + 18.0) - 14.0),
-            button_height,
         )
 
     list_box.render(renderer, viewport, theme)
@@ -146,6 +173,7 @@ def render_info_dialog(
 
 __all__ = [
     "browser_window",
+    "layout_file_browser_dialog",
     "render_file_browser_dialog",
     "render_info_dialog",
 ]

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from nexora import Game
 
-from nexora.editor.scene import (
+from nexora.editor.main.scene import (
     EditorScene,
 )
 from nexora.editor.model import (

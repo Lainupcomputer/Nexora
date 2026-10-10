@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from nexora.editor.app import EditorApp
+from nexora.editor.main.app import EditorApp
 from nexora.editor.model import EditorDocument
-from nexora.nodes.entity import StaticBody2D
+from nexora.nodes.physics import StaticBody2D
 from nexora.scene import Scene
 from nexora.scene.serialization import SceneSerializer
 

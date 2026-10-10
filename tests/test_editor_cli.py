@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from nexora.cli.main import build_parser
-from nexora.editor.app import resolve_project_path
+from nexora.editor.main.app import resolve_project_path
 
 
 def test_cli_editor_defaults_to_current_directory() -> None:

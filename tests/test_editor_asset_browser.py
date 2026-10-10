@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from nexora.editor.asset_browser import (
+from nexora.editor.main.asset_browser import (
     AssetBrowserModel,
     classify_asset,
     format_file_size,

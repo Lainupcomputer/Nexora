@@ -14,6 +14,7 @@ from .widgets import (
     ListBox,
     Menu,
     Rect,
+    Slider,
     TextField,
     UITheme,
     draw_outline,
@@ -22,6 +23,7 @@ from .widgets import (
     rgba,
 )
 from .browser import FileBrowserModel, sync_browser_list
+from .file_dialog import FileDialog
 from .layout import (
     FormLayout,
     centered_rect,
@@ -29,8 +31,7 @@ from .layout import (
     layout_equal_row,
     layout_fixed_row,
 )
-from .dialogs import browser_window, render_file_browser_dialog, render_info_dialog
-from .scene import StandaloneEditorScene
+from .dialogs import browser_window, layout_file_browser_dialog, render_file_browser_dialog, render_info_dialog
 from .render import (
     render_document_title,
     render_editor_shell,
@@ -48,6 +49,7 @@ __all__ = [
     "ListBox",
     "Menu",
     "Rect",
+    "Slider",
     "TextField",
     "UITheme",
     "draw_outline",
@@ -55,6 +57,7 @@ __all__ = [
     "draw_text",
     "rgba",
     "FileBrowserModel",
+    "FileDialog",
     "FormLayout",
     "sync_browser_list",
     "centered_rect",
@@ -62,6 +65,7 @@ __all__ = [
     "layout_equal_row",
     "layout_fixed_row",
     "browser_window",
+    "layout_file_browser_dialog",
     "render_file_browser_dialog",
     "render_info_dialog",
     "render_document_title",
@@ -69,5 +73,4 @@ __all__ = [
     "render_form_label",
     "render_section_title",
     "render_status_bar",
-    "StandaloneEditorScene",
 ]

@@ -21,15 +21,19 @@ UI_SCALE = 1.50
 
 @dataclass(slots=True)
 class UITheme:
-    background: Color = (17, 19, 23, 255)
-    panel: Color = (29, 32, 38, 255)
-    panel_dark: Color = (22, 25, 30, 255)
-    border: Color = (61, 67, 78, 255)
+    # Keep these values in sync with nexora.editor.theme. The Main Editor is
+    # the visual reference for every editor mode.
+    background: Color = (18, 20, 24, 255)
+    toolbar: Color = (24, 27, 32, 255)
+    panel: Color = (27, 30, 36, 255)
+    panel_dark: Color = (20, 23, 28, 255)
+    viewport: Color = (14, 16, 20, 255)
+    border: Color = (52, 57, 66, 255)
     input: Color = (35, 39, 47, 255)
-    input_focus: Color = (43, 49, 61, 255)
-    button: Color = (38, 43, 52, 255)
-    button_hover: Color = (52, 61, 76, 255)
-    accent: Color = (84, 142, 235, 255)
+    input_focus: Color = (46, 52, 63, 255)
+    button: Color = (35, 39, 47, 255)
+    button_hover: Color = (46, 52, 63, 255)
+    accent: Color = (83, 139, 255, 255)
     text: Color = (235, 237, 242, 255)
     muted: Color = (154, 161, 174, 255)
     warning: Color = (240, 174, 86, 255)
@@ -215,7 +219,7 @@ class Menu(Control):
     def render(self, renderer, viewport, theme: UITheme) -> None:
         if not self.visible:
             return
-        draw_rect(renderer, self.rect, theme.button_hover if self.hovered or self.open else theme.button, viewport, radius=4.0)
+        draw_rect(renderer, self.rect, theme.button_hover if self.hovered or self.open else theme.toolbar, viewport, radius=3.0)
         draw_outline(renderer, self.rect, theme.accent if self.open else theme.border, viewport)
         text_height = renderer.text_measure("Ag", scale=0.64 * UI_SCALE)[1]
         draw_text(renderer, self.title, self.rect.x + self.rect.width / 2.0, self.rect.y + (self.rect.height - text_height) / 2.0, viewport, scale=0.64, align="center")
@@ -337,6 +341,68 @@ class CheckBox(Control):
         if self.checked:
             draw_text(renderer, "✓", box.x + 3.0, box.y - 1.0, viewport, scale=0.65, color=theme.text)
         draw_text(renderer, self.text, self.rect.x + 28.0, self.rect.y + 2.0, viewport, scale=0.60, color=theme.text)
+
+
+class Slider(Control):
+    """Shared horizontal slider for standalone editor controls."""
+
+    def __init__(
+        self,
+        rect: Rect,
+        minimum: float,
+        maximum: float,
+        value: float,
+        on_change: Callable[[float], None] | None = None,
+    ) -> None:
+        super().__init__(rect)
+        self.minimum = float(minimum)
+        self.maximum = float(maximum)
+        self._value = float(value)
+        self.on_change = on_change
+        self.dragging = False
+        self.value = value
+
+    @property
+    def value(self) -> float:
+        return self._value
+
+    @value.setter
+    def value(self, value: float) -> None:
+        self._value = max(self.minimum, min(self.maximum, float(value)))
+
+    def update(self, input_manager, mouse_x: float, mouse_y: float) -> bool:
+        super().update(input_manager, mouse_x, mouse_y)
+        if self.enabled and self.hovered and input_manager.mouse_pressed("left"):
+            self.dragging = True
+        if self.dragging and not input_manager.mouse_down("left"):
+            self.dragging = False
+        if not self.dragging:
+            return False
+        fraction = (float(mouse_x) - self.rect.x) / max(1.0, self.rect.width)
+        self.value = self.minimum + max(0.0, min(1.0, fraction)) * (self.maximum - self.minimum)
+        if self.on_change is not None:
+            self.on_change(self.value)
+        return True
+
+    def render(self, renderer, viewport, theme: UITheme) -> None:
+        if not self.visible:
+            return
+        draw_rect(renderer, self.rect, theme.input, viewport, radius=4.0)
+        draw_outline(
+            renderer,
+            self.rect,
+            theme.accent if self.dragging else theme.border,
+            viewport,
+        )
+        fraction = (self.value - self.minimum) / max(1e-9, self.maximum - self.minimum)
+        fill = Rect(
+            self.rect.x + 2.0,
+            self.rect.y + 2.0,
+            max(0.0, (self.rect.width - 4.0) * fraction),
+            self.rect.height - 4.0,
+        )
+        if fill.width > 0.0:
+            draw_rect(renderer, fill, theme.accent, viewport, radius=3.0)
 
 
 class Dropdown(Control):

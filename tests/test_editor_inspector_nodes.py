@@ -6,8 +6,8 @@ from nexora.editor.inspector import (
 )
 from nexora.nodes.node import Node
 from nexora.nodes.effects import Light2D, LightOccluder2D
-from nexora.nodes.entity.character_body_2d import CharacterBody2D
-from nexora.nodes.entity.ray_cast_2d import RayCast2D
+from nexora.nodes.physics.character_body_2d import CharacterBody2D
+from nexora.nodes.physics.ray_cast_2d import RayCast2D
 from nexora.nodes.navigation.navigation_agent_2d import NavigationAgent2D
 
 

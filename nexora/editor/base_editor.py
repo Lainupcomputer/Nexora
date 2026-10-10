@@ -1,4 +1,4 @@
-"""Shared scene mechanics for Nexora's standalone editors.
+"""Shared scene mechanics for Nexora editor modes.
 
 This module deliberately owns only editor-shell behaviour: modal state,
 project-scoped file-browser plumbing, exclusive menus and renderer-backed
@@ -12,14 +12,21 @@ from pathlib import Path
 
 from nexora.scene import Scene
 
-from .browser import FileBrowserModel, sync_browser_list
-from .layout import close_other_menus
-from .widgets import Menu, TextField, UITheme
+from .ui.dialogs import render_info_dialog
+from .ui.file_dialog import FileDialog
+from .ui.layout import close_other_menus
+from .ui.widgets import Menu, TextField, UITheme
 
 
-class StandaloneEditorScene(Scene):
-    """Common shell for renderer-backed standalone editor scenes."""
+class EditorBaseScene(Scene):
+    """Shared base scene for every Nexora editor except the Project Hub.
 
+    The Main Editor defines the visual language; specialized editors reuse the
+    same theme, toolbar/status dimensions and common editor mechanics.
+    """
+
+    TOOLBAR_HEIGHT = 48.0
+    STATUS_HEIGHT = 26.0
     CONTROL_STOP_ON_HANDLED = False
     CONTROL_MANAGE_TEXT_FOCUS = True
     MODAL_CLOSE_STATUS: str | None = None
@@ -28,11 +35,23 @@ class StandaloneEditorScene(Scene):
         super().__init__(name)
         self.theme = UITheme()
         self.modal: str | None = None
+        self.file_dialog = FileDialog(
+            on_selected=self._browser_selected,
+            on_cancel=self._close_modal,
+            on_action=self._browser_action,
+        )
+        # Compatibility aliases retained while standalone editors migrate to
+        # the shared dialog API. They all reference the same implementation.
+        self.file_browser = self.file_dialog.model
+        self.browser_list = self.file_dialog.list_box
+        self.browser_name = self.file_dialog.name_field
+        self.browser_cancel_button = self.file_dialog.cancel_button
+        self.browser_save_button = self.file_dialog.action_button
+        self.browser_action_button = self.file_dialog.action_button
         self.browser_mode = ""
         self.browser_root = Path.cwd().resolve()
         self.browser_path = self.browser_root
         self.browser_entries: list[Path] = []
-        self.file_browser = FileBrowserModel()
         self.info_title = ""
         self.info_lines: tuple[str, ...] = ()
         self.menus: list[Menu] = []
@@ -41,14 +60,35 @@ class StandaloneEditorScene(Scene):
     # Project asset paths
     # ------------------------------------------------------------------
 
-    def _asset_root(self) -> Path:
-        return self.project_context.assets_root
+    def _asset_reference(self) -> str | Path | None:
+        """Reference used to select the active asset root for this editor."""
+        return None
 
-    def _asset_relative(self, path: Path) -> str:
+    def _asset_root(self) -> Path:
+        return self.project_context.asset_root_for(self._asset_reference())
+
+    def _asset_relative(self, path: str | Path) -> str:
         return self.project_context.relative_asset(path, root=self._asset_root())
 
     def _asset_path(self, value: str | Path) -> Path:
-        return self.project_context.resolve_asset(value)
+        return self.project_context.resolve_asset(
+            value,
+            reference=self._asset_reference(),
+        )
+
+    def _project_file_path(
+        self,
+        value: str | Path,
+        *,
+        roots: Iterable[str | Path] = (),
+        include_assets: bool = False,
+    ) -> Path:
+        return self.project_context.resolve_project_file(
+            value,
+            roots=roots,
+            include_assets=include_assets,
+            reference=self._asset_reference(),
+        )
 
     # ------------------------------------------------------------------
     # Browser plumbing
@@ -62,31 +102,76 @@ class StandaloneEditorScene(Scene):
         start: str | Path | None = None,
         extensions: Iterable[str] = (),
         filename: str | None = None,
+        show_filename: bool | None = None,
+        action_text: str = "Save",
     ) -> None:
         self.modal = "browser"
         self.browser_mode = str(mode)
-        self.browser_root = Path(root).expanduser().resolve()
-        self.file_browser.open(
-            self.browser_root,
+        self.file_dialog.open(
+            mode,
+            root=root,
             start=start,
             extensions=extensions,
+            filename=filename,
+            show_filename=(mode in {"save", "map_save"}) if show_filename is None else show_filename,
+            action_text=action_text,
         )
-        if filename is not None and hasattr(self, "browser_name"):
-            self.browser_name.set_text(filename)
-        self._refresh_browser()
+        self._sync_file_dialog_state()
+
+    def _sync_file_dialog_state(self) -> None:
+        self.browser_mode = self.file_dialog.mode
+        self.browser_root = self.file_dialog.root
+        self.browser_path = self.file_dialog.path
+        self.browser_entries = list(self.file_dialog.entries)
 
     def _refresh_browser(self) -> None:
-        self.file_browser.refresh()
-        self.browser_path = self.file_browser.path
-        self.browser_entries = list(self.file_browser.entries)
-        browser_list = getattr(self, "browser_list", None)
-        if browser_list is not None:
-            sync_browser_list(self.file_browser, browser_list)
+        self.file_dialog.refresh()
+        self._sync_file_dialog_state()
 
     def _select_browser_entry(self, index: int) -> Path | None:
-        path = self.file_browser.select(index)
-        self._refresh_browser()
+        path = self.file_dialog.select(index)
+        self._sync_file_dialog_state()
         return path
+
+    def _layout_file_dialog(
+        self,
+        viewport: tuple[float, float],
+        *,
+        margin_x: float = 150.0,
+        margin_y: float = 76.0,
+    ) -> None:
+        self.file_dialog.layout(
+            viewport,
+            margin_x=margin_x,
+            margin_y=margin_y,
+        )
+
+    def _file_dialog_controls(self) -> list:
+        return self.file_dialog.controls()
+
+    def _render_file_dialog(
+        self,
+        renderer,
+        viewport: tuple[float, float],
+        *,
+        title: str,
+        margin_x: float = 150.0,
+        margin_y: float = 76.0,
+    ) -> None:
+        self.file_dialog.render(
+            renderer,
+            viewport,
+            self.theme,
+            title=title,
+            margin_x=margin_x,
+            margin_y=margin_y,
+        )
+
+    def _browser_selected(self, index: int) -> None:
+        del index
+
+    def _browser_action(self) -> None:
+        pass
 
     # ------------------------------------------------------------------
     # Menus and modals
@@ -104,6 +189,28 @@ class StandaloneEditorScene(Scene):
         self.info_title = str(title)
         self.info_lines = tuple(str(line) for line in lines)
         self.modal = "info"
+
+
+    def _render_info_dialog(
+        self,
+        renderer,
+        viewport: tuple[float, float],
+        *,
+        width: float = 660.0,
+        height: float = 340.0,
+        line_step: float = 38.0,
+    ) -> None:
+        render_info_dialog(
+            renderer,
+            viewport,
+            self.theme,
+            title=self.info_title,
+            lines=self.info_lines,
+            close_button=self.info_close_button,
+            width=width,
+            height=height,
+            line_step=line_step,
+        )
 
     def _close_modal(self) -> None:
         self.modal = None
@@ -140,7 +247,7 @@ class StandaloneEditorScene(Scene):
         """Update controls while supporting the existing editor call shapes.
 
         Item Editor calls ``(controls, mouse_x, mouse_y)`` while the other
-        standalone editors pass ``(controls, input_manager, mouse_x, mouse_y)``.
+        editors pass ``(controls, input_manager, mouse_x, mouse_y)``.
         Keeping both forms avoids churn in domain-specific update loops.
         """
 
@@ -166,4 +273,4 @@ class StandaloneEditorScene(Scene):
                 break
 
 
-__all__ = ["StandaloneEditorScene"]
+__all__ = ["EditorBaseScene"]

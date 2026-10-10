@@ -7,7 +7,7 @@ from nexora.editor.commands import (
     TransformNodeCommand,
     TransformSnapshot,
 )
-from nexora.editor.viewport import (
+from nexora.editor.main.viewport import (
     GIZMO_MOVE,
     GIZMO_ROTATE,
     GIZMO_SCALE,

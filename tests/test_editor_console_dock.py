@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from nexora.debug.console import ConsoleLevel, ConsoleLine
-from nexora.editor.scene import EditorScene
+from nexora.core.debug.console import ConsoleLevel, ConsoleLine
+from nexora.editor.main.scene import EditorScene
 
 
 def test_editor_console_output_uses_recent_engine_lines() -> None:

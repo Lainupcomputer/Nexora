@@ -2,26 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nexora.scene.serialization.common import apply_common_node_state, node_to_state
+from nexora.scene.serialization.common import node_to_state
 
-
-def _insert_child(parent, child, index: int) -> None:
-    parent.add_child(child)
-    children = parent.children
-    if child in children:
-        children.remove(child)
-    index = max(0, min(int(index), len(children)))
-    children.insert(index, child)
-
-
-def _build_node_from_state(state, world, registry, *, context=None):
-    data = dict(state)
-    node = registry.create(data["type"], data.get("name", "Node"), world, context=context or {})
-    apply_common_node_state(node, data)
-    registry.load_properties(node, dict(data.get("properties", {})), context=context or {})
-    for child_state in data.get("children", []):
-        node.add_child(_build_node_from_state(child_state, world, registry, context=context))
-    return node
+from .common import build_node_from_state, insert_child
 
 
 def texture_source_for_assets(asset_path: str | Path, assets) -> str:
@@ -82,12 +65,12 @@ class AddImageSpriteCommand:
             node._nexora_texture_source = source
             node.width = float(texture.width); node.height = float(texture.height)
             node.transform.x = self.x; node.transform.y = self.y
-            _insert_child(self.parent, node, self._index)
+            insert_child(self.parent, node, self._index)
             self._node = node
             self._state = node_to_state(node, self.registry)
             return node
-        node = _build_node_from_state(self._state, self.parent.world, self.registry, context=self.context)
-        _insert_child(self.parent, node, self._index)
+        node = build_node_from_state(self._state, self.parent.world, self.registry, context=self.context)
+        insert_child(self.parent, node, self._index)
         self._node = node
         return node
 
@@ -147,7 +130,7 @@ class InstantiatePrefabCommand:
             context=self.context,
             overrides=self._overrides,
         )
-        _insert_child(self.parent, node, self._index)
+        insert_child(self.parent, node, self._index)
         self._node = node
         self._overrides = prefab_instance_overrides_for_node(
             node,

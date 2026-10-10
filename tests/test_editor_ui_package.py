@@ -1,16 +1,15 @@
-"""Contract tests for the shared standalone-editor UI package."""
+"""Contract tests for the shared Nexora editor UI and base scene."""
 
 from pathlib import Path
 
-from nexora.editor import standalone_ui
 from nexora.editor import ui
 from nexora.editor.model import EditorProjectContext
-from nexora.editor.standalone_tilemap_editor import StandaloneTileMapEditorApp
+from nexora.editor.editors.tilemap import StandaloneTileMapEditorApp
 
 
-def test_shared_ui_package_exports_the_legacy_widget_surface() -> None:
+def test_shared_ui_package_exports_its_declared_surface() -> None:
     for name in ui.__all__:
-        assert getattr(ui, name) is getattr(standalone_ui, name)
+        assert hasattr(ui, name)
 
 
 def test_shared_ui_package_exposes_the_common_editor_controls() -> None:
@@ -54,3 +53,24 @@ def test_project_context_provides_shared_editor_roots(tmp_path: Path) -> None:
     assert context.assets_root == (tmp_path / "assets").resolve()
     assert context.items_root == (tmp_path / "items").resolve()
     assert context.cutscenes_root == (tmp_path / "cutscenes").resolve()
+
+
+def test_all_editor_modes_share_editor_base_scene() -> None:
+    from nexora.editor import EditorBaseScene
+    from nexora.editor.editors.audio import AudioMixerEditorScene
+    from nexora.editor.editors.cutscene import CutsceneEditorScene
+    from nexora.editor.editors.item import ItemEditorScene
+    from nexora.editor.main.scene import EditorScene
+    from nexora.editor.editors.tilemap import StandaloneTileMapEditorScene
+    from nexora.editor.hub.app import EditorToolsScene
+
+    for scene_type in (
+        EditorScene,
+        StandaloneTileMapEditorScene,
+        ItemEditorScene,
+        CutsceneEditorScene,
+        AudioMixerEditorScene,
+    ):
+        assert issubclass(scene_type, EditorBaseScene)
+
+    assert not issubclass(EditorToolsScene, EditorBaseScene)

@@ -28,13 +28,24 @@ def render_editor_shell(
         float(status_height),
     )
 
-    draw_rect(renderer, toolbar, theme.panel, viewport)
+    draw_rect(renderer, toolbar, theme.toolbar, viewport)
     for rect, color in panels:
         draw_rect(renderer, rect, color, viewport)
-    draw_rect(renderer, status, theme.panel, viewport)
+    draw_rect(renderer, status, theme.toolbar, viewport)
 
     for rect in (toolbar, *outline_rects):
         draw_outline(renderer, rect, theme.border, viewport)
+
+    # Main Editor visual identity shared by every editor mode.
+    draw_text(
+        renderer,
+        "NEXORA",
+        16.0,
+        max(8.0, (float(toolbar_height) - 20.0) / 2.0),
+        viewport,
+        scale=0.74,
+        color=theme.text,
+    )
 
 
 def render_document_title(

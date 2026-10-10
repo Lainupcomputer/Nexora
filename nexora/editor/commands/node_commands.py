@@ -1,45 +1,8 @@
 from __future__ import annotations
 
-from copy import deepcopy
+from nexora.scene.serialization.common import node_to_state
 
-from nexora.scene.serialization.common import (
-    apply_common_node_state,
-    node_to_state,
-)
-
-
-def _insert_child(parent, child, index: int) -> None:
-    parent.add_child(child)
-    children = parent.children
-    if child in children:
-        children.remove(child)
-    index = max(0, min(int(index), len(children)))
-    children.insert(index, child)
-
-
-def _build_node_from_state(state, world, registry, *, context=None):
-    data = deepcopy(dict(state))
-    node = registry.create(
-        data["type"],
-        data.get("name", "Node"),
-        world,
-        context=context or {},
-    )
-    apply_common_node_state(node, data)
-    registry.load_properties(
-        node,
-        dict(data.get("properties", {})),
-        context=context or {},
-    )
-    for child_state in data.get("children", []):
-        child = _build_node_from_state(
-            child_state,
-            world,
-            registry,
-            context=context,
-        )
-        node.add_child(child)
-    return node
+from .common import build_node_from_state, insert_child
 
 
 class AddNodeCommand:
@@ -76,7 +39,7 @@ class AddNodeCommand:
                 self.parent.world,
                 context=self.context,
             )
-            _insert_child(self.parent, node, self._index)
+            insert_child(self.parent, node, self._index)
             try:
                 if self.configure is not None:
                     self.configure(node)
@@ -87,13 +50,13 @@ class AddNodeCommand:
             self._node = node
             return node
 
-        node = _build_node_from_state(
+        node = build_node_from_state(
             self._state,
             self.parent.world,
             self.registry,
             context=self.context,
         )
-        _insert_child(self.parent, node, self._index)
+        insert_child(self.parent, node, self._index)
         self._node = node
         return node
 
@@ -138,13 +101,13 @@ class DeleteNodeCommand:
         return None
 
     def undo(self):
-        node = _build_node_from_state(
+        node = build_node_from_state(
             self._state,
             self.parent.world,
             self.registry,
             context=self.context,
         )
-        _insert_child(self.parent, node, self._index)
+        insert_child(self.parent, node, self._index)
         self._node = node
         return node
 
